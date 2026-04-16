@@ -1,0 +1,10 @@
+# ops-stack 总工程：子目录相对路径（相对本文件所在目录）
+# 修改此处即可在不重命名 Python 包的前提下，调整磁盘上的仓库文件夹名。
+# 也可用环境变量覆盖：OPS_STACK_REPO_<KEY>，KEY 为大写下划线形式，见 load_layout.py。
+
+[repos]
+video_raw_ingest = "video-raw-ingest"
+ops_knowledge = "ops-knowledge"
+ops_distiller_forge = "ops-distiller-forge"
+ops_agent = "ops-agent"
+pipeline_demo = "pipeline-demo"

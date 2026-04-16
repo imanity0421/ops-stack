@@ -1,0 +1,6 @@
+# 各子项目为独立 Git 仓库，总目录仅跟踪编排文件
+video-raw-ingest/
+ops-knowledge/
+ops-distiller-forge/
+ops-agent/
+pipeline-demo/
