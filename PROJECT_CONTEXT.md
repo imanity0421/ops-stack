@@ -1,6 +1,10 @@
 # ops-stack 项目全景与续作指南
 
-本文档面向：**将本仓库复制到另一台机器、用 Cursor 打开后继续开发**的同事或未来的你。阅读顺序建议：**本文件 → `README.md` → `PIPELINE.md` → 各子仓 `docs/ENGINEERING.md`**。
+本文档面向：**将本仓库复制到另一台机器、用 Cursor 打开后继续开发**的同事或未来的你。
+
+**与其它顶层文档的分工**：`README.md` 为入口与安装；**本文件**为业务背景、结构、完成度与新机 checklist；`PIPELINE.md` 为可复制的命令与环境变量速查；`NAMING.md` 专讲目录名与 `pyproject` 包名、`ops-stack.toml` 改名。不必按字逐份通读，按需查阅即可。
+
+**建议阅读顺序**：`README.md` → **本文件** → `PIPELINE.md` → 各子目录 `docs/ENGINEERING.md`。
 
 ### Git 与版本
 
@@ -120,7 +124,7 @@ ops-agent（③）Loader + CLI + Agno/Mem0/Hindsight/Graphiti 只读
 | ②b **reduce** | 当前为占位/粗策略；后续可接 embedding、聚类、人工 gate（见 `ENGINEERING.md`） |
 | **手册 HTML/Markdown 渲染** | 规划中；当前以 JSONL/Episode/Manifest 为主 |
 | **多租户与商业化** | 明确排除在 ③ 当前范围外（见 `ops-agent/docs/ENGINEERING.md`） |
-| **CI 统一** | 各子仓可独立 CI；总仓未强制 monorepo 流水线 |
+| **CI 统一** | 各子目录仍可有独立 `.github/workflows`；与当前 **GitHub 单仓库（monorepo）** 推送方式不冲突 |
 | **虚拟环境路径** | 移动机器或重命名目录后，在**各子仓**重新 `pip install -e .`，避免 editable 仍指向旧绝对路径 |
 
 ---

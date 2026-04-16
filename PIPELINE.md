@@ -1,5 +1,7 @@
 # ① → ② → ③ 管线总览（`ops-stack`）
 
+**定位**：本文档是 **命令与环境变量速查**；业务背景、目录说明全文与「新机 checklist」见 [**PROJECT_CONTEXT.md**](PROJECT_CONTEXT.md)。
+
 本文件描述 **`ops-stack/`** 总目录下各子工程如何衔接；**不要求**已跑通全流程即可先做校验、清单与本地 Agent。  
 **子目录名**以 **`ops-stack.toml`** 为准，下表为默认名称（与 PyPI 包名一致）。
 

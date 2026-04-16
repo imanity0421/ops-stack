@@ -2,6 +2,8 @@
 
 本目录聚合 **① 原始数据**、**② 知识加工**（②a 轻量衔接 + ②b 炼金工坊）、**③ 运行时 Agent** 及端到端演示脚本。
 
+**文档分工（避免重复阅读）**：背景、技术栈、完成度与新机步骤见 [**PROJECT_CONTEXT.md**](PROJECT_CONTEXT.md)；命令与环境变量表见 [**PIPELINE.md**](PIPELINE.md)；仅关心**改文件夹名 / 包名**时见 [**NAMING.md**](NAMING.md)。
+
 **子目录名**由 **`ops-stack.toml`** 集中配置；请勿在业务代码中写死文件夹名（`pipeline-demo`、`ops-knowledge` 测试已读取该配置）。
 
 ## 目录一览

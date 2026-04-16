@@ -1,5 +1,7 @@
 # ops-stack 目录与包名约定
 
+**定位**：仅说明 **磁盘目录名** 与 **`pyproject` 包名 / import / CLI** 及 **`ops-stack.toml` 改名**；管线职责与全景见 [**PROJECT_CONTEXT.md**](PROJECT_CONTEXT.md)。
+
 本文件说明 **`ops-stack/`** 总工程内各子仓库的**磁盘目录名**与 **Python 包名 / CLI** 的关系。
 
 ## 1. 单点配置：改目录名不必改代码
