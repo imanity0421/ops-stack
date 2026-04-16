@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video-raw-ingest.local/schema/lesson_merged.schema.json",
+  "title": "lesson_merged",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "video", "speech", "visual", "merged"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "pipeline_version": { "type": "string" },
+    "video": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "duration_sec": { "type": ["number", "null"] },
+        "probe_summary": { "type": "object" }
+      }
+    },
+    "speech": {
+      "type": "object",
+      "required": ["segments"],
+      "properties": {
+        "language": { "type": "string" },
+        "model": { "type": "string" },
+        "device": { "type": "string" },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["start", "end", "text"],
+            "properties": {
+              "start": { "type": "number" },
+              "end": { "type": "number" },
+              "text": { "type": "string" }
+            }
+          }
+        },
+        "empty": { "type": "boolean" }
+      }
+    },
+    "visual": {
+      "type": "object",
+      "required": ["slides"],
+      "properties": {
+        "slides": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "timestamp_sec"],
+            "properties": {
+              "index": { "type": "integer" },
+              "timestamp_sec": { "type": "number" },
+              "frame_relpath": { "type": ["string", "null"] },
+              "mineru_markdown": { "type": "string" },
+              "mineru_error": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "empty": { "type": "boolean" }
+      }
+    },
+    "flags": {
+      "type": "object",
+      "properties": {
+        "speech_empty": { "type": "boolean" },
+        "visual_empty": { "type": "boolean" }
+      }
+    },
+    "merged": {
+      "type": "object",
+      "required": ["timeline"],
+      "properties": {
+        "timeline": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["kind", "start_sec"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["speech", "visual"] },
+              "source": { "type": "string" },
+              "start_sec": { "type": "number" },
+              "end_sec": { "type": "number" },
+              "text": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

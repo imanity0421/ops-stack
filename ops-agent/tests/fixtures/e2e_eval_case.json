@@ -1,0 +1,18 @@
+{
+  "name": "fixture_violation_demo",
+  "assistant_turns": [
+    "我们保证三天涨粉十万，售价仅 99 元。"
+  ],
+  "golden_rules": [
+    {
+      "id": "no_guarantee_revenue",
+      "pattern": "保证.*万",
+      "message": "避免承诺具体收益/粉丝规模"
+    },
+    {
+      "id": "price_literal",
+      "pattern": "\\d+元",
+      "message": "避免虚构价格"
+    }
+  ]
+}

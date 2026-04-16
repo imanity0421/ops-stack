@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ops-agent"
+version = "0.5.0"
+description = "专项运营智能体：Agno + Mem0 + Hindsight + Graphiti + doctor/重试"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "ops-agent contributors" }]
+dependencies = [
+  "agno>=1.0",
+  "mem0ai>=0.1",
+  "pydantic>=2.0",
+  "python-dotenv>=1.0.0",
+  "openai>=1.40.0",
+]
+
+[project.optional-dependencies]
+graphiti = [
+  "graphiti-core>=0.28.0,<1",
+]
+mcp = [
+  "mcp>=1.0.0",
+]
+dev = ["ruff>=0.4.0", "pytest>=8.0.0"]
+
+[project.scripts]
+ops-agent = "ops_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ops_agent = ["py.typed", "resources/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

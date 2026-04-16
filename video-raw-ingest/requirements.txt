@@ -1,0 +1,11 @@
+# 与 pyproject.toml 同步；可直接 pip install -e .
+whisperx>=3.1.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+jsonschema>=4.20.0
+openai>=1.40.0
+python-dotenv>=1.0.0
+
+# MinerU 请按官方文档单独安装，避免与 PyTorch 版本冲突：
+#   pip install -U "mineru[core]"
+# 见 docs/ENGINEERING.md

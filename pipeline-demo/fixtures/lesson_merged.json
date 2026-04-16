@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "video": {"path": "demo/demo.mp4", "duration_sec": 120},
+  "speech": {
+    "language": "zh",
+    "segments": [
+      {"start": 0.0, "end": 5.0, "text": "私域运营要先建立信任，再设计低价钩子课转化到高价服务。"},
+      {"start": 5.0, "end": 10.0, "text": "复盘时要盯留存和复购，不要只看单次成交。"}
+    ],
+    "empty": false
+  },
+  "visual": {"slides": [], "empty": true},
+  "merged": {
+    "timeline": [
+      {"kind": "speech", "start_sec": 0.0, "end_sec": 5.0, "text": "私域运营要先建立信任，再设计低价钩子课转化到高价服务。"}
+    ]
+  }
+}

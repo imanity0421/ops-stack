@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-raw-ingest"
+version = "0.2.2"
+description = "课程视频原始内容获取：WhisperX + 关键帧 + MinerU，输出结构合并 JSON/Markdown（至清洗前）"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "video-raw-ingest contributors" }]
+dependencies = [
+  "whisperx>=3.1.0",
+  "opencv-python-headless>=4.8.0",
+  "numpy>=1.24.0",
+  "jsonschema>=4.20.0",
+  "openai>=1.40.0",
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.4.0"]
+
+[project.scripts]
+video-raw-ingest = "video_raw_ingest.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+video_raw_ingest = ["py.typed", "lesson_merged.schema.json"]

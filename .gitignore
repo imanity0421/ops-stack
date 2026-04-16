@@ -1,9 +1,31 @@
-# 各子项目为独立 Git 仓库，总目录仅跟踪编排文件
-video-raw-ingest/
-ops-knowledge/
-ops-distiller-forge/
-ops-agent/
-pipeline-demo/
-
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
+
+# 子项目本地数据 / 产物（按需）
+ops-agent/data/
+pipeline-demo/out/
+video-raw-ingest/output/
+video-raw-ingest/data/
