@@ -2,6 +2,19 @@
 
 本文档面向：**将本仓库复制到另一台机器、用 Cursor 打开后继续开发**的同事或未来的你。阅读顺序建议：**本文件 → `README.md` → `PIPELINE.md` → 各子仓 `docs/ENGINEERING.md`**。
 
+### Git 仓库划分（独立初始版本）
+
+| 路径 | 说明 | 版本标签（示例） |
+|------|------|------------------|
+| **`ops-stack/`**（根） | 仅跟踪 `ops-stack.toml`、`load_layout.py`、顶层 `*.md`；子目录在 `.gitignore` 中忽略 | `v0.1.0` |
+| **`video-raw-ingest/`** | ① 独立仓库（原有 `origin` 可继续沿用） | `v0.2.2` |
+| **`ops-knowledge/`** | ②a | `v0.1.3` |
+| **`ops-distiller-forge/`** | ②b | `v0.1.0` |
+| **`ops-agent/`** | ③ | `v0.5.0` |
+| **`pipeline-demo/`** | 串联脚本 | `v0.1.0` |
+
+各子目录内执行 `git log`、`git describe` 可查看当前提交；推送远程时需分别为各仓库 `git remote add`。
+
 ---
 
 ## 1. 需求背景与目标
