@@ -4,3 +4,6 @@ ops-knowledge/
 ops-distiller-forge/
 ops-agent/
 pipeline-demo/
+
+__pycache__/
+*.py[cod]
