@@ -41,8 +41,12 @@ def build_memory_tools(
     golden_rules: Optional[list[dict[str, Any]]] = None,
     mcp_probe_fixture_path: Path | None = None,
     enabled_tool_names: set[str] | None = None,
+    exclude_tool_names: set[str] | None = None,
 ) -> list[Callable]:
-    """绑定租户上下文后的记忆工具，供 Agno Agent 使用。"""
+    """绑定租户上下文后的记忆工具，供 Agno Agent 使用。
+
+    exclude_tool_names：在 Manifest 白名单之后再剔除的工具 id（例如 Web 演示仅允许手动写入记忆）。
+    """
 
     @tool(
         name="record_client_fact",
@@ -196,4 +200,7 @@ def build_memory_tools(
 
         tools.append(search_domain_knowledge)
 
-    return filter_tools_by_manifest(tools, enabled_tool_names)
+    out = filter_tools_by_manifest(tools, enabled_tool_names)
+    if exclude_tool_names:
+        out = [t for t in out if _tool_name(t) not in exclude_tool_names]
+    return out

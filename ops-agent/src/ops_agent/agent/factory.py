@@ -50,13 +50,20 @@ def _get_model() -> OpenAIChat:
     return OpenAIChat(id=_model_id())
 
 
-def _model_from_manifest(manifest: object | None) -> OpenAIChat:
+def _model_from_manifest(manifest: object | None, settings: Settings) -> OpenAIChat:
+    """创建 OpenAI 兼容客户端；必须传入 Settings 以应用 OPENAI_API_BASE（4zapi 等中转）。"""
     mid = _model_id()
     if manifest is not None:
         m = getattr(manifest, "model", None)
         if m:
             mid = str(m)
-    return OpenAIChat(id=mid)
+    kwargs: dict[str, Any] = {"id": mid}
+    if settings.openai_api_key:
+        kwargs["api_key"] = settings.openai_api_key
+    base = (settings.openai_api_base or "").strip()
+    if base:
+        kwargs["base_url"] = base
+    return OpenAIChat(**kwargs)
 
 
 def _instruction_base_for_persona(persona: str) -> List[str]:
@@ -76,6 +83,7 @@ def get_agent(
     knowledge: Optional["GraphitiReadService"] = None,
     settings: Optional[Settings] = None,
     persona: str | None = None,
+    exclude_tool_names: Optional[set[str]] = None,
 ) -> Agent:
     """
     工厂：创建 Agent。thought_mode 为 'slow' 时启用 Agno 内置 reasoning（若模型不支持会降级）。
@@ -95,6 +103,7 @@ def get_agent(
         golden_rules=golden_rules,
         mcp_probe_fixture_path=s.mcp_probe_fixture_path,
         enabled_tool_names=enabled_tool_name_set(manifest),
+        exclude_tool_names=exclude_tool_names,
     )
     instructions = _instruction_base_for_persona(effective_persona)
     if manifest is not None and getattr(manifest, "system_prompt", "") and str(manifest.system_prompt).strip():
@@ -128,7 +137,7 @@ def get_agent(
 
     agent_name = "ShortVideoDirector" if effective_persona == "short_video" else "OpsSpecialist"
     kwargs: dict[str, Any] = {
-        "model": _model_from_manifest(manifest),
+        "model": _model_from_manifest(manifest, s),
         "name": agent_name,
         "instructions": instructions,
         "tools": tools,
@@ -151,6 +160,7 @@ def get_reasoning_agent(
     knowledge: Optional["GraphitiReadService"] = None,
     settings: Optional[Settings] = None,
     persona: str | None = None,
+    exclude_tool_names: Optional[set[str]] = None,
 ) -> Agent:
     """与 get_agent(..., thought_mode='slow') 等价，便于显式命名。"""
     return get_agent(
@@ -162,6 +172,7 @@ def get_reasoning_agent(
         knowledge=knowledge,
         settings=settings,
         persona=persona,
+        exclude_tool_names=exclude_tool_names,
     )
 
 

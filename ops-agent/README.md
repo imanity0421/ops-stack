@@ -40,6 +40,15 @@ python -m ops_agent --client-id demo_client
 | `ops-agent graphiti-ingest <episodes.json> [--dry-run]` | 离线 Graphiti 写入（实跑需 Neo4j + OpenAI） |
 | `ops-agent mcp-probe-server` | stdio MCP 探针（需 `[mcp]`） |
 
+### 浏览器试用（本地 Web，无鉴权示例）
+
+```bash
+pip install -e ".[web]"
+python examples/web_chat_fastapi.py
+```
+
+浏览器打开终端里提示的地址：**对话**默认 `http://127.0.0.1:8765/`；**记忆管理**（画像、Hindsight、手动写入）为 `http://127.0.0.1:8765/memory`。对话页含：**回复下方展开「执行与思考过程」**（Agno `RunOutput` 的 reasoning / tools / metrics 等）、**结束对话**及可选 **AsyncReview 复盘**；身份可在页内切换多组 **client_id / user_id**（localStorage 预设）。详见 `examples/web_chat_fastapi.py`；生产环境请自建鉴权与 HTTPS，勿直接暴露公网。
+
 ## 许可证
 
 MIT — 见 [LICENSE](LICENSE)。
