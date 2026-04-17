@@ -28,6 +28,17 @@ DEFAULT_INSTRUCTIONS_BASE: List[str] = [
     "不要编造客户未提供的事实；不确定时先提问。",
 ]
 
+# 短视频编导 / 脚本 demo：与 Mem0、Hindsight 工具链兼容，替换默认「私域运营」基座指令
+SHORT_VIDEO_INSTRUCTIONS_BASE: List[str] = [
+    "你是短视频编导与脚本顾问，擅长选题、钩子、结构、分镜与口播稿、字幕与节奏建议；语气清晰、可执行。",
+    "输出脚本前若缺少关键信息（平台、时长、受众、人设/产品、禁忌与合规），先简要追问再写。",
+    "交付脚本时用清晰分段（如：开场钩子 / 中段展开 / 结尾转化），并标注大致秒数或字数；需要时可给 2～3 个标题备选。",
+    "写稿前优先调用 retrieve_ordered_context，按顺序参考 Mem0 人设与历史偏好、Hindsight 中对过往脚本的反馈、再查领域知识（若已配置）。",
+    "用户明确长期有效的创作偏好（语气、禁忌、固定口癖）用 record_client_preference；稳定事实（账号定位、赛道、品牌名）用 record_client_fact。",
+    "用户对某版脚本的评价用 record_task_feedback，便于下次复用教训。",
+    "不要编造未提供的商业承诺、数据或版权素材；不确定时先提问。",
+]
+
 
 def _model_id() -> str:
     import os
@@ -48,6 +59,13 @@ def _model_from_manifest(manifest: object | None) -> OpenAIChat:
     return OpenAIChat(id=mid)
 
 
+def _instruction_base_for_persona(persona: str) -> List[str]:
+    p = (persona or "ops").strip().lower()
+    if p == "short_video":
+        return list(SHORT_VIDEO_INSTRUCTIONS_BASE)
+    return list(DEFAULT_INSTRUCTIONS_BASE)
+
+
 def get_agent(
     controller: MemoryController,
     *,
@@ -57,12 +75,16 @@ def get_agent(
     extra_instructions: Optional[List[str]] = None,
     knowledge: Optional["GraphitiReadService"] = None,
     settings: Optional[Settings] = None,
+    persona: str | None = None,
 ) -> Agent:
     """
     工厂：创建 Agent。thought_mode 为 'slow' 时启用 Agno 内置 reasoning（若模型不支持会降级）。
     若未来 API 变更，请只改本文件。
     """
     s = settings or Settings.from_env()
+    effective_persona = (persona if persona is not None else s.agent_persona) or "ops"
+    if effective_persona not in ("ops", "short_video"):
+        effective_persona = "ops"
     manifest = load_agent_manifest(s.agent_manifest_path)
     golden_rules = load_golden_rules(s.golden_rules_path)
     tools = build_memory_tools(
@@ -74,7 +96,7 @@ def get_agent(
         mcp_probe_fixture_path=s.mcp_probe_fixture_path,
         enabled_tool_names=enabled_tool_name_set(manifest),
     )
-    instructions = list(DEFAULT_INSTRUCTIONS_BASE)
+    instructions = _instruction_base_for_persona(effective_persona)
     if manifest is not None and getattr(manifest, "system_prompt", "") and str(manifest.system_prompt).strip():
         instructions.insert(0, str(manifest.system_prompt).strip())
     if manifest is not None and getattr(manifest, "handbook_version", None):
@@ -84,19 +106,30 @@ def get_agent(
         instructions.append(
             f"已加载本地交付规则 {len(golden_rules)} 条：回复前可对关键段落调用 check_delivery_text 自检。"
         )
-    instructions.append(
-        "需要时效/市场口径旁路时，可调用 fetch_ops_probe_context（默认 fixture，可换 OPS_MCP_PROBE_FIXTURE_PATH）。"
-    )
+    if effective_persona == "short_video":
+        instructions.append(
+            "需要热点/竞品口径旁路时可调用 fetch_ops_probe_context（可选，默认 fixture；可换 OPS_MCP_PROBE_FIXTURE_PATH）。"
+        )
+    else:
+        instructions.append(
+            "需要时效/市场口径旁路时，可调用 fetch_ops_probe_context（默认 fixture，可换 OPS_MCP_PROBE_FIXTURE_PATH）。"
+        )
     if knowledge is None:
-        instructions.append("当前未挂载 Graphiti：retrieve_ordered_context 的第三层将提示未配置。")
+        if effective_persona == "short_video":
+            instructions.append(
+                "当前未挂载领域知识库：脚本可依赖对话与 Mem0；若有固定话术库可配置 OPS_KNOWLEDGE_FALLBACK_PATH。"
+            )
+        else:
+            instructions.append("当前未挂载 Graphiti：retrieve_ordered_context 的第三层将提示未配置。")
     if extra_instructions:
         instructions.extend(extra_instructions)
 
     reasoning = thought_mode.lower() in ("slow", "reasoning", "deep")
 
+    agent_name = "ShortVideoDirector" if effective_persona == "short_video" else "OpsSpecialist"
     kwargs: dict[str, Any] = {
         "model": _model_from_manifest(manifest),
-        "name": "OpsSpecialist",
+        "name": agent_name,
         "instructions": instructions,
         "tools": tools,
         "markdown": True,
@@ -117,6 +150,7 @@ def get_reasoning_agent(
     extra_instructions: Optional[List[str]] = None,
     knowledge: Optional["GraphitiReadService"] = None,
     settings: Optional[Settings] = None,
+    persona: str | None = None,
 ) -> Agent:
     """与 get_agent(..., thought_mode='slow') 等价，便于显式命名。"""
     return get_agent(
@@ -127,6 +161,7 @@ def get_reasoning_agent(
         extra_instructions=extra_instructions,
         knowledge=knowledge,
         settings=settings,
+        persona=persona,
     )
 
 

@@ -73,6 +73,7 @@ ops-agent（③）Loader + CLI + Agno/Mem0/Hindsight/Graphiti 只读
 | **`ops-distiller-forge/`** | ②b |
 | **`ops-agent/`** | ③ |
 | **`pipeline-demo/`** | 串联脚本与 fixture，非独立 Python 包 |
+| **`coding-sync/`** | 跨机器会话与运行记录（`SESSION_LOG.md`、`runs.jsonl`），与仓库一并 Git 同步 |
 
 ### 4.2 目录名与包名
 

@@ -1,0 +1,24 @@
+---
+description: 跨机器（公司/家里）开发时维护 ops-stack/coding-sync 会话与运行日志
+globs:
+alwaysApply: true
+---
+
+# 跨机器开发同步（ops-stack 内）
+
+本仓库下的 **`coding-sync/`** 与代码一起 Git 同步：
+
+- **`coding-sync/SESSION_LOG.md`**：按会话追加「做了什么、待办、环境备注」。
+- **`coding-sync/runs.jsonl`**：重要命令一行一条 JSON（测试、构建、迁移）。
+
+## 对 Agent 的约定
+
+1. **完成一批有意义修改后**（或用户表示要换机器/收工）：在 `coding-sync/SESSION_LOG.md` **追加一节**，或指导用户执行：
+   - `python coding-sync/log_session.py session --title "..." --body "..."`（在 `ops-stack` 根目录）
+2. **跑完关键命令**（如 `pytest`、数据库迁移、长耗时脚本）后，可写入：
+   - `python coding-sync/log_session.py run --cmd "完整命令" --exit-code <退出码>`
+3. 子项目（`ops-agent` 等）的改动仍正常提交到 **本仓库**；`coding-sync` 仅补充**人类可读的接续上下文**。
+
+## 用户环境变量（可选）
+
+- `CODING_SYNC_MACHINE`：如 `office` / `home`，会写入日志便于区分机器。

@@ -25,6 +25,7 @@ class Settings:
     golden_rules_path: Path | None = None
     mcp_probe_fixture_path: Path | None = None
     agent_manifest_path: Path | None = None
+    agent_persona: str = "ops"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -33,6 +34,9 @@ class Settings:
         gr = os.getenv("OPS_GOLDEN_RULES_PATH")
         mp = os.getenv("OPS_MCP_PROBE_FIXTURE_PATH")
         am = os.getenv("OPS_AGENT_MANIFEST_PATH")
+        persona = (os.getenv("OPS_AGENT_PERSONA") or "ops").strip().lower()
+        if persona not in ("ops", "short_video"):
+            persona = "ops"
         return cls(
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             openai_api_base=os.getenv("OPENAI_API_BASE"),
@@ -46,6 +50,7 @@ class Settings:
             golden_rules_path=Path(gr) if gr else None,
             mcp_probe_fixture_path=Path(mp) if mp else None,
             agent_manifest_path=Path(am) if am else None,
+            agent_persona=persona,
         )
 
 

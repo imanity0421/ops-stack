@@ -121,6 +121,12 @@ def _chat_main(argv: list[str]) -> int:
     p.add_argument("--session-id", default=None, help="会话 ID（调试用，默认随机）")
     p.add_argument("--no-knowledge", action="store_true", help="不挂载 search_domain_knowledge（仅 Mem0）")
     p.add_argument(
+        "--persona",
+        choices=("ops", "short_video"),
+        default=None,
+        help="Agent 人设：ops=私域运营（默认）；short_video=短视频编导/脚本 demo。也可用环境变量 OPS_AGENT_PERSONA。",
+    )
+    p.add_argument(
         "--no-async-review",
         action="store_true",
         help="退出时不运行 AsyncReview 复盘",
@@ -138,6 +144,8 @@ def _chat_main(argv: list[str]) -> int:
 
     knowledge = None if args.no_knowledge else GraphitiReadService.from_env(settings.knowledge_fallback_path)
 
+    persona = args.persona if args.persona is not None else settings.agent_persona
+
     agent = get_agent(
         ctrl,
         client_id=args.client_id,
@@ -145,6 +153,7 @@ def _chat_main(argv: list[str]) -> int:
         thought_mode="slow" if args.slow else "fast",
         knowledge=knowledge,
         settings=settings,
+        persona=persona,
     )
 
     session_id = args.session_id or new_session_id()

@@ -15,6 +15,7 @@
 | [`ops-distiller-forge/`](ops-distiller-forge/) | ②b | 蒸馏、Manifest、Episode 投影 |
 | [`ops-agent/`](ops-agent/) | ③ | Agno 专项运营 Agent |
 | [`pipeline-demo/`](pipeline-demo/) | 串联 | 模拟数据 `run_e2e_demo.py` |
+| [`coding-sync/`](coding-sync/) | 协作 | 跨机器会话与运行记录（与仓库一并同步，见该目录 `README.md`） |
 
 ## 文档
 
