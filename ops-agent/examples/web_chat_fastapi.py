@@ -15,7 +15,8 @@
 说明：
 - **本 Web 进程内**：模型 **不会** 获得 `record_client_fact` / `record_client_preference` / `record_task_feedback` 三个工具；写入 **仅** 能通过页面按钮（或 `POST /api/memory/ingest`）。**Hindsight 的 lesson 复盘** 仅能通过「结束对话」且勾选「进行复盘」（或 `POST /api/session/end` 且 `run_review: true`）。
 - 终端 CLI `python -m ops_agent` 仍为完整工具集，不受影响。
-- **0.5+**：三页统一 Demo 样式；**`/debug`** 展示当前租户绑定的 Agent 配置、指令栈与工具列表（`GET /api/agent/inspect`）。身份支持 **client_id / user_id** 多组预设（localStorage）。
+- **0.5+**：三页统一 Demo 样式；**`/debug`** 展示 Agent 工作流与指令栈。**Reasoning** 默认开启（环境 `OPS_WEB_SLOW` 未设视为开）；对话页可勾选覆盖，并与记忆 API 共用 `localStorage`。身份支持 **client_id / user_id** 预设（localStorage）。
+- **0.6+**：**身份增删** 仅在 **记忆管理** 页；**对话** 页仅选预设并支持 **多会话**（localStorage 按身份分桶，刷新可恢复）。
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ from dotenv import load_dotenv
 _ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(_ROOT / ".env")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
@@ -51,16 +52,21 @@ _WEB_EXTRA_INSTRUCTIONS = [
     "复盘 lesson 仅能通过「结束对话」并勾选「进行复盘」。",
 ]
 
-# ---------- 按 (client_id, user_id) 缓存 Agent，保证工具绑定的租户一致 ----------
-_bundles: dict[tuple[str, str], tuple[Settings, MemoryController, Any]] = {}
+# ---------- 按 (client_id, user_id, use_slow) 缓存 Agent + MemoryController，保证工具与推理模式一致 ----------
+_bundles: dict[tuple[str, str, bool], tuple[Settings, MemoryController, Any]] = {}
 _no_knowledge = os.getenv("OPS_WEB_NO_KNOWLEDGE", "1").strip() in ("1", "true", "yes")
 _persona = os.getenv("OPS_AGENT_PERSONA") or None
-_slow = os.getenv("OPS_WEB_SLOW", "").strip() in ("1", "true", "yes")
+
+
+def _env_slow() -> bool:
+    """环境默认：未设置 OPS_WEB_SLOW 时视为开启（与「默认慢推理」一致）；显式 0/false/no 关闭。"""
+    v = (os.getenv("OPS_WEB_SLOW") or "1").strip().lower()
+    return v not in ("0", "false", "no")
 
 # session_id -> (user, assistant) 轮次列表
 _transcripts: dict[str, list[tuple[str, str]]] = {}
-def _bundle_key(client_id: str, user_id: str | None) -> tuple[str, str]:
-    return (client_id, user_id or "")
+def _bundle_key(client_id: str, user_id: str | None, use_slow: bool) -> tuple[str, str, bool]:
+    return (client_id, user_id or "", use_slow)
 
 
 def _build_stack(
@@ -95,15 +101,24 @@ def _build_stack(
     return settings, ctrl, agent
 
 
-def _get_bundle_for(client_id: str, user_id: str | None) -> tuple[Settings, MemoryController, Any]:
-    k = _bundle_key(client_id, user_id)
+def _resolve_use_slow(explicit: bool | None) -> bool:
+    return explicit if explicit is not None else _env_slow()
+
+
+def _get_bundle_for(
+    client_id: str,
+    user_id: str | None,
+    use_slow_reasoning: bool | None = None,
+) -> tuple[Settings, MemoryController, Any]:
+    slow = _resolve_use_slow(use_slow_reasoning)
+    k = _bundle_key(client_id, user_id, slow)
     if k not in _bundles:
         _bundles[k] = _build_stack(
             client_id=client_id,
             user_id=user_id,
             no_knowledge=_no_knowledge,
             persona=_persona,
-            slow=_slow,
+            slow=slow,
         )
     return _bundles[k]
 
@@ -134,9 +149,14 @@ def _normalize_agent_instructions(agent: Any) -> list[str]:
     return [str(inst)]
 
 
-def _agent_inspect_payload(client_id: str, user_id: str | None) -> dict[str, Any]:
+def _agent_inspect_payload(
+    client_id: str,
+    user_id: str | None,
+    use_slow_reasoning: bool | None = None,
+) -> dict[str, Any]:
     """当前 Web 进程内、与对话一致的 Agent 实例：指令栈、工具名、Manifest 与路径（供 /debug 调试）。"""
-    settings, _ctrl, agent = _get_bundle_for(client_id, user_id)
+    slow_applied = _resolve_use_slow(use_slow_reasoning)
+    settings, _ctrl, agent = _get_bundle_for(client_id, user_id, slow_applied)
     manifest = load_agent_manifest(settings.agent_manifest_path)
     model = getattr(agent, "model", None)
     model_id = getattr(model, "id", None) or getattr(model, "name", None) or str(model)
@@ -160,9 +180,11 @@ def _agent_inspect_payload(client_id: str, user_id: str | None) -> dict[str, Any
             "local_memory": str(_resolve_under_ops_agent(settings.local_memory_path)),
             "hindsight": str(_resolve_under_ops_agent(settings.hindsight_path)),
         },
+        "use_slow_reasoning_applied": slow_applied,
+        "env_slow_default": _env_slow(),
         "env_flags": {
             "OPS_WEB_NO_KNOWLEDGE": _no_knowledge,
-            "OPS_WEB_SLOW": _slow,
+            "OPS_WEB_SLOW_env_parsed_default": _env_slow(),
             "OPS_AGENT_PERSONA": _persona or settings.agent_persona,
         },
         "web_excluded_tools": sorted(_WEB_EXCLUDED_MEMORY_WRITE_TOOLS),
@@ -209,6 +231,10 @@ class ChatIn(BaseModel):
     session_id: str | None = None
     client_id: str = "demo_client"
     user_id: str | None = None
+    use_slow_reasoning: bool | None = Field(
+        default=None,
+        description="是否启用 Agno 慢推理（reasoning）；None 表示采用环境默认（OPS_WEB_SLOW，默认开启）",
+    )
     include_trace: bool = Field(
         default=True,
         description="是否在响应中带出 reasoning / 工具调用等执行过程（Agno RunOutput）",
@@ -225,6 +251,9 @@ class ChatHistoryTurn(BaseModel):
 class ChatOut(BaseModel):
     reply: str
     session_id: str
+    use_slow_reasoning_applied: bool = Field(
+        description="本请求实际使用的慢推理开关（与缓存 Agent 一致）",
+    )
     trace: dict[str, Any] | None = None
     history: list[ChatHistoryTurn] = Field(
         default_factory=list,
@@ -237,6 +266,7 @@ class MemoryIngestIn(BaseModel):
 
     client_id: str = Field(default="demo_client", min_length=1)
     user_id: str | None = None
+    use_slow_reasoning: bool | None = Field(default=None, description="选取与对话一致的 bundle")
     text: str = Field(..., min_length=1)
     kind: str = Field(..., description="fact | preference | feedback")
     task_id: str | None = None
@@ -253,6 +283,10 @@ class SessionEndIn(BaseModel):
     session_id: str = Field(..., min_length=1)
     client_id: str = Field(default="demo_client", min_length=1)
     user_id: str | None = None
+    use_slow_reasoning: bool | None = Field(
+        default=None,
+        description="与对话请求一致，用于选取同一 MemoryController（复盘写入等）",
+    )
     task_id: str | None = None
     run_review: bool = False
 
@@ -266,15 +300,17 @@ class SessionEndOut(BaseModel):
 class ProfileDeleteLocalIn(BaseModel):
     client_id: str = Field(..., min_length=1)
     user_id: str | None = None
+    use_slow_reasoning: bool | None = Field(default=None, description="选取与对话一致的 bundle（默认随环境）")
     index: int = Field(..., ge=0, description="local_memory.json 内该用户 memories 数组下标")
 
 
 class HindsightDeleteIn(BaseModel):
     client_id: str = Field(..., min_length=1)
+    use_slow_reasoning: bool | None = Field(default=None, description="选取与对话一致的 bundle")
     file_line: int = Field(..., ge=1, description="hindsight.jsonl 中的物理行号（自列表接口返回）")
 
 
-app = FastAPI(title="ops-agent web demo", version="0.5.0")
+app = FastAPI(title="ops-agent web demo", version="0.5.3")
 
 
 def _nav_html(active: str) -> str:
@@ -292,80 +328,180 @@ def _nav_html(active: str) -> str:
 </nav>"""
 
 
-def _identity_block(default_cid: str, *, page_note: str, open_default: bool = False) -> str:
+def _identity_block_memory(
+    default_cid: str,
+    *,
+    page_note: str,
+    open_default: bool = False,
+    summary_title: str = "身份与快捷预设",
+) -> str:
+    """记忆管理页：可编辑 client_id/user_id，并增删预设。"""
     open_attr = " open" if open_default else ""
     return f"""
 <details class="identity-fold"{open_attr}>
 <summary class="identity-sum">
-  <span class="identity-sum-title">身份与切换</span>
+  <span class="identity-sum-title">{summary_title}</span>
   <span class="identity-preview" id="identityPreview">{default_cid}</span>
 </summary>
 <div class="identity-inner">
   <p class="identity-hint">{page_note}</p>
-  <div class="identity-toolbar">
-    <label class="lbl-preset">预设 <select id="presetSel" class="sel-compact"></select></label>
-    <button type="button" class="btn-sm" id="btnApplyPreset" title="切换到所选预设">切换</button>
-    <button type="button" class="btn-sm" id="btnSavePreset" title="将当前 client_id / user_id 存为预设">保存</button>
-    <button type="button" class="btn-sm" id="btnDelPreset" title="删除所选预设">删除</button>
-  </div>
+  <p id="identityFeedback" class="identity-feedback" aria-live="polite"></p>
+
+  <div class="identity-section-title">client_id / user_id（租户键）</div>
   <div class="identity-grid">
     <label>client_id<input id="cid" type="text" value="{default_cid}" autocomplete="off" spellcheck="false"/></label>
     <label>user_id<input id="uid" type="text" placeholder="可选" autocomplete="off" spellcheck="false"/></label>
   </div>
-  <button type="button" class="btn-sm btn-secondary" id="btnApplyManual">应用当前身份并清空 session</button>
+  <button type="button" class="btn-sm btn-secondary" id="btnApplyManual" title="确认输入框中的身份并刷新本页列表（不影对话页会话）">应用身份</button>
+
+  <div class="identity-section-title">身份预设（对话页下拉来源）</div>
+  <p class="identity-hint" style="margin-top:0">下拉变更会切换身份；「保存为预设」保存当前输入框；对话页只能<strong>选择</strong>此处维护的预设。</p>
+  <div class="identity-toolbar">
+    <label class="lbl-preset">预设 <select id="identityPresetSel" class="sel-compact" data-role="identity-preset" title="选择一条预设"></select></label>
+    <button type="button" class="btn-sm" id="btnApplyPreset" title="再次套用所选预设到输入框">再应用所选</button>
+    <button type="button" class="btn-sm" id="btnSavePreset" title="将当前输入框存为新预设">保存为预设</button>
+    <button type="button" class="btn-sm" id="btnDelPreset" title="删除所选预设">删除所选</button>
+  </div>
+  <div id="presetOutline" class="preset-outline"><strong>已保存预设一览</strong><ul id="presetOutlineList"></ul></div>
 </div>
+</details>
+"""
+
+
+def _identity_block_chat(default_cid: str, *, show_session_panel: bool = True) -> str:
+    """对话页：仅选预设 + 隐藏 cid/uid；可选多会话列表。"""
+    sess = ""
+    if show_session_panel:
+        sess = """
+  <div class="identity-section-title">本机对话</div>
+  <p class="identity-hint identity-hint--tight">与身份绑定，存于浏览器；点「管理」可批量切换或删除。</p>
+  <div class="session-toolbar session-toolbar--compact">
+    <label class="lbl-preset lbl-session">当前 <select id="sessionSel" class="sel-compact session-sel" title="切换对话"></select></label>
+    <button type="button" class="btn-sm" id="btnNewChat" title="新建对话">＋ 新建</button>
+    <button type="button" class="btn-sm" id="btnManageSessions" title="管理全部对话">管理…</button>
+  </div>
+  <div class="identity-session-row identity-session-row--compact">
+    <span class="sid-label">Session</span>
+    <input id="sid" class="sid-chip" type="text" readonly placeholder="发送后显示" title="session_id"/>
+    <button type="button" class="btn-sm" id="btnCopySid">复制</button>
+  </div>
+
+  <dialog id="sessionDialog" class="session-dialog">
+    <div class="session-dialog-inner">
+      <div class="session-dialog-head">
+        <h3 class="session-dialog-title">管理对话</h3>
+        <button type="button" class="btn-icon" id="btnCloseSessionDialog" aria-label="关闭">×</button>
+      </div>
+      <p class="identity-hint identity-hint--tight">点击一行切换当前对话；删除仅移除本地记录。</p>
+      <ul id="sessionManageUl" class="session-manage-list"></ul>
+      <div class="session-dialog-foot">
+        <button type="button" class="btn-primary btn-sm" id="btnNewChatDialog">＋ 新建对话</button>
+      </div>
+    </div>
+  </dialog>
+"""
+    return f"""
+<details class="identity-fold" open>
+<summary class="identity-sum">
+  <span class="identity-sum-title">身份与对话</span>
+  <span class="identity-preview" id="identityPreview">{default_cid}</span>
+</summary>
+<div class="identity-inner">
+  <p class="identity-hint">选择<strong>身份预设</strong>决定使用哪套记忆。增删预设请到 <a href="/memory">记忆管理</a>。</p>
+  <p id="identityFeedback" class="identity-feedback" aria-live="polite"></p>
+  <input type="hidden" id="cid" value="{default_cid}"/>
+  <input type="hidden" id="uid" value=""/>
+  <div class="identity-toolbar">
+    <label class="lbl-preset">身份预设 <select id="identityPresetSel" class="sel-compact" data-role="identity-preset"></select></label>
+  </div>
+  {sess}
 </details>
 """
 
 # 对话页与记忆页共用：折叠身份区（避免两处样式漂移）
 _IDENTITY_CSS = """
-.identity-fold{border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;margin:0 0 0.65rem;padding:0;}
-.identity-fold>summary.identity-sum{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:0.5rem;padding:0.4rem 0.65rem;font-size:0.82rem;font-weight:600;color:#475569;user-select:none;}
+.identity-fold{border:1px solid var(--border);border-radius:var(--radius-panel);background:var(--surface);margin:0 0 var(--section-gap);padding:0;}
+.identity-fold>summary.identity-sum{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:0.5rem;padding:0.45rem 0.65rem;font-size:var(--text-sm);font-weight:600;color:#475569;user-select:none;}
 .identity-fold>summary::-webkit-details-marker{display:none;}
 .identity-sum-title::before{content:"▸ ";display:inline-block;transition:transform .15s;}
 details.identity-fold[open] .identity-sum-title::before{transform:rotate(90deg);}
-.identity-preview{font-family:ui-monospace,monospace;font-weight:400;font-size:0.78rem;color:#64748b;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.identity-inner{padding:0 0.65rem 0.55rem;border-top:1px solid #e2e8f0;}
-.identity-hint{font-size:0.72rem;color:#64748b;margin:0.35rem 0;line-height:1.35;}
-.identity-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:0.35rem 0.5rem;margin-bottom:0.35rem;}
-.lbl-preset{font-size:0.78rem;color:#475569;display:flex;align-items:center;gap:0.35rem;}
-.sel-compact{min-width:140px;max-width:min(52vw,280px);padding:0.2rem 0.35rem;font-size:0.8rem;border-radius:4px;border:1px solid #cbd5e1;}
+.identity-preview{font-family:ui-monospace,monospace;font-weight:400;font-size:var(--text-xs);color:var(--muted);max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.identity-inner{padding:0.4rem 0.65rem 0.55rem;border-top:1px solid #f1f5f9;}
+.identity-hint{font-size:var(--text-xs);color:var(--muted);margin:0.25rem 0;line-height:1.45;}
+.identity-hint--tight{margin-top:0;margin-bottom:0.2rem;}
+.identity-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:0.4rem 0.5rem;margin-bottom:0.25rem;}
+.lbl-preset{font-size:var(--text-sm);color:#475569;display:flex;align-items:center;gap:0.35rem;}
+.lbl-session{flex:1;min-width:0;align-items:stretch;}
+.sel-compact{min-width:120px;max-width:min(52vw,280px);font-size:var(--text-sm);}
+.session-sel{flex:1;min-width:min(100%,160px);max-width:none;width:auto;}
 .identity-grid{display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 0.65rem;margin-bottom:0.35rem;}
 @media (max-width:520px){.identity-grid{grid-template-columns:1fr;}}
-.identity-grid label{display:flex;flex-direction:column;gap:0.12rem;font-size:0.72rem;color:#475569;font-weight:500;}
-.identity-grid input{padding:0.3rem 0.45rem;font-size:0.82rem;border:1px solid #cbd5e1;border-radius:4px;}
-.btn-sm{padding:0.28rem 0.55rem;font-size:0.78rem;border-radius:5px;border:1px solid #cbd5e1;background:#fff;}
+.identity-grid label{display:flex;flex-direction:column;gap:0.12rem;font-size:var(--text-xs);color:#475569;font-weight:500;}
+.identity-grid input{font-size:var(--text-sm);}
+.btn-sm{padding:0.28rem 0.55rem;font-size:var(--text-xs);border-radius:6px;border:1px solid #cbd5e1;background:#fff;}
 .btn-sm:hover:not(:disabled){background:#f1f5f9;}
 .btn-secondary{width:100%;margin-top:0.15rem;color:#475569;}
+.identity-feedback{min-height:1.1rem;font-size:var(--text-xs);margin:0.15rem 0 0;line-height:1.35;color:#059669;}
+.identity-section-title{font-size:0.6875rem;font-weight:700;color:#64748b;margin:0.45rem 0 0.2rem;text-transform:uppercase;letter-spacing:0.06em;}
+.identity-session-row{display:flex;flex-wrap:wrap;align-items:center;gap:0.4rem;margin:0.3rem 0 0;}
+.identity-session-row--compact{margin-top:0.4rem;}
+.identity-session-row .sid-chip{flex:1;min-width:min(100%,160px);}
+.sid-label{font-size:var(--text-xs);color:var(--muted);font-weight:600;flex-shrink:0;}
+.preset-outline{font-size:var(--text-xs);color:#475569;margin:0.4rem 0 0;padding:0.45rem 0.55rem;background:#f8fafc;border:none;border-radius:var(--radius-panel);max-height:8rem;overflow:auto;}
+.preset-outline ul{margin:0;padding-left:1.1rem;}
+.preset-outline li{margin:0.2rem 0;}
+.session-toolbar{margin:0;}
+.session-toolbar--compact{display:flex;flex-wrap:wrap;align-items:center;gap:0.45rem;margin:0.3rem 0 0;}
+.session-dialog{border:none;border-radius:12px;padding:0;max-width:min(94vw,440px);background:#fff;box-shadow:0 25px 50px -12px rgba(15,23,42,.28);}
+.session-dialog::backdrop{background:rgba(15,23,42,.38);}
+.session-dialog-inner{padding:0 0 0.5rem;}
+.session-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:0.5rem;padding:0.65rem 0.75rem 0.45rem;border-bottom:1px solid var(--border);}
+.session-dialog-title{font-size:1rem;font-weight:700;margin:0;color:#1e293b;letter-spacing:-0.02em;}
+.btn-icon{font-size:1.35rem;line-height:1;width:2rem;height:2rem;border:none;background:transparent;color:#64748b;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.btn-icon:hover{background:#f1f5f9;color:#334155;}
+.session-dialog .identity-hint{padding:0.35rem 0.75rem 0;}
+.session-manage-list{list-style:none;margin:0.4rem 0.75rem 0;padding:0;font-size:var(--text-sm);max-height:min(48vh,340px);overflow:auto;border:1px solid var(--border);border-radius:var(--radius-panel);background:#fff;}
+.session-manage-list li{padding:0.5rem 0.6rem;border-bottom:1px solid #f1f5f9;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:0.35rem;flex-wrap:wrap;}
+.session-manage-list li:last-child{border-bottom:none;}
+.session-manage-list li.active{background:#eff6ff;}
+.session-manage-list .sess-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--text-sm);color:#334155;}
+.session-manage-list .sess-meta{font-size:var(--text-xs);color:var(--muted);font-family:ui-monospace,monospace;}
+.session-manage-list .sess-del{font-size:var(--text-xs);color:#b91c1c;cursor:pointer;border:none;background:transparent;padding:0.2rem 0.35rem;border-radius:4px;}
+.session-manage-list .sess-del:hover{background:#fef2f2;text-decoration:none;}
+.session-dialog-foot{padding:0.55rem 0.75rem 0.65rem;display:flex;justify-content:flex-start;}
 """
 
 # 全站 Demo：与「消息」面板同一视觉层级（panel + 顶栏 + 表格）
 _DEMO_BASE_CSS = """
-:root{--border:#e2e8f0;--muted:#64748b;--accent:#2563eb;--surface:#f8fafc;}
-body{font-family:system-ui,-apple-system,sans-serif;max-width:900px;margin:0 auto;padding:0.75rem 1rem 2rem;line-height:1.45;color:#1e293b;background:#fff;}
-textarea,input[type=text]{width:100%;max-width:100%;box-sizing:border-box;font:inherit;}
+:root{--border:#e2e8f0;--muted:#64748b;--accent:#2563eb;--surface:#f8fafc;--field-border:#cbd5e1;--field-radius:8px;--field-pad:0.55rem 0.65rem;--field-bg:#fff;--field-inset:inset 0 1px 2px rgba(15,23,42,.04);--section-gap:0.75rem;--radius-panel:10px;--text-xs:0.75rem;--text-sm:0.8125rem;}
+body{font-family:system-ui,-apple-system,sans-serif;max-width:880px;margin:0 auto;padding:0.65rem 1rem 1.75rem;line-height:1.5;color:#1e293b;background:#fff;font-size:var(--text-sm);}
+textarea,input[type=text],select{box-sizing:border-box;font:inherit;color:inherit;padding:var(--field-pad);border:1px solid var(--field-border);border-radius:var(--field-radius);line-height:1.45;background:var(--field-bg);box-shadow:var(--field-inset);}
+textarea,input[type=text]{width:100%;max-width:100%;}
+textarea{min-height:72px;}
+select{cursor:pointer;}
+textarea::placeholder,input[type=text]::placeholder{color:#94a3b8;}
 button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid #cbd5e1;background:#fff;}
 button:disabled{opacity:0.55;cursor:not-allowed;}
-button:focus-visible,summary:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
-.page-head{display:flex;align-items:baseline;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.35rem;}
-.page-title{font-size:1.35rem;font-weight:700;margin:0;letter-spacing:-0.02em;}
-.topnav{font-size:0.9rem;padding:0.35rem 0;margin-bottom:0.25rem;border-bottom:1px solid var(--border);}
+button:focus-visible,summary:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.page-head{display:flex;align-items:baseline;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin:0 0 0.15rem;}
+.page-title{font-size:1.28rem;font-weight:700;margin:0 0 var(--section-gap);letter-spacing:-0.02em;color:#0f172a;}
+.topnav{font-size:var(--text-sm);padding:0.3rem 0;margin-bottom:0.35rem;border-bottom:1px solid var(--border);}
 .topnav a{text-decoration:none;color:#334155;}
 .topnav a:hover{color:var(--accent);}
 .topnav .sep{margin:0 0.45rem;color:#94a3b8;}
-.hint{font-size:0.85rem;color:#475569;margin:0.25rem 0;line-height:1.4;}
+.hint{font-size:var(--text-sm);color:#475569;margin:0 0 var(--section-gap);line-height:1.45;max-width:62ch;}
 .hint a{color:var(--accent);}
 .row{display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin:0.35rem 0;}
 label.chk{display:inline-flex;align-items:center;gap:0.35rem;font-size:0.88rem;}
-.demo-panel{border:2px solid #bfdbfe;background:linear-gradient(180deg,#f0f9ff 0%,#fff 12%);padding:0.85rem 1rem;margin:0.75rem 0;border-radius:10px;box-shadow:0 1px 3px rgba(15,23,42,.06);}
-.demo-panel > legend{font-size:1.02rem;font-weight:700;padding:0 0.35rem;color:#1e3a5f;}
-.demo-panel--emerald{border-color:#6ee7b7;background:linear-gradient(180deg,#ecfdf5 0%,#fff 12%);}
+.demo-panel{border:1px solid #bfdbfe;background:linear-gradient(180deg,#f0f9ff 0%,#fff 14%);padding:0.75rem 0.9rem;margin:var(--section-gap) 0;border-radius:var(--radius-panel);}
+.demo-panel > legend{font-size:0.95rem;font-weight:700;padding:0 0.3rem;color:#1e3a5f;}
+.demo-panel--emerald{border-color:#a7f3d0;background:linear-gradient(180deg,#ecfdf5 0%,#fff 14%);}
 .demo-panel--emerald > legend{color:#065f46;}
-.demo-panel--violet{border-color:#c4b5fd;background:linear-gradient(180deg,#f5f3ff 0%,#fff 12%);}
+.demo-panel--violet{border-color:#ddd6fe;background:linear-gradient(180deg,#f5f3ff 0%,#fff 14%);}
 .demo-panel--violet > legend{color:#5b21b6;}
-.demo-panel--amber{border-color:#fcd34d;background:linear-gradient(180deg,#fffbeb 0%,#fff 12%);}
+.demo-panel--amber{border-color:#fde68a;background:linear-gradient(180deg,#fffbeb 0%,#fff 14%);}
 .demo-panel--amber > legend{color:#92400e;}
-.demo-panel--slate{border-color:#94a3b8;background:linear-gradient(180deg,#f1f5f9 0%,#fff 12%);}
+.demo-panel--slate{border-color:#cbd5e1;background:linear-gradient(180deg,#f1f5f9 0%,#fff 14%);}
 .demo-panel--slate > legend{color:#334155;}
 .mem-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem;margin:0.35rem 0;}
 .btn-primary{padding:0.45rem 0.9rem;font-weight:600;background:var(--accent);color:#fff;border-color:#1d4ed8;}
@@ -397,34 +533,128 @@ table.memtbl{width:100%;border-collapse:collapse;font-size:0.82rem;}
 """
 
 _CHAT_EXTRA_CSS = """
-#thread{border:1px solid var(--border);border-radius:10px;padding:0.75rem;margin:0.5rem 0 0.65rem;background:#fff;min-height:min(28vh,200px);max-height:min(58vh,560px);overflow:auto;display:flex;flex-direction:column;gap:0.65rem;box-shadow:inset 0 1px 2px rgba(15,23,42,.04);}
-.msg{max-width:94%;padding:0.5rem 0.75rem;border-radius:12px;font-size:0.92rem;line-height:1.5;}
+#thread{border:1px solid var(--border);border-radius:var(--radius-panel);padding:0.65rem 0.75rem;margin:0.4rem 0 0;background:#fff;min-height:min(26vh,180px);max-height:min(56vh,520px);overflow:auto;display:flex;flex-direction:column;gap:0.55rem;box-shadow:var(--field-inset);}
+.msg{max-width:94%;padding:0.45rem 0.65rem;border-radius:10px;font-size:var(--text-sm);line-height:1.5;}
 .msg.user{align-self:flex-end;background:#dbeafe;border:1px solid #93c5fd;}
 .msg.assistant{align-self:flex-start;background:#f1f5f9;border:1px solid #e2e8f0;}
-.msg .who{font-size:0.68rem;color:#64748b;margin-bottom:0.2rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;}
+.msg .who{font-size:var(--text-xs);color:var(--muted);margin-bottom:0.15rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;}
 .msg .body{white-space:pre-wrap;word-break:break-word;}
-.chat-meta{display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0 0 0.5rem;font-size:0.78rem;color:var(--muted);}
+.chat-meta{display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0 0 0.5rem;font-size:var(--text-xs);color:var(--muted);}
 .chat-meta .meta-label{font-weight:600;color:#64748b;}
-.sid-chip{font-family:ui-monospace,monospace;font-size:0.72rem;border:1px dashed #cbd5e1;background:#fff;padding:0.2rem 0.45rem;border-radius:4px;flex:1;min-width:0;}
-.composer{display:flex;gap:0.5rem;align-items:flex-end;margin-top:0.35rem;}
-.composer textarea{flex:1;min-height:76px;max-height:200px;resize:vertical;padding:0.55rem 0.65rem;border:1px solid #cbd5e1;border-radius:8px;line-height:1.45;}
-.btn-send{padding:0.55rem 1.1rem;font-weight:600;background:var(--accent);color:#fff;border-color:#1d4ed8;white-space:nowrap;align-self:stretch;display:flex;align-items:center;justify-content:center;min-width:5rem;}
+.sid-chip{font-family:ui-monospace,monospace;font-size:var(--text-xs);flex:1;min-width:0;}
+.composer{display:flex;gap:0.5rem;align-items:flex-end;margin-top:0.4rem;}
+.composer textarea{flex:1;min-height:76px;max-height:200px;resize:vertical;}
+.btn-send{padding:0.5rem 1rem;font-weight:600;background:var(--accent);color:#fff;border-color:#1d4ed8;white-space:nowrap;align-self:stretch;display:flex;align-items:center;justify-content:center;min-width:4.75rem;border-radius:var(--field-radius);}
 .btn-send:hover:not(:disabled){filter:brightness(1.05);}
-.composer-hint{font-size:0.72rem;color:var(--muted);margin:0.35rem 0 0;}
-#endOut{white-space:pre-wrap;border:1px solid var(--border);padding:0.55rem;margin-top:0.45rem;background:var(--surface);font-size:0.82rem;max-height:160px;overflow:auto;border-radius:6px;}
-#thinkOut,#techOut{white-space:pre-wrap;border:1px solid var(--border);padding:0.55rem;margin:0.35rem 0 0;background:#fff;font-family:ui-monospace,monospace;font-size:0.74rem;max-height:220px;overflow:auto;border-radius:6px;}
-details.trace{margin-top:0.45rem;}
-details.trace>summary{cursor:pointer;font-size:0.82rem;color:#475569;padding:0.25rem 0;}
-details.end-fold{border:1px solid var(--border);border-radius:8px;background:var(--surface);margin-top:0.75rem;padding:0;}
-details.end-fold>summary{list-style:none;cursor:pointer;padding:0.45rem 0.65rem;font-size:0.85rem;font-weight:600;color:#475569;}
+.composer-hint{font-size:var(--text-xs);color:var(--muted);margin:0.3rem 0 0;}
+#endOut{white-space:pre-wrap;border:1px solid var(--border);padding:0.5rem 0.55rem;margin-top:0.4rem;background:var(--surface);font-size:var(--text-xs);max-height:160px;overflow:auto;border-radius:var(--field-radius);}
+#thinkOut,#techOut{white-space:pre-wrap;border:1px solid var(--border);padding:0.5rem 0.55rem;margin:0.3rem 0 0;background:#fff;font-family:ui-monospace,monospace;font-size:var(--text-xs);max-height:220px;overflow:auto;border-radius:var(--field-radius);}
+details.trace{margin-top:0.35rem;}
+details.trace>summary{cursor:pointer;font-size:var(--text-sm);color:#475569;padding:0.2rem 0;}
+details.end-fold{border:1px solid var(--border);border-radius:var(--radius-panel);background:var(--surface);margin-top:var(--section-gap);padding:0;}
+details.end-fold>summary{list-style:none;cursor:pointer;padding:0.45rem 0.65rem;font-size:var(--text-sm);font-weight:600;color:#475569;}
 details.end-fold>summary::-webkit-details-marker{display:none;}
-.end-inner{padding:0 0.65rem 0.65rem;border-top:1px solid var(--border);}
-#btnEnd{padding:0.45rem 0.85rem;}
+.end-inner{padding:0 0.65rem 0.65rem;}
+#btnEnd{padding:0.4rem 0.8rem;margin-bottom:0.35rem;}
 """
 
 
-def _preset_script(default_cid: str) -> str:
-    """浏览器端：多组 client_id/user_id 预设（localStorage）。"""
+def _preset_script(
+    default_cid: str,
+    *,
+    mode: Literal["memory", "chat", "debug"] = "memory",
+) -> str:
+    """浏览器端：多组 client_id/user_id 预设（localStorage）。memory=完整编辑；chat/debug=仅下拉（对话页多会话在外层脚本）。"""
+    apply_preset = ""
+    if mode == "memory":
+        apply_preset = """
+  $('cid').value = p.client_id || DEFAULT_CID;
+  $('uid').value = p.user_id || '';
+  if (typeof clearSessionIfAny === 'function') clearSessionIfAny();
+  saveLastIdentity();
+  updateIdentityPreview();
+  if (!quiet) flashIdentityFeedback('已切换到该预设对应身份。');
+"""
+    elif mode in ("chat", "debug"):
+        apply_preset = """
+  if (typeof persistChatSessionState === 'function') persistChatSessionState();
+  $('cid').value = p.client_id || DEFAULT_CID;
+  $('uid').value = p.user_id || '';
+  saveLastIdentity();
+  updateIdentityPreview();
+  if (typeof onChatIdentityChanged === 'function') onChatIdentityChanged();
+  else if (typeof clearSessionIfAny === 'function') clearSessionIfAny();
+  if (!quiet) flashIdentityFeedback('已切换身份预设。');
+"""
+    manual_handler = ""
+    if mode == "memory":
+        manual_handler = """
+  $('btnApplyManual').onclick = () => {
+    saveLastIdentity();
+    updateIdentityPreview();
+    if (typeof clearSessionIfAny === 'function') clearSessionIfAny();
+    rebuildPresetSelect();
+    const idx = syncPresetSelectToFields();
+    const arr = loadPresets();
+    if (idx >= 0 && arr[idx]) {
+      flashIdentityFeedback('已确认身份；预设下拉已对齐到「' + (arr[idx].label || '预设') + '」。');
+    } else {
+      flashIdentityFeedback('已确认身份。当前输入与任一预设都不完全一致时，下拉不会自动切选项；可点「保存为预设」新增一条。');
+    }
+  };
+"""
+    save_del = ""
+    if mode == "memory":
+        save_del = """
+  $('btnSavePreset').onclick = () => {
+    const label = prompt('预设名称（便于识别）');
+    if (!label || !label.trim()) return;
+    const arr = loadPresets();
+    const nm = label.trim();
+    arr.push({ client_id: cid(), user_id: uid() || '', label: nm });
+    savePresets(arr);
+    rebuildPresetSelect();
+    requestAnimationFrame(() => {
+      const sel = getPresetSelect();
+      if (sel) {
+        _presetProgrammatic = true;
+        sel.value = String(arr.length - 1);
+        requestAnimationFrame(() => { _presetProgrammatic = false; });
+      }
+      flashIdentityFeedback('已保存预设「' + nm + '」，共 ' + arr.length + ' 条；下拉框已选中新项。');
+    });
+  };
+  $('btnDelPreset').onclick = () => {
+    const arr = loadPresets();
+    if (arr.length <= 1) { alert('至少保留一条预设'); return; }
+    const ps = getPresetSelect();
+    if (!ps) return;
+    const i = parseInt(ps.value, 10);
+    if (Number.isNaN(i)) return;
+    if (!confirm('删除预设 #' + i + ' ?')) return;
+    arr.splice(i, 1);
+    savePresets(arr);
+    rebuildPresetSelect();
+    applyPresetIndex('0', false);
+  };
+"""
+    init_inputs = ""
+    if mode == "memory":
+        init_inputs = """
+  $('cid').addEventListener('input', () => { saveLastIdentity(); updateIdentityPreview(); });
+  $('uid').addEventListener('input', () => { saveLastIdentity(); updateIdentityPreview(); });
+"""
+    else:
+        init_inputs = """
+  const _cidEl = $('cid');
+  const _uidEl = $('uid');
+  if (_cidEl && _cidEl.type !== 'hidden') _cidEl.addEventListener('input', () => { saveLastIdentity(); updateIdentityPreview(); });
+  if (_uidEl && _uidEl.type !== 'hidden') _uidEl.addEventListener('input', () => { saveLastIdentity(); updateIdentityPreview(); });
+"""
+    apply_btn = """
+  if ($('btnApplyPreset')) $('btnApplyPreset').onclick = () => { const ps = getPresetSelect(); if (ps) applyPresetIndex(ps.value, false); };
+"""
+
     return f"""
 const LS_PRESETS = 'ops_web_identity_presets_v1';
 const LS_LAST = 'ops_web_last_identity_v1';
@@ -433,15 +663,29 @@ const DEFAULT_CID = {json.dumps(default_cid)};
 function defaultPresets() {{
   return [{{ client_id: DEFAULT_CID, user_id: '', label: '默认' }}];
 }}
+/** 过滤 null/非法项，避免 rebuild 时 innerHTML 已清空却 append 失败导致下拉无任何 option */
 function loadPresets() {{
+  const fallback = defaultPresets();
   try {{
     const raw = localStorage.getItem(LS_PRESETS);
-    if (raw) {{
-      const a = JSON.parse(raw);
-      if (Array.isArray(a) && a.length) return a;
+    if (!raw) return fallback;
+    const a = JSON.parse(raw);
+    if (!Array.isArray(a) || !a.length) return fallback;
+    const cleaned = [];
+    for (const p of a) {{
+      if (!p || typeof p !== 'object') continue;
+      const client_id = String(p.client_id != null ? p.client_id : '').trim() || DEFAULT_CID;
+      const user_id = String(p.user_id != null ? p.user_id : '').trim();
+      const label = String(p.label != null ? p.label : '未命名').trim() || '未命名';
+      cleaned.push({{ client_id, user_id, label }});
     }}
+    if (!cleaned.length) return fallback;
+    if (cleaned.length !== a.length) {{
+      try {{ savePresets(cleaned); }} catch (e2) {{}}
+    }}
+    return cleaned;
   }} catch (e) {{}}
-  return defaultPresets();
+  return fallback;
 }}
 function savePresets(arr) {{
   localStorage.setItem(LS_PRESETS, JSON.stringify(arr));
@@ -453,6 +697,22 @@ function loadLastIdentity() {{
   }} catch (e) {{}}
   return null;
 }}
+/** 从未保存过时 getItem 为 null；优先用上次身份，避免下拉仍显示服务端 DEFAULT_CID */
+function seedPresetsIfMissing() {{
+  try {{
+    if (localStorage.getItem(LS_PRESETS) !== null) return;
+    const last = loadLastIdentity();
+    if (last && String(last.client_id || '').trim()) {{
+      savePresets([{{
+        client_id: String(last.client_id).trim() || DEFAULT_CID,
+        user_id: String(last.user_id != null ? last.user_id : '').trim(),
+        label: '默认',
+      }}]);
+    }} else {{
+      savePresets(defaultPresets());
+    }}
+  }} catch (e) {{}}
+}}
 function saveLastIdentity() {{
   localStorage.setItem(LS_LAST, JSON.stringify({{ client_id: cid(), user_id: uid() || '' }}));
 }}
@@ -463,62 +723,140 @@ function updateIdentityPreview() {{
   const u = $('uid').value.trim();
   el.textContent = u ? c + ' / ' + u : c;
 }}
-function rebuildPresetSelect() {{
-  const sel = $('presetSel');
+function flashIdentityFeedback(msg) {{
+  const el = document.getElementById('identityFeedback');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = '#059669';
+  if (el._ft) clearTimeout(el._ft);
+  el._ft = setTimeout(() => {{ el.textContent = ''; }}, 5500);
+}}
+let _presetProgrammatic = false;
+
+/** 不依赖全局 `$`，避免与扩展或其它脚本冲突；兼容旧 id presetSel */
+function getPresetSelect() {{
+  return (
+    document.getElementById('identityPresetSel')
+    || document.querySelector('select[data-role="identity-preset"]')
+    || document.getElementById('presetSel')
+    || document.querySelector('.identity-toolbar select.sel-compact')
+  );
+}}
+
+function renderPresetOutline() {{
+  const wrap = document.getElementById('presetOutline');
+  const ul = document.getElementById('presetOutlineList');
+  if (!wrap || !ul) return;
   const arr = loadPresets();
-  sel.innerHTML = '';
+  ul.innerHTML = '';
   arr.forEach((p, i) => {{
+    if (!p) return;
+    const li = document.createElement('li');
+    li.textContent = (p.label || '未命名') + ' → client_id=' + (p.client_id || DEFAULT_CID) + (p.user_id ? ', user_id=' + p.user_id : '');
+    ul.appendChild(li);
+  }});
+  wrap.hidden = false;
+}}
+
+/** 仅一条「默认」预设时与输入框 cid/uid 对齐，避免界面显示 demo_client 而输入框已是其它租户名 */
+function syncSingleDefaultPresetFromInputs() {{
+  try {{
+    const arr = loadPresets();
+    if (arr.length !== 1) return;
+    const p = arr[0];
+    if (!p || String(p.label || '') !== '默认') return;
+    const c = ($('cid').value.trim() || DEFAULT_CID);
+    const u = $('uid').value.trim();
+    const pc = String(p.client_id != null ? p.client_id : '').trim() || DEFAULT_CID;
+    const pu = String(p.user_id != null ? p.user_id : '').trim();
+    if (pc === c && pu === u) return;
+    p.client_id = c;
+    p.user_id = u;
+    savePresets(arr);
+  }} catch (e) {{}}
+}}
+
+function appendPresetOptions(sel, arr) {{
+  while (sel.options.length) {{ sel.remove(0); }}
+  arr.forEach((p, i) => {{
+    if (!p || typeof p !== 'object') return;
     const o = document.createElement('option');
     o.value = String(i);
-    o.textContent = (p.label || '未命名') + ' — ' + p.client_id + (p.user_id ? ' / ' + p.user_id : '');
+    const c0 = String(p.client_id != null ? p.client_id : '').trim() || DEFAULT_CID;
+    const u0 = String(p.user_id != null ? p.user_id : '').trim();
+    o.textContent = (p.label || '未命名') + ' — ' + c0 + (u0 ? ' / ' + u0 : '');
     sel.appendChild(o);
   }});
 }}
-function applyPresetIndex(i) {{
+
+function rebuildPresetSelect() {{
+  _presetProgrammatic = true;
+  try {{
+    syncSingleDefaultPresetFromInputs();
+    const sel = getPresetSelect();
+    if (!sel) return;
+    let arr = loadPresets();
+    appendPresetOptions(sel, arr);
+    if (sel.options.length === 0) {{
+      savePresets(defaultPresets());
+      appendPresetOptions(sel, loadPresets());
+    }}
+    renderPresetOutline();
+  }} finally {{
+    requestAnimationFrame(() => {{ _presetProgrammatic = false; }});
+  }}
+}}
+
+/** 根据当前输入框，选中「完全一致」的那条预设；无匹配则不动下拉框。返回匹配下标或 -1 */
+function syncPresetSelectToFields() {{
+  const arr = loadPresets();
+  const c = ($('cid').value.trim() || DEFAULT_CID);
+  const u = $('uid').value.trim();
+  let idx = -1;
+  for (let i = 0; i < arr.length; i++) {{
+    const row = arr[i];
+    if (!row) continue;
+    const pc = (row.client_id || '').trim() || DEFAULT_CID;
+    const pu = (row.user_id || '').trim();
+    if (pc === c && pu === u) {{ idx = i; break; }}
+  }}
+  const sel = getPresetSelect();
+  if (sel && idx >= 0) {{
+    _presetProgrammatic = true;
+    sel.value = String(idx);
+    requestAnimationFrame(() => {{ _presetProgrammatic = false; }});
+  }}
+  return idx;
+}}
+
+function applyPresetIndex(i, quiet) {{
   const arr = loadPresets();
   const p = arr[parseInt(i, 10)];
-  if (!p) return;
-  $('cid').value = p.client_id || DEFAULT_CID;
-  $('uid').value = p.user_id || '';
-  if (typeof clearSessionIfAny === 'function') clearSessionIfAny();
-  saveLastIdentity();
-  updateIdentityPreview();
+  if (!p || typeof p !== 'object') return;
+{apply_preset}
 }}
+
 function initIdentityUI() {{
-  rebuildPresetSelect();
+  seedPresetsIfMissing();
   const last = loadLastIdentity();
   if (last && last.client_id) {{
     $('cid').value = last.client_id;
     $('uid').value = last.user_id || '';
   }}
-  $('cid').addEventListener('input', () => {{ saveLastIdentity(); updateIdentityPreview(); }});
-  $('uid').addEventListener('input', () => {{ saveLastIdentity(); updateIdentityPreview(); }});
-  $('btnApplyPreset').onclick = () => applyPresetIndex($('presetSel').value);
-  $('btnSavePreset').onclick = () => {{
-    const label = prompt('预设名称（便于识别）');
-    if (!label) return;
-    const arr = loadPresets();
-    arr.push({{ client_id: cid(), user_id: uid() || '', label: label.trim() }});
-    savePresets(arr);
-    rebuildPresetSelect();
-    $('presetSel').value = String(arr.length - 1);
-  }};
-  $('btnDelPreset').onclick = () => {{
-    const arr = loadPresets();
-    if (arr.length <= 1) {{ alert('至少保留一条预设'); return; }}
-    const i = parseInt($('presetSel').value, 10);
-    if (!confirm('删除预设 #' + i + ' ?')) return;
-    arr.splice(i, 1);
-    savePresets(arr);
-    rebuildPresetSelect();
-    applyPresetIndex(0);
-  }};
-  $('btnApplyManual').onclick = () => {{
-    saveLastIdentity();
-    updateIdentityPreview();
-    if (typeof clearSessionIfAny === 'function') clearSessionIfAny();
-  }};
+  rebuildPresetSelect();
+{init_inputs}
+  const presetSel = getPresetSelect();
+  if (presetSel) {{
+    presetSel.addEventListener('change', () => {{
+      if (_presetProgrammatic) return;
+      applyPresetIndex(presetSel.value, false);
+    }});
+  }}
+{apply_btn}
+{save_del}
+{manual_handler}
   updateIdentityPreview();
+  syncPresetSelectToFields();
 }}
 """
 
@@ -537,23 +875,22 @@ def _page_chat_html(default_cid: str) -> str:
 <div class="page-head">
   <h1 class="page-title">对话</h1>
 </div>
-{_identity_block(default_cid, page_note="与 session 绑定；切换身份会清空本页 session。")}
+{_identity_block_chat(default_cid)}
 
 <fieldset class="demo-panel">
 <legend>消息</legend>
-<div class="chat-meta">
-  <span class="meta-label">Session</span>
-  <input id="sid" class="sid-chip" type="text" readonly placeholder="发送首条消息后生成" title="当前多轮会话 ID"/>
+<div class="row" style="margin:0 0 0.5rem">
+  <label class="chk"><input type="checkbox" id="chkSlow" checked/> 启用 Reasoning（慢推理 / Agno <code>reasoning</code>；默认开，与 <code>OPS_WEB_SLOW</code> 一致，可在此覆盖）</label>
 </div>
 <div id="thread"></div>
 <div class="composer">
   <textarea id="msg" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）" rows="3" autocomplete="off"></textarea>
   <button type="button" class="btn-send" id="go">发送</button>
 </div>
-<p class="composer-hint">上方为<strong>本会话全部轮次</strong>（同一 Session 内累计）。调试指令栈与工具见 <a href="/debug">流程与 Prompt</a>。</p>
+<p class="composer-hint">上方为<strong>当前选中的对话</strong>全部轮次（同一服务端 Session 内累计）。身份预设请在 <a href="/memory">记忆管理</a> 维护；调试见 <a href="/debug">流程与 Prompt</a>。</p>
 <details class="think trace">
 <summary><strong>思考过程</strong> · reasoning</summary>
-<p class="hint" style="font-size:0.78rem">若为空：可设 <code>OPS_WEB_SLOW=1</code>。工具参数见下一栏。</p>
+<p class="hint" style="font-size:0.78rem">若为空：请勾选上方「启用 Reasoning」或设环境变量。工具参数见下一栏。</p>
 <pre id="thinkOut">（发送后显示）</pre>
 </details>
 <details class="tech trace">
@@ -584,16 +921,48 @@ async function post(path, body) {{
   return j;
 }}
 
-{_preset_script(default_cid)}
+{_preset_script(default_cid, mode="chat")}
 
 const cid = () => $('cid').value.trim() || DEFAULT_CID;
 const uid = () => {{ const v = $('uid').value.trim(); return v || null; }};
 const sid = () => $('sid').value.trim();
 
+const LS_SESS = 'ops_web_chat_sessions_v1';
+let currentTurns = [];
+
+function loadSessionStore() {{
+  try {{
+    const raw = localStorage.getItem(LS_SESS);
+    if (raw) return JSON.parse(raw);
+  }} catch (e) {{}}
+  return {{}};
+}}
+function saveSessionStore(st) {{
+  localStorage.setItem(LS_SESS, JSON.stringify(st));
+}}
+function genChatLocalId() {{
+  return 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+}}
+function identityKey() {{
+  return ($('cid').value.trim() || DEFAULT_CID) + '::' + ($('uid').value.trim() || '');
+}}
+function getOrCreateBucket() {{
+  const st = loadSessionStore();
+  const k = identityKey();
+  if (!st[k]) {{
+    st[k] = {{ currentId: null, sessions: [] }};
+    saveSessionStore(st);
+  }}
+  return {{ st, k, bucket: st[k] }};
+}}
+
 function renderThread(history) {{
+  currentTurns = (history && history.length)
+    ? history.map((t) => ({{ role: t.role, content: String(t.content) }}))
+    : [];
   const el = $('thread');
   el.innerHTML = '';
-  if (!history || !history.length) {{
+  if (!currentTurns.length) {{
     const p = document.createElement('p');
     p.className = 'hint';
     p.style.margin = '0';
@@ -601,7 +970,7 @@ function renderThread(history) {{
     el.appendChild(p);
     return;
   }}
-  history.forEach((turn) => {{
+  currentTurns.forEach((turn) => {{
     const wrap = document.createElement('div');
     wrap.className = 'msg ' + (turn.role === 'user' ? 'user' : 'assistant');
     const who = document.createElement('div');
@@ -615,6 +984,140 @@ function renderThread(history) {{
     el.appendChild(wrap);
   }});
   el.scrollTop = el.scrollHeight;
+}}
+
+function persistChatSessionState() {{
+  try {{
+    const {{ st, bucket }} = getOrCreateBucket();
+    const cur = bucket.sessions.find((s) => s.id === bucket.currentId);
+    if (cur) {{
+      cur.turns = currentTurns.slice();
+      cur.serverSessionId = $('sid').value.trim() || null;
+      cur.updatedAt = Date.now();
+      saveSessionStore(st);
+    }}
+  }} catch (e) {{}}
+}}
+
+let _sessionSelProgrammatic = false;
+
+function populateSessionSelect() {{
+  const sel = $('sessionSel');
+  if (!sel) return;
+  const {{ bucket }} = getOrCreateBucket();
+  _sessionSelProgrammatic = true;
+  try {{
+    sel.innerHTML = '';
+    bucket.sessions.forEach((s) => {{
+      const o = document.createElement('option');
+      o.value = s.id;
+      const raw = (s.title || '对话') + (s.serverSessionId ? ' · ' + String(s.serverSessionId).slice(0, 8) : '');
+      o.textContent = raw.length > 42 ? raw.slice(0, 40) + '…' : raw;
+      sel.appendChild(o);
+    }});
+    if (bucket.currentId) sel.value = bucket.currentId;
+  }} finally {{
+    requestAnimationFrame(() => {{ _sessionSelProgrammatic = false; }});
+  }}
+}}
+
+function renderSessionManageList() {{
+  const ul = $('sessionManageUl');
+  if (!ul) return;
+  const {{ bucket }} = getOrCreateBucket();
+  ul.innerHTML = '';
+  bucket.sessions.forEach((s) => {{
+    const li = document.createElement('li');
+    if (s.id === bucket.currentId) li.className = 'active';
+    const title = document.createElement('span');
+    title.className = 'sess-title';
+    title.textContent = s.title || '对话';
+    const meta = document.createElement('span');
+    meta.className = 'sess-meta';
+    meta.textContent = s.serverSessionId ? (String(s.serverSessionId).slice(0, 12) + '…') : '未发送';
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'sess-del';
+    del.textContent = '删除';
+    del.onclick = (e) => {{ e.stopPropagation(); deleteChatSession(s.id); }};
+    li.onclick = () => {{
+      if (s.id !== bucket.currentId) {{
+        switchChatSession(s.id);
+        const dlg = $('sessionDialog');
+        if (dlg && typeof dlg.close === 'function') dlg.close();
+      }}
+    }};
+    li.appendChild(title);
+    li.appendChild(meta);
+    li.appendChild(del);
+    ul.appendChild(li);
+  }});
+}}
+
+function renderSessionUI() {{
+  populateSessionSelect();
+  renderSessionManageList();
+}}
+
+function switchChatSession(localId) {{
+  persistChatSessionState();
+  const {{ st, bucket }} = getOrCreateBucket();
+  if (!bucket.sessions.find((s) => s.id === localId)) return;
+  bucket.currentId = localId;
+  saveSessionStore(st);
+  const cur = bucket.sessions.find((s) => s.id === localId);
+  $('sid').value = cur.serverSessionId || '';
+  renderThread(cur.turns || []);
+  $('thinkOut').textContent = '';
+  $('techOut').textContent = '';
+  renderSessionUI();
+}}
+
+function deleteChatSession(localId) {{
+  const {{ st, bucket }} = getOrCreateBucket();
+  if (bucket.sessions.length <= 1) {{ alert('至少保留一条对话'); return; }}
+  if (!confirm('删除该对话的本地记录？（不影响服务端已结束的 Session）')) return;
+  bucket.sessions = bucket.sessions.filter((s) => s.id !== localId);
+  if (bucket.currentId === localId)
+    bucket.currentId = bucket.sessions[0] ? bucket.sessions[0].id : null;
+  if (!bucket.currentId && bucket.sessions.length) bucket.currentId = bucket.sessions[0].id;
+  saveSessionStore(st);
+  loadSessionsForIdentity();
+}}
+
+function newChatSession() {{
+  persistChatSessionState();
+  const {{ st, bucket }} = getOrCreateBucket();
+  const id = genChatLocalId();
+  bucket.sessions.unshift({{ id, serverSessionId: null, title: '新对话', turns: [], updatedAt: Date.now() }});
+  bucket.currentId = id;
+  saveSessionStore(st);
+  $('sid').value = '';
+  renderThread([]);
+  $('thinkOut').textContent = '';
+  $('techOut').textContent = '';
+  renderSessionUI();
+}}
+
+function loadSessionsForIdentity() {{
+  const {{ st, bucket }} = getOrCreateBucket();
+  if (!bucket.sessions.length) {{
+    const id = genChatLocalId();
+    bucket.sessions.push({{ id, serverSessionId: null, title: '新对话', turns: [], updatedAt: Date.now() }});
+    bucket.currentId = id;
+    saveSessionStore(st);
+  }}
+  if (!bucket.currentId || !bucket.sessions.find((s) => s.id === bucket.currentId))
+    bucket.currentId = bucket.sessions[0].id;
+  saveSessionStore(st);
+  const cur = bucket.sessions.find((s) => s.id === bucket.currentId);
+  $('sid').value = cur.serverSessionId || '';
+  renderThread(cur.turns || []);
+  renderSessionUI();
+}}
+
+function onChatIdentityChanged() {{
+  loadSessionsForIdentity();
 }}
 
 function renderTrace(t) {{
@@ -641,13 +1144,77 @@ function renderTrace(t) {{
 
 function clearSessionIfAny() {{
   $('sid').value = '';
+  currentTurns = [];
   renderThread([]);
+  const {{ st, bucket }} = getOrCreateBucket();
+  const cur = bucket.sessions.find((s) => s.id === bucket.currentId);
+  if (cur) {{
+    cur.turns = [];
+    cur.serverSessionId = null;
+    saveSessionStore(st);
+  }}
   $('thinkOut').textContent = '';
   $('techOut').textContent = '';
 }}
 
 initIdentityUI();
-renderThread([]);
+loadSessionsForIdentity();
+
+(function wireSessionButtons() {{
+  const btnCopy = $('btnCopySid');
+  const btnNew = $('btnNewChat');
+  const btnDlg = $('btnManageSessions');
+  const dlg = $('sessionDialog');
+  const btnClose = $('btnCloseSessionDialog');
+  const btnNewDlg = $('btnNewChatDialog');
+  const sessionSel = $('sessionSel');
+  if (sessionSel) {{
+    sessionSel.addEventListener('change', () => {{
+      if (_sessionSelProgrammatic) return;
+      switchChatSession(sessionSel.value);
+    }});
+  }}
+  if (btnCopy) {{
+    btnCopy.onclick = async () => {{
+      const s = ($('sid') && $('sid').value) ? $('sid').value.trim() : '';
+      if (!s) {{ flashIdentityFeedback('当前没有可复制的 Session'); return; }}
+      try {{
+        await navigator.clipboard.writeText(s);
+        flashIdentityFeedback('已复制 Session 到剪贴板');
+      }} catch (e) {{ alert(String(e)); }}
+    }};
+  }}
+  if (btnNew) btnNew.onclick = () => newChatSession();
+  if (btnDlg && dlg) {{
+    btnDlg.onclick = () => {{
+      renderSessionManageList();
+      if (typeof dlg.showModal === 'function') dlg.showModal();
+    }};
+  }}
+  if (btnClose && dlg) btnClose.onclick = () => dlg.close();
+  if (dlg) {{
+    dlg.addEventListener('click', (e) => {{ if (e.target === dlg) dlg.close(); }});
+  }}
+  if (btnNewDlg) {{
+    btnNewDlg.onclick = () => {{
+      newChatSession();
+      if (dlg && typeof dlg.close === 'function') dlg.close();
+    }};
+  }}
+}})();
+
+const LS_SLOW = 'ops_web_use_slow';
+function useSlow() {{ return $('chkSlow').checked; }}
+function initSlowToggle() {{
+  try {{
+    if (localStorage.getItem(LS_SLOW) === '0') $('chkSlow').checked = false;
+    else $('chkSlow').checked = true;
+  }} catch (e) {{ $('chkSlow').checked = true; }}
+  $('chkSlow').addEventListener('change', () => {{
+    localStorage.setItem(LS_SLOW, $('chkSlow').checked ? '1' : '0');
+  }});
+}}
+initSlowToggle();
 
 const btnGo = $('go');
 $('msg').addEventListener('keydown', (e) => {{
@@ -670,12 +1237,28 @@ $('go').onclick = async () => {{
       session_id: sid() || null,
       client_id: cid(),
       user_id: uid(),
+      use_slow_reasoning: useSlow(),
       include_trace: true,
     }});
     $('sid').value = j.session_id;
-    if (j.history && j.history.length) renderThread(j.history);
-    else renderThread([{{ role: 'user', content: message }}, {{ role: 'assistant', content: j.reply }}]);
+    let hist;
+    if (j.history && j.history.length) hist = j.history;
+    else hist = [{{ role: 'user', content: message }}, {{ role: 'assistant', content: j.reply }}];
+    renderThread(hist);
     renderTrace(j.trace);
+    try {{
+      const {{ st, bucket }} = getOrCreateBucket();
+      const cur = bucket.sessions.find((s) => s.id === bucket.currentId);
+      if (cur) {{
+        cur.serverSessionId = j.session_id;
+        cur.turns = currentTurns.slice();
+        cur.updatedAt = Date.now();
+        const fu = cur.turns.find((t) => t.role === 'user');
+        if (fu && fu.content) cur.title = fu.content.slice(0, 28) + (fu.content.length > 28 ? '…' : '');
+        saveSessionStore(st);
+      }}
+    }} catch (e) {{}}
+    renderSessionUI();
     $('msg').value = '';
     saveLastIdentity();
     $('msg').focus();
@@ -704,6 +1287,7 @@ $('btnEnd').onclick = async () => {{
       session_id: s,
       client_id: cid(),
       user_id: uid(),
+      use_slow_reasoning: useSlow(),
       task_id: $('taskIdEnd').value.trim() || null,
       run_review: $('chkReview').checked,
     }});
@@ -711,6 +1295,16 @@ $('btnEnd').onclick = async () => {{
     $('sid').value = '';
     $('chkReview').checked = false;
     renderThread([]);
+    try {{
+      const {{ st, bucket }} = getOrCreateBucket();
+      const cur = bucket.sessions.find((s) => s.id === bucket.currentId);
+      if (cur) {{
+        cur.turns = [];
+        cur.serverSessionId = null;
+        saveSessionStore(st);
+      }}
+    }} catch (e) {{}}
+    renderSessionUI();
     $('thinkOut').textContent = '';
     $('techOut').textContent = '';
   }} catch (e) {{ $('endOut').textContent = String(e); }}
@@ -727,13 +1321,12 @@ def _page_memory_html(default_cid: str) -> str:
 <style>
 {_DEMO_BASE_CSS}
 {_IDENTITY_CSS}
-textarea{{min-height:72px;}}
 </style></head>
 <body>
 {_nav_html("memory")}
 <h1 class="page-title">记忆管理</h1>
-<p class="hint">列表与写入均针对下方 <strong>当前身份</strong>。结束对话与复盘请在 <a href="/">对话页</a>；Agent 指令与工具见 <a href="/debug">流程与 Prompt</a>。</p>
-{_identity_block(default_cid, page_note="切换身份后请「刷新」下方列表以查看对应租户数据。", open_default=True)}
+<p class="hint">列表与写入均针对下方 <strong>当前身份</strong>。与对话页共用「启用 Reasoning」开关（浏览器 <code>localStorage</code> <code>ops_web_use_slow</code>）。结束对话与复盘请在 <a href="/">对话页</a>；指令栈见 <a href="/debug">流程与 Prompt</a>。</p>
+{_identity_block_memory(default_cid, page_note="在此编辑 <strong>client_id / user_id</strong> 并维护<strong>身份预设</strong>；对话页下拉选项来自此处。", open_default=True)}
 
 <fieldset class="demo-panel demo-panel--emerald">
 <legend>画像层（Mem0 或本地 local_memory.json）</legend>
@@ -789,6 +1382,10 @@ async function getq(path) {{
 
 const cid = () => $('cid').value.trim() || DEFAULT_CID;
 const uid = () => {{ const v = $('uid').value.trim(); return v || null; }};
+const LS_SLOW = 'ops_web_use_slow';
+function useSlowFromStorage() {{
+  try {{ return localStorage.getItem(LS_SLOW) !== '0'; }} catch (e) {{ return true; }}
+}}
 
 function qUser() {{
   const u = uid();
@@ -805,7 +1402,7 @@ async function refreshProfile() {{
   $('memList').textContent = '…';
   $('profHint').textContent = '';
   try {{
-    const j = await getq('/api/memory/profile/list?client_id=' + encodeURIComponent(cid()) + qUser());
+    const j = await getq('/api/memory/profile/list?client_id=' + encodeURIComponent(cid()) + qUser() + '&use_slow=' + useSlowFromStorage());
     $('profHint').textContent = (j.backend || '') + ' | ' + (j.path || '');
     if (j.delete_note) $('profHint').textContent += ' — ' + j.delete_note;
     if (!j.items || !j.items.length) {{ $('memList').textContent = '（无条目）'; return; }}
@@ -820,7 +1417,7 @@ async function refreshProfile() {{
       btn.onclick = async () => {{
         if (!confirm('删除 index=' + btn.dataset.idx + ' ?')) return;
         try {{
-          await post('/api/memory/profile/delete-local', {{ client_id: cid(), user_id: uid(), index: parseInt(btn.dataset.idx,10) }});
+          await post('/api/memory/profile/delete-local', {{ client_id: cid(), user_id: uid(), use_slow_reasoning: useSlowFromStorage(), index: parseInt(btn.dataset.idx,10) }});
           await refreshProfile();
         }} catch (e) {{ alert(e); }}
       }};
@@ -831,7 +1428,7 @@ async function refreshProfile() {{
 async function refreshHind() {{
   $('hindList').textContent = '…';
   try {{
-    const j = await getq('/api/memory/hindsight/list?client_id=' + encodeURIComponent(cid()));
+    const j = await getq('/api/memory/hindsight/list?client_id=' + encodeURIComponent(cid()) + '&use_slow=' + useSlowFromStorage());
     if (!j.items || !j.items.length) {{ $('hindList').textContent = '（无条目）'; return; }}
     $('hindList').innerHTML = '<table class="memtbl"><tr><th>行号</th><th>内容</th><th></th></tr>' +
       j.items.map(it => '<tr><td>' + it.file_line + '</td><td>' + esc(JSON.stringify(it.row)) + '</td><td><button type="button" class="delHind" data-line="' + it.file_line + '">删除</button></td></tr>').join('') + '</table>';
@@ -839,7 +1436,7 @@ async function refreshHind() {{
       btn.onclick = async () => {{
         if (!confirm('删除 hindsight 第 ' + btn.dataset.line + ' 行？')) return;
         try {{
-          await post('/api/memory/hindsight/delete-line', {{ client_id: cid(), file_line: parseInt(btn.dataset.line,10) }});
+          await post('/api/memory/hindsight/delete-line', {{ client_id: cid(), use_slow_reasoning: useSlowFromStorage(), file_line: parseInt(btn.dataset.line,10) }});
           await refreshHind();
         }} catch (e) {{ alert(e); }}
       }};
@@ -855,6 +1452,7 @@ async function ingest(kind, textEl, extra = {{}}) {{
     const j = await post('/api/memory/ingest', {{
       client_id: cid(),
       user_id: uid(),
+      use_slow_reasoning: useSlowFromStorage(),
       kind,
       text,
       ...extra,
@@ -888,8 +1486,8 @@ def _page_debug_html(default_cid: str) -> str:
 <body>
 {_nav_html("debug")}
 <h1 class="page-title">流程与 Prompt</h1>
-<p class="hint">展示<strong>当前身份</strong>下与 <a href="/">对话页</a>一致的 Agent：运行时元数据、系统指令栈、工具列表及 Manifest。切换身份或改 <code>.env</code> 后请点「刷新」或重启服务。</p>
-{_identity_block(default_cid, page_note="与对话共用同一套 Agent 缓存键 (client_id, user_id)。", open_default=False)}
+<p class="hint">展示<strong>当前身份预设</strong>下与 <a href="/">对话页</a>一致的 Agent；增删预设请到 <a href="/memory">记忆管理</a>。对话页「启用 Reasoning」存在浏览器 <code>localStorage</code>，本页刷新时会带上同一开关以匹配缓存。改 <code>.env</code> 后请重启服务。</p>
+{_identity_block_chat(default_cid, show_session_panel=False)}
 
 <fieldset class="demo-panel">
 <legend>运行时摘要</legend>
@@ -900,35 +1498,36 @@ def _page_debug_html(default_cid: str) -> str:
 </fieldset>
 
 <fieldset class="demo-panel demo-panel--slate">
-<legend>工作流（概念）</legend>
-<p class="hint">以下为 ops-agent 典型检索顺序与一轮对话的数据流，便于与下方「指令栈 / 工具」对照调试。</p>
+<legend>Agent 执行工作流（调试主视图）</legend>
+<p class="hint"><strong>指令栈（instructions）</strong>：在 Agno 里会作为<strong>系统侧指令</strong>注入模型（多条列表会合并进同一次 system 上下文）。日常说「系统 prompt」时，通常包含这些条目里与人设、业务规则相关的文字，但<strong>不</strong>等同于某一条用户消息。</p>
+<p class="hint"><strong>Reasoning（慢推理）</strong>：由对话页勾选或环境变量 <code>OPS_WEB_SLOW</code>（默认视为开启）控制；开启时工厂设置 <code>thought_mode=slow</code>，Agno 可走多步 <code>reasoning</code>；关闭则 fast，通常无 <code>reasoning_content</code>。</p>
 <div class="flow-wrap">
-  <div class="flow-title">上下文检索顺序（retrieve_ordered_context）</div>
+  <div class="flow-title">一轮对话的主路径（你要调试的核心）</div>
   <div class="flow-row">
-    <div class="flow-node flow-node--hi"><strong>①</strong>Mem0 / 本地画像</div>
+    <div class="flow-node flow-node--hi"><strong>① 指令栈</strong>system 指令（见下方列表）</div>
     <span class="flow-arrow">→</span>
-    <div class="flow-node flow-node--hi"><strong>②</strong>Hindsight 教训</div>
+    <div class="flow-node flow-node--hi"><strong>② 可选 Reasoning</strong>Agno 多步推理</div>
     <span class="flow-arrow">→</span>
-    <div class="flow-node"><strong>③</strong>领域知识（Graphiti，未配置则提示）</div>
+    <div class="flow-node"><strong>③ 模型 + 工具</strong>含 retrieve / 业务工具</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node flow-node--ok"><strong>④ 输出</strong>回复；对话页可看 trace</div>
   </div>
 </div>
 <div class="flow-wrap">
-  <div class="flow-title">单次对话</div>
-  <div class="flow-col">
-    <div class="flow-row">
-      <div class="flow-node flow-node--hi"><strong>输入</strong>用户消息 + session</div>
-      <span class="flow-arrow">→</span>
-      <div class="flow-node flow-node--hi"><strong>Agent</strong>指令栈 + 可选 reasoning（OPS_WEB_SLOW）</div>
-      <span class="flow-arrow">→</span>
-      <div class="flow-node flow-node--ok"><strong>输出</strong>回复 / 工具调用（对话页展开 trace）</div>
-    </div>
+  <div class="flow-title">工具内检索链（retrieve_ordered_context）</div>
+  <div class="flow-row">
+    <div class="flow-node flow-node--hi"><strong>①</strong> Mem0 / 本地画像</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node flow-node--hi"><strong>②</strong> Hindsight</div>
+    <span class="flow-arrow">→</span>
+    <div class="flow-node"><strong>③</strong> 领域知识（未挂载则提示）</div>
   </div>
 </div>
 </fieldset>
 
 <fieldset class="demo-panel demo-panel--emerald">
 <legend>系统指令栈（instructions）</legend>
-<p class="hint">顺序与工厂 <code>get_agent</code> 注入一致；含 manifest、人格、handoff、golden、Web 附加说明等。</p>
+<p class="hint">下列顺序与 <code>get_agent</code> 注入一致（manifest、人格、handoff、golden、Web 附加说明等）。调试时改文案请优先改 manifest / 环境或源码中的基座指令。</p>
 <ol id="instrList" class="instr-ol"></ol>
 </fieldset>
 
@@ -957,10 +1556,14 @@ async function getq(path) {{
   return j;
 }}
 
-{_preset_script(default_cid)}
+{_preset_script(default_cid, mode="debug")}
 
 const cid = () => $('cid').value.trim() || DEFAULT_CID;
 const uid = () => {{ const v = $('uid').value.trim(); return v || null; }};
+const LS_SLOW = 'ops_web_use_slow';
+function useSlowFromStorage() {{
+  try {{ return localStorage.getItem(LS_SLOW) !== '0'; }} catch (e) {{ return true; }}
+}}
 
 function esc(s) {{
   const d = document.createElement('div');
@@ -976,10 +1579,11 @@ function renderInspect(j) {{
   const rows = [
     ['Agent', j.agent_name || '—'],
     ['Model', j.model_id || '—'],
-    ['Reasoning', j.reasoning === true ? ('是 ' + (j.reasoning_min_steps != null ? '(' + j.reasoning_min_steps + '–' + j.reasoning_max_steps + ' 步)' : '')) : String(j.reasoning)],
+    ['Reasoning（Agno）', j.reasoning === true ? ('是 ' + (j.reasoning_min_steps != null ? '(' + j.reasoning_min_steps + '–' + j.reasoning_max_steps + ' 步)' : '')) : String(j.reasoning)],
+    ['本页开关（已应用）', String(j.use_slow_reasoning_applied)],
+    ['环境默认（未传参时）', String(j.env_slow_default)],
     ['Markdown', String(j.markdown)],
     ['Persona', j.env_flags.OPS_AGENT_PERSONA],
-    ['OPS_WEB_SLOW', String(j.env_flags.OPS_WEB_SLOW)],
     ['OPS_WEB_NO_KNOWLEDGE', String(j.env_flags.OPS_WEB_NO_KNOWLEDGE)],
   ];
   rows.forEach(([k, v]) => {{
@@ -1014,6 +1618,7 @@ async function loadInspect() {{
     const params = new URLSearchParams({{ client_id: cid() }});
     const u = $('uid').value.trim();
     if (u) params.set('user_id', u);
+    params.set('use_slow', useSlowFromStorage() ? 'true' : 'false');
     const j = await getq('/api/agent/inspect?' + params.toString());
     renderInspect(j);
   }} catch (e) {{
@@ -1021,10 +1626,10 @@ async function loadInspect() {{
   }}
 }}
 
+function onChatIdentityChanged() {{ loadInspect(); }}
+
 initIdentityUI();
 $('btnInspectRefresh').onclick = () => {{ saveLastIdentity(); loadInspect(); }};
-['cid', 'uid'].forEach((id) => $(id).addEventListener('input', () => loadInspect()));
-['btnApplyPreset', 'btnApplyManual'].forEach((id) => $(id).addEventListener('click', () => setTimeout(loadInspect, 0)));
 loadInspect();
 </script>
 </body></html>
@@ -1055,16 +1660,24 @@ def page_debug():
 
 
 @app.get("/api/agent/inspect")
-def api_agent_inspect(client_id: str = "demo_client", user_id: str | None = None):
+def api_agent_inspect(
+    client_id: str = "demo_client",
+    user_id: str | None = None,
+    use_slow: bool | None = Query(
+        None,
+        description="与对话页「启用 Reasoning」一致；省略时采用环境默认（OPS_WEB_SLOW，默认开启）",
+    ),
+):
     """返回当前 Web 进程内与对话一致的 Agent 元数据、指令栈与工具名（供 /debug 调试）。"""
     cid = (client_id or "").strip() or "demo_client"
     uid = (user_id or "").strip() or None
-    return _agent_inspect_payload(cid, uid)
+    return _agent_inspect_payload(cid, uid, use_slow)
 
 
 @app.post("/chat", response_model=ChatOut)
 def chat(inp: ChatIn):
-    _, ctrl, agent = _get_bundle_for(inp.client_id, inp.user_id)
+    slow_applied = _resolve_use_slow(inp.use_slow_reasoning)
+    _, ctrl, agent = _get_bundle_for(inp.client_id, inp.user_id, slow_applied)
     sid = inp.session_id or new_session_id()
     try:
         ctrl.bump_turn_and_maybe_snapshot(inp.client_id, inp.user_id)
@@ -1080,15 +1693,25 @@ def chat(inp: ChatIn):
         tr.append(("assistant", text))
         trace = _serialize_run_trace(out) if inp.include_trace else None
         history = [ChatHistoryTurn(role=r, content=c) for r, c in tr]
-        return ChatOut(reply=text, session_id=sid, trace=trace, history=history)
+        return ChatOut(
+            reply=text,
+            session_id=sid,
+            use_slow_reasoning_applied=slow_applied,
+            trace=trace,
+            history=history,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/api/memory/profile/list")
-def memory_profile_list(client_id: str, user_id: str | None = None):
+def memory_profile_list(
+    client_id: str,
+    user_id: str | None = None,
+    use_slow: bool | None = Query(None),
+):
     """列出画像层记忆：本地 JSON 带 index 可删；Mem0 仅搜索展示。"""
-    settings, ctrl, _ = _get_bundle_for(client_id, user_id)
+    settings, ctrl, _ = _get_bundle_for(client_id, user_id, use_slow)
     uid = _mem_uid(client_id, user_id)
     if settings.mem0_api_key:
         hits = ctrl.search_profile("", client_id=client_id, user_id=user_id, limit=100)
@@ -1112,7 +1735,7 @@ def memory_profile_list(client_id: str, user_id: str | None = None):
 
 @app.post("/api/memory/profile/delete-local")
 def memory_profile_delete_local(inp: ProfileDeleteLocalIn):
-    settings, _, _ = _get_bundle_for(inp.client_id, inp.user_id)
+    settings, _, _ = _get_bundle_for(inp.client_id, inp.user_id, inp.use_slow_reasoning)
     if settings.mem0_api_key:
         raise HTTPException(501, detail="当前为 Mem0 云端后端，删除请使用 Mem0 控制台")
     uid = _mem_uid(inp.client_id, inp.user_id)
@@ -1131,8 +1754,8 @@ def memory_profile_delete_local(inp: ProfileDeleteLocalIn):
 
 
 @app.get("/api/memory/hindsight/list")
-def memory_hindsight_list(client_id: str):
-    settings, _, _ = _get_bundle_for(client_id, None)
+def memory_hindsight_list(client_id: str, use_slow: bool | None = Query(None)):
+    settings, _, _ = _get_bundle_for(client_id, None, use_slow)
     path = _resolve_under_ops_agent(settings.hindsight_path)
     items: list[dict[str, Any]] = []
     if path.exists():
@@ -1152,7 +1775,7 @@ def memory_hindsight_list(client_id: str):
 
 @app.post("/api/memory/hindsight/delete-line")
 def memory_hindsight_delete(inp: HindsightDeleteIn):
-    settings, _, _ = _get_bundle_for(inp.client_id, None)
+    settings, _, _ = _get_bundle_for(inp.client_id, None, inp.use_slow_reasoning)
     path = _resolve_under_ops_agent(settings.hindsight_path)
     if not path.exists():
         raise HTTPException(404, detail="hindsight 文件不存在")
@@ -1186,7 +1809,7 @@ def memory_ingest(inp: MemoryIngestIn):
     else:
         raise HTTPException(status_code=400, detail="kind 须为 fact | preference | feedback")
 
-    _, ctrl, _ = _get_bundle_for(inp.client_id, inp.user_id)
+    _, ctrl, _ = _get_bundle_for(inp.client_id, inp.user_id, inp.use_slow_reasoning)
     fact = UserFact(
         lane=lane,
         client_id=inp.client_id,
@@ -1212,7 +1835,7 @@ def session_end(inp: SessionEndIn):
     sid = inp.session_id.strip()
     transcript = _transcripts.pop(sid, [])
 
-    _, ctrl, _ = _get_bundle_for(inp.client_id, inp.user_id)
+    _, ctrl, _ = _get_bundle_for(inp.client_id, inp.user_id, inp.use_slow_reasoning)
     review_status: str | None = None
 
     if inp.run_review:
