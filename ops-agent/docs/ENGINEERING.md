@@ -181,6 +181,7 @@ ops-agent/
 1. 行为或契约变化 → 更新 **ENGINEERING.md** 相应章节。
 2. 用户可见行为 → **CHANGELOG.md** 追加条目并升版本号（`pyproject.toml` / `ops_agent.__version__`）。
 3. 运维步骤变化 → **OPERATIONS.md**。
+4. **独立拷贝 / 跨机器 Cursor 研发**（合回 `ops-stack` 前）→ 遵守仓库根 [**AGENTS.md**](../AGENTS.md) 中的依赖边界与自检清单。
 
 ---
 

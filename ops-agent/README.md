@@ -1,6 +1,12 @@
 # ops-agent
 
-专项运营智能体运行时：**Agno + Mem0 + Hindsight + Graphiti（只读）+ AsyncReview**；含 **handoff 注入**、**Golden rules**、**MCP 探针 fixture**、**端到端规则评测 CLI** 等（当前 **0.4.x**，见 `CHANGELOG.md`）。
+专项运营智能体运行时：**Agno + Mem0 + Hindsight + Graphiti（只读）+ AsyncReview**；含 **handoff 注入**、**Golden rules**、**MCP 探针 fixture**、**端到端规则评测 CLI** 等（版本见 **`pyproject.toml`** / `CHANGELOG.md`）。
+
+## 独立研发 / Cursor Agent（合回 monorepo 前必读）
+
+| 文档 | 内容 |
+|------|------|
+| [**AGENTS.md**](AGENTS.md) | **跨机器与独立拷贝研发时的约束与自检清单**（勿破坏与 ①② 的契约、勿引入兄弟包 import） |
 
 ## 权威文档
 
