@@ -34,7 +34,8 @@ pip install -e ".[graphiti]"
 | `OPS_HISTORICAL_PATH` | 可选；Hindsight JSONL 路径，默认 `data/hindsight.jsonl`（兼容 `OPS_HISTORICAL_STUB_PATH`） |
 | `OPS_ASYNC_REVIEW_ON_EXIT` | 默认 `1`；设为 `0` 关闭退出时复盘 |
 | `OPS_HANDOFF_MANIFEST_PATH` | 可选；`ops-knowledge manifest` 生成的 `handbook_handoff.json`；**运行时**会摘要注入 `get_agent` 指令 |
-| `OPS_AGENT_MANIFEST_PATH` | 可选；**② `ops-distiller-forge export-manifest`** 产出的 JSON；注入 `system_prompt`、筛选 `enabled_tools`、可选覆盖模型 |
+| `OPS_AGENT_MANIFEST_DIR` | 可选；扫描其中 **`*.json`** 作为 skill 配方（文件名即 **`skill_id`**）；可与包内置 `default_ops` / `short_video` 合并覆盖 |
+| `OPS_AGENT_DEFAULT_SKILL_ID` | 可选；未传 `--skill` / `skill_id` 时的默认 skill（默认 `default_ops`） |
 | `OPS_GOLDEN_RULES_PATH` | 可选；JSON 数组正则规则（见 `data/golden_rules.example.json`）；启用工具 `check_delivery_text` |
 | `OPS_MCP_PROBE_FIXTURE_PATH` | 可选；覆盖默认探针 JSON（否则使用包内 `mcp_probe_default.json`）；工具 `fetch_ops_probe_context` |
 | `VIDEO_RAW_INGEST_ROOT` | 可选；供 `doctor` 检查与 `ops-knowledge` 定位 schema |
@@ -56,6 +57,7 @@ python -m ops-agent --client-id my_client
 - `--user-id`：多终端用户时区分。
 - `--slow`：启用 Agno 内置 `reasoning`；若报错可去掉该 flag（见排障）。
 - `--no-knowledge`：不挂载 `search_domain_knowledge`（仅 Mem0）。
+- `--skill`：指定 **`skill_id`**（须存在于 manifest 注册表）；影响系统提示与 **Graphiti `graphiti_group_id(client_id, skill)`**。
 
 ## 辅助命令（默认数据 / 离线）
 
@@ -64,7 +66,7 @@ python -m ops-agent --client-id my_client
 ops-agent eval tests/fixtures/e2e_eval_case.json
 
 # 向 JSONL 降级知识库追加行（无需 Neo4j）
-ops-agent knowledge-append-jsonl -o data/knowledge.jsonl --client-id my_client --text "私域复购的关键是..."
+ops-agent knowledge-append-jsonl -o data/knowledge.jsonl --client-id my_client --skill default_ops --text "私域复购的关键是..."
 
 # Graphiti 离线写入：先 dry-run，再在有 NEO4J_* + OPENAI_API_KEY 时实跑
 ops-agent graphiti-ingest docs/examples/graphiti_episodes.example.json --dry-run
@@ -98,7 +100,7 @@ ops-agent mcp-probe-server
    执行 `pip install -e ".[graphiti]"`。
 
 6. **Graphiti 连接失败**  
-   检查 Neo4j 是否可达、`group_id` 与入库时是否一致（`sanitize_group_id(client_id)`）；可临时配置 `OPS_KNOWLEDGE_FALLBACK_PATH` 仅测 Agent 流程。
+   检查 Neo4j 是否可达、`group_id` 与入库时是否一致（**`graphiti_group_id(client_id, skill_id)`**）；可临时配置 `OPS_KNOWLEDGE_FALLBACK_PATH` 仅测 Agent 流程。
 
 7. **AsyncReview**  
    退出 CLI 时默认会复盘并写入 `Hindsight` 教训（需 `OPENAI_API_KEY`）。可用 `--no-async-review` 或 `OPS_ASYNC_REVIEW_ON_EXIT=0` 关闭。
@@ -119,5 +121,12 @@ ctrl = MemoryController.create_default(
     hindsight_path=settings.hindsight_path,
 )
 knowledge = GraphitiReadService.from_env(settings.knowledge_fallback_path)
-agent = get_agent(ctrl, client_id="c1", user_id="u1", thought_mode="fast", knowledge=knowledge)
+agent = get_agent(
+    ctrl,
+    client_id="c1",
+    user_id="u1",
+    thought_mode="fast",
+    knowledge=knowledge,
+    skill_id=None,  # 默认 Settings.default_skill_id；Graphiti 使用 graphiti_group_id(c1, skill)
+)
 ```

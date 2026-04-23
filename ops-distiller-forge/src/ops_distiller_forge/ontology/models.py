@@ -79,3 +79,7 @@ class AgentManifestV1(BaseModel):
         description="与 ops-agent 工具名对齐的字符串 id",
     )
     notes: str | None = None
+    agent_name: str | None = Field(
+        default=None,
+        description="可选；Agno Agent.name，与 ops-agent manifest 对齐",
+    )

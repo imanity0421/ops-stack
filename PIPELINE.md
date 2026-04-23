@@ -12,7 +12,7 @@
 | ① | **`video-raw-ingest/`** | 视频 → `lesson_merged.json` / `validation_report.json` |
 | ②a | **`ops-knowledge/`** | 轻量衔接：校验 merged、`handbook_handoff.json`、**`dspy-stub`** 占位（无 LLM） |
 | ②b | **`ops-distiller-forge/`** | 炼金工坊：DSPy + Pydantic 母版、Episode 投影、Manifest、`eval-recall`；见该目录 `docs/ENGINEERING.md` |
-| ③ | **`ops-agent/`** | 运行时 Agent；`doctor` / Mem0 / Hindsight / Graphiti 只读；探针、规则评测；离线 `graphiti-ingest`；**`OPS_AGENT_MANIFEST_PATH`** |
+| ③ | **`ops-agent/`** | 运行时 Agent；`doctor` / Mem0 / Hindsight / Graphiti 只读；探针、规则评测；离线 `graphiti-ingest`；**`OPS_AGENT_MANIFEST_DIR`**（skill 注册表） |
 
 ## 建议命令（开发机）
 
@@ -47,7 +47,7 @@ ops-agent knowledge-append-jsonl -o data\knowledge.jsonl --client-id demo_client
 |------|------|
 | `VIDEO_RAW_INGEST_ROOT` | 指向 **①** 仓库根（默认目录名见 `ops-stack.toml` 中 `video_raw_ingest`），供 `ops-knowledge` 定位 `schema/lesson_merged.schema.json` |
 | `OPS_HANDOFF_MANIFEST_PATH` | `handbook_handoff.json`；**运行时**注入 `get_agent` 指令摘要 |
-| `OPS_AGENT_MANIFEST_PATH` | **②b** `export-manifest` 产出的 JSON；注入 `system_prompt`、筛选工具 |
+| `OPS_AGENT_MANIFEST_DIR` | **②b** `export-manifest` 产物复制为 `{skill_id}.json`；注入 `system_prompt`、筛选工具 |
 | `OPS_KNOWLEDGE_FALLBACK_PATH` | 无 Neo4j 时领域知识 JSONL 降级 |
 | `OPS_GOLDEN_RULES_PATH` | 交付规则 JSON；工具 `check_delivery_text` |
 | `OPS_MCP_PROBE_FIXTURE_PATH` | 探针 JSON；工具 `fetch_ops_probe_context` |

@@ -42,6 +42,9 @@ def build_memory_tools(
     mcp_probe_fixture_path: Path | None = None,
     enabled_tool_names: set[str] | None = None,
     exclude_tool_names: set[str] | None = None,
+    *,
+    skill_id: str = "default_ops",
+    incremental_tools: Optional[list[Callable[..., object]]] = None,
 ) -> list[Callable]:
     """绑定租户上下文后的记忆工具，供 Agno Agent 使用。
 
@@ -157,7 +160,7 @@ def build_memory_tools(
         hs = controller.search_hindsight(query, client_id=client_id, limit=8)
         blocks.append("## ② 历史教训与反馈 (Hindsight)\n" + ("\n---\n".join(hs) if hs else "（无）"))
         if knowledge is not None:
-            dom = knowledge.search_domain_knowledge(query, client_id=client_id)
+            dom = knowledge.search_domain_knowledge(query, client_id=client_id, skill_id=skill_id)
             blocks.append("## ③ 领域知识 (Graphiti / 降级)\n" + dom)
         else:
             blocks.append("## ③ 领域知识 (Graphiti)\n（当前未挂载 Graphiti，依赖模型常识）")
@@ -196,9 +199,12 @@ def build_memory_tools(
             description="仅检索 Graphiti 领域知识（第三层）。完整检索请优先用 retrieve_ordered_context。",
         )
         def search_domain_knowledge(query: str) -> str:
-            return knowledge.search_domain_knowledge(query, client_id=client_id)
+            return knowledge.search_domain_knowledge(query, client_id=client_id, skill_id=skill_id)
 
         tools.append(search_domain_knowledge)
+
+    if incremental_tools:
+        tools.extend(incremental_tools)
 
     out = filter_tools_by_manifest(tools, enabled_tool_names)
     if exclude_tool_names:

@@ -50,7 +50,9 @@ ops-agent（本仓库，③）→  运行时 Agent + Mem0 + Graphiti 只读
 |------|------|
 | **Mem0 / 本地后端** | 存储 **属性（attribute）** 与 **稳定偏好（preference）**；唯一长期记忆主存储 |
 | **Hindsight** | **`HindsightStore`**：`data/hindsight.jsonl`（`OPS_HISTORICAL_PATH`）；含 `feedback` 与 `lesson`；检索 `search_hindsight` / 工具 `search_past_lessons` |
-| **Graphiti** | **只读**：`GraphitiReadService.search_domain_knowledge` → `graphiti.search_`；租户隔离使用 `group_id = sanitize_group_id(client_id)`，须与入库时 partition 一致；BFS 深度默认 **2**（`OPS_GRAPHITI_BFS_MAX_DEPTH`） |
+| **Graphiti** | **只读**：`GraphitiReadService.search_domain_knowledge` → `graphiti.search_`；分区键 **`graphiti_group_id(client_id, skill_id)`**（`client` 与 `skill` 两段经 `sanitize_group_id` 后以 `__` 拼接），须与 **`graphiti-ingest`**、JSONL fallback 写入一致；BFS 深度默认 **2**（`OPS_GRAPHITI_BFS_MAX_DEPTH`） |
+| **Skill / Manifest** | 主键 **`skill_id`**（如 `default_ops`、`short_video`）。`manifest_loader.load_skill_manifest_registry`：先读包内 `data/skill_manifests/*.json`，再合并 **`OPS_AGENT_MANIFEST_DIR`** 下同名文件覆盖。`get_agent(..., skill_id=...)` 未传时用 **`OPS_AGENT_DEFAULT_SKILL_ID`**。已弃用 **`OPS_AGENT_PERSONA`** / **`OPS_AGENT_MANIFEST_PATH`**。 |
+| **工具合并** | **平台工具**（`build_memory_tools`）常驻 + **`get_incremental_tools(skill_id)`** 增量（当前为空占位）；再按 manifest `enabled_tools` 筛选。 |
 
 ### 3.2 检索顺序（阶段 c）
 
@@ -113,9 +115,11 @@ ops-agent/
       fallback.py
       group_id.py
     resources/             # 包内默认 JSON（如 mcp_probe_default.json）
+    data/skill_manifests/  # 内置 skill 配方 JSON（default_ops / short_video）
     agent/
       factory.py           # get_agent / get_reasoning_agent
-      tools.py             # Agno 工具（绑定 client_id）
+      tools.py             # Agno 工具（绑定 client_id + skill_id → Graphiti 分区）
+      skills/              # skill 增量工具（get_incremental_tools）
 ```
 
 ---
@@ -138,7 +142,7 @@ ops-agent/
 
 - **管线自检**：`ops-agent doctor`；可选 **`OPS_HANDOFF_MANIFEST_PATH`**（`ops-knowledge manifest` 产出；**运行时注入** `get_agent` 指令摘要）、**`VIDEO_RAW_INGEST_ROOT`**（校验 ① schema 路径）。工作区总览见上级 `PIPELINE.md`。
 - **交付规则抽检（可选）**：**`OPS_GOLDEN_RULES_PATH`** → JSON 数组正则规则；Agent 工具 **`check_delivery_text`**；示例见 `data/golden_rules.example.json`。
-- **Agent 配方（可选）**：**`OPS_AGENT_MANIFEST_PATH`** → **`ops-distiller-forge export-manifest`** 产出的 JSON；注入 `system_prompt`、筛选 `enabled_tools`、可选覆盖模型 id；见 `manifest_loader.py`。
+- **Skill 配方目录（可选）**：**`OPS_AGENT_MANIFEST_DIR`** → 扫描其中 **`*.json`**，文件名为 **`skill_id`**；可将 **`export-manifest`** 输出复制为 **`default_ops.json`** 等。未设置时仍使用包内置配方。默认 skill：**`OPS_AGENT_DEFAULT_SKILL_ID`**（默认 `default_ops`）。见 **`manifest_loader.py`**。
 - **探针 fixture（可选覆盖）**：**`OPS_MCP_PROBE_FIXTURE_PATH`**；CLI **`ops-agent eval`**、**`knowledge-append-jsonl`**、**`graphiti-ingest`** 见 [OPERATIONS.md](OPERATIONS.md)。
 
 ---

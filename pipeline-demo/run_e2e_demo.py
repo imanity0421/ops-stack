@@ -165,6 +165,15 @@ def main() -> int:
         cwd=forge,
     )
 
+    skill_manifests = out / "skill_manifests"
+    skill_manifests.mkdir(parents=True, exist_ok=True)
+    shutil.copy(agent_cfg, skill_manifests / "default_ops.json")
+
+    ep_patch = json.loads(episodes_json.read_text(encoding="utf-8"))
+    if isinstance(ep_patch, dict):
+        ep_patch.setdefault("default_skill_id", "default_ops")
+        episodes_json.write_text(json.dumps(ep_patch, ensure_ascii=False, indent=2), encoding="utf-8")
+
     # ③：降级 JSONL（从 episode 正文抽一条，便于无 Neo4j 时检索）
     fallback = out / "knowledge_fallback.jsonl"
     ep_data = json.loads(episodes_json.read_text(encoding="utf-8"))
@@ -173,8 +182,12 @@ def main() -> int:
         first_body = str(ep.get("body", ""))[:2000]
         if first_body.strip():
             break
+    sys.path.insert(0, str(agent_dir / "src"))
+    from ops_agent.knowledge.group_id import graphiti_group_id  # noqa: E402
+
+    gid = graphiti_group_id("demo_client", "default_ops")
     line = json.dumps(
-        {"group_id": "demo_client", "text": first_body or "私域运营演示知识点"},
+        {"group_id": gid, "text": first_body or "私域运营演示知识点"},
         ensure_ascii=False,
     )
     fallback.write_text(line + "\n", encoding="utf-8")
@@ -182,7 +195,7 @@ def main() -> int:
     env_lines = [
         "# 将下列变量写入 ops-agent 运行环境（PowerShell 示例）",
         f'$env:OPS_HANDOFF_MANIFEST_PATH = "{handoff.resolve()}"',
-        f'$env:OPS_AGENT_MANIFEST_PATH = "{agent_cfg.resolve()}"',
+        f'$env:OPS_AGENT_MANIFEST_DIR = "{skill_manifests.resolve()}"',
         f'$env:OPS_KNOWLEDGE_FALLBACK_PATH = "{fallback.resolve()}"',
         "",
         "# 然后（需 OPENAI_API_KEY）",

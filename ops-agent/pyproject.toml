@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ops-agent"
-version = "0.5.0"
+version = "0.6.0"
 description = "专项运营智能体：Agno + Mem0 + Hindsight + Graphiti + doctor/重试"
 readme = "README.md"
 license = { text = "MIT" }
@@ -35,7 +35,7 @@ ops-agent = "ops_agent.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ops_agent = ["py.typed", "resources/*.json"]
+ops_agent = ["py.typed", "resources/*.json", "data/skill_manifests/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

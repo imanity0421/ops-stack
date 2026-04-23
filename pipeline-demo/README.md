@@ -4,7 +4,7 @@
 
 1. **②a** `ops-knowledge`：`validate` → `manifest` → `handbook_handoff.json`
 2. **②b** `ops-distiller-forge`：`map` → `knowledge_points.jsonl` → `episodes` → `agent_config.json`
-3. **③**：生成 `knowledge_fallback.jsonl` 与 **`env_snippet.ps1`**（`OPS_HANDOFF_MANIFEST_PATH`、`OPS_AGENT_MANIFEST_PATH`、`OPS_KNOWLEDGE_FALLBACK_PATH`）
+3. **③**：生成 `knowledge_fallback.jsonl` 与 **`env_snippet.ps1`**（`OPS_HANDOFF_MANIFEST_PATH`、`OPS_AGENT_MANIFEST_DIR`、`OPS_KNOWLEDGE_FALLBACK_PATH`）；`group_id` 与 **`graphiti_group_id(demo_client, default_ops)`** 对齐
 
 子目录名以 **`ops-stack/ops-stack.toml`** 为准；脚本 **`run_e2e_demo.py`** 通过 **`load_layout.py`** 解析路径，**勿写死**文件夹名。
 

@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 class KnowledgeJsonlFallback:
     """
     无 Neo4j / 超时 / Graphiti 异常时的文本降级检索。
-    每行 JSON：`{"group_id": "...", "text": "..."}`，group_id 须与 sanitize_group_id(client_id) 一致。
+    每行 JSON：`{"group_id": "...", "text": "..."}`，group_id 须与
+    ``ops_agent.knowledge.group_id.graphiti_group_id(client_id, skill_id)`` 一致。
     """
 
     def __init__(self, path: Path | None) -> None:

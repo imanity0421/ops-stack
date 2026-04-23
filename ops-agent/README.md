@@ -29,7 +29,7 @@ pip install -e ".[dev]"
 pip install -e ".[graphiti]"   # 可选：Graphiti 只读
 # pip install -e ".[mcp]"     # 可选：MCP 探针 stdio 服务
 copy .env.example .env
-# 编辑 .env：OPENAI_API_KEY；可选 MEM0_API_KEY、NEO4J_*、OPS_KNOWLEDGE_FALLBACK_PATH、OPS_HANDOFF_MANIFEST_PATH、OPS_GOLDEN_RULES_PATH、OPS_MCP_PROBE_FIXTURE_PATH
+# 编辑 .env：OPENAI_API_KEY；可选 MEM0_API_KEY、NEO4J_*、OPS_KNOWLEDGE_FALLBACK_PATH、OPS_HANDOFF_MANIFEST_PATH、OPS_AGENT_MANIFEST_DIR、OPS_GOLDEN_RULES_PATH、OPS_MCP_PROBE_FIXTURE_PATH
 python -m ops_agent --client-id demo_client
 ```
 
@@ -42,7 +42,7 @@ python -m ops_agent --client-id demo_client
 | 命令 | 说明 |
 |------|------|
 | `ops-agent eval <case.json>` | 端到端规则评测（Golden rules，无 LLM） |
-| `ops-agent knowledge-append-jsonl --output ... --client-id ... --text ...` | 追加 JSONL 领域知识（无需 Neo4j） |
+| `ops-agent knowledge-append-jsonl --output ... --client-id ... [--skill default_ops] --text ...` | 追加 JSONL 领域知识（无需 Neo4j） |
 | `ops-agent graphiti-ingest <episodes.json> [--dry-run]` | 离线 Graphiti 写入（实跑需 Neo4j + OpenAI） |
 | `ops-agent mcp-probe-server` | stdio MCP 探针（需 `[mcp]`） |
 

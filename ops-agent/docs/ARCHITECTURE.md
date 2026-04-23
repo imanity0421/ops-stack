@@ -58,4 +58,9 @@ flowchart LR
 - **交付前正则抽检**：`check_delivery_text`（`OPS_GOLDEN_RULES_PATH`）。
 - **无 Neo4j 的领域知识追加**：`ops-agent knowledge-append-jsonl` → 与 `OPS_KNOWLEDGE_FALLBACK_PATH` 同格式。
 
+## Skill 与知识分区
+
+- 运行时主键为 **`skill_id`**（与 `OPS_AGENT_DEFAULT_SKILL_ID`、各 manifest 文件名一致）。
+- **Graphiti / JSONL 领域知识**使用 **`graphiti_group_id(client_id, skill_id)`** 作为 `group_id`，与 **`ops-agent graphiti-ingest`** 默认推导一致；**存量仅含旧 `sanitize_group_id(client_id)` 的数据需重新入库或迁移**。
+
 详细契约见 [ENGINEERING.md](ENGINEERING.md)。

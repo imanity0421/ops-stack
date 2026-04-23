@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_SKILL_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 @dataclass(frozen=True)
@@ -24,8 +27,10 @@ class Settings:
     handoff_manifest_path: Path | None = None
     golden_rules_path: Path | None = None
     mcp_probe_fixture_path: Path | None = None
-    agent_manifest_path: Path | None = None
-    agent_persona: str = "ops"
+    #: 可选；若设置则扫描其中 ``*.json`` 覆盖/增补内置 skill 配方（见 ``manifest_loader``）。
+    agent_manifest_dir: Path | None = None
+    #: 未显式传 ``skill_id`` 时使用的默认 skill（须存在于注册表，通常为 ``default_ops``）。
+    default_skill_id: str = "default_ops"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -33,10 +38,10 @@ class Settings:
         ho = os.getenv("OPS_HANDOFF_MANIFEST_PATH")
         gr = os.getenv("OPS_GOLDEN_RULES_PATH")
         mp = os.getenv("OPS_MCP_PROBE_FIXTURE_PATH")
-        am = os.getenv("OPS_AGENT_MANIFEST_PATH")
-        persona = (os.getenv("OPS_AGENT_PERSONA") or "ops").strip().lower()
-        if persona not in ("ops", "short_video"):
-            persona = "ops"
+        am_dir = os.getenv("OPS_AGENT_MANIFEST_DIR")
+        raw_skill = (os.getenv("OPS_AGENT_DEFAULT_SKILL_ID") or "default_ops").strip()
+        default_skill_id = raw_skill if _SKILL_ID.match(raw_skill) else "default_ops"
+
         return cls(
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             openai_api_base=os.getenv("OPENAI_API_BASE"),
@@ -49,8 +54,8 @@ class Settings:
             handoff_manifest_path=Path(ho) if ho else None,
             golden_rules_path=Path(gr) if gr else None,
             mcp_probe_fixture_path=Path(mp) if mp else None,
-            agent_manifest_path=Path(am) if am else None,
-            agent_persona=persona,
+            agent_manifest_dir=Path(am_dir) if am_dir else None,
+            default_skill_id=default_skill_id,
         )
 
 

@@ -16,7 +16,7 @@
 - **本 Web 进程内**：模型 **不会** 获得 `record_client_fact` / `record_client_preference` / `record_task_feedback` 三个工具；写入 **仅** 能通过页面按钮（或 `POST /api/memory/ingest`）。**Hindsight 的 lesson 复盘** 仅能通过「结束对话」且勾选「进行复盘」（或 `POST /api/session/end` 且 `run_review: true`）。
 - 终端 CLI `python -m ops_agent` 仍为完整工具集，不受影响。
 - **0.5+**：三页统一 Demo 样式；**`/debug`** 展示 Agent 工作流与指令栈。**Reasoning** 默认开启（环境 `OPS_WEB_SLOW` 未设视为开）；对话页可勾选覆盖，并与记忆 API 共用 `localStorage`。身份支持 **client_id / user_id** 预设（localStorage）。
-- **0.6+**：**身份增删** 仅在 **记忆管理** 页；**对话** 页仅选预设并支持 **多会话**（localStorage 按身份分桶，刷新可恢复）。
+- **0.6+**：**身份增删** 仅在 **记忆管理** 页；**对话** 页仅选预设并支持 **多会话**（localStorage 按身份分桶，刷新可恢复）。**Skill**：请求体可传 **`skill_id`**；或环境 **`OPS_WEB_SKILL_ID`** / **`OPS_AGENT_DEFAULT_SKILL_ID`**（与 Graphiti **`group_id`** 分区一致）。
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from ops_agent.agent.factory import get_agent, new_session_id
 from ops_agent.config import Settings
-from ops_agent.manifest_loader import load_agent_manifest
+from ops_agent.manifest_loader import load_skill_manifest_registry, resolve_effective_skill_id
 from ops_agent.knowledge.graphiti_reader import GraphitiReadService
 from ops_agent.memory.controller import MemoryController
 from ops_agent.memory.models import MemoryLane, UserFact
@@ -52,10 +52,10 @@ _WEB_EXTRA_INSTRUCTIONS = [
     "复盘 lesson 仅能通过「结束对话」并勾选「进行复盘」。",
 ]
 
-# ---------- 按 (client_id, user_id, use_slow) 缓存 Agent + MemoryController，保证工具与推理模式一致 ----------
-_bundles: dict[tuple[str, str, bool], tuple[Settings, MemoryController, Any]] = {}
+# ---------- 按 (client_id, user_id, use_slow, skill_key) 缓存 Agent + MemoryController ----------
+_bundles: dict[tuple[str, str, bool, str], tuple[Settings, MemoryController, Any]] = {}
 _no_knowledge = os.getenv("OPS_WEB_NO_KNOWLEDGE", "1").strip() in ("1", "true", "yes")
-_persona = os.getenv("OPS_AGENT_PERSONA") or None
+_web_skill = os.getenv("OPS_WEB_SKILL_ID") or None
 
 
 def _env_slow() -> bool:
@@ -65,8 +65,17 @@ def _env_slow() -> bool:
 
 # session_id -> (user, assistant) 轮次列表
 _transcripts: dict[str, list[tuple[str, str]]] = {}
-def _bundle_key(client_id: str, user_id: str | None, use_slow: bool) -> tuple[str, str, bool]:
-    return (client_id, user_id or "", use_slow)
+def _bundle_skill_param(skill_id: str | None) -> str | None:
+    if skill_id is not None and skill_id.strip():
+        return skill_id.strip()
+    if _web_skill and _web_skill.strip():
+        return _web_skill.strip()
+    return None
+
+
+def _bundle_key(client_id: str, user_id: str | None, use_slow: bool, skill_id: str | None) -> tuple[str, str, bool, str]:
+    sk = _bundle_skill_param(skill_id) or ""
+    return (client_id, user_id or "", use_slow, sk)
 
 
 def _build_stack(
@@ -74,7 +83,7 @@ def _build_stack(
     client_id: str,
     user_id: str | None,
     no_knowledge: bool,
-    persona: str | None,
+    skill_id: str | None,
     slow: bool,
 ):
     settings = Settings.from_env()
@@ -86,7 +95,6 @@ def _build_stack(
         snapshot_every_n_turns=settings.snapshot_every_n_turns,
     )
     knowledge = None if no_knowledge else GraphitiReadService.from_env(settings.knowledge_fallback_path)
-    eff_persona = persona if persona is not None else settings.agent_persona
     agent = get_agent(
         ctrl,
         client_id=client_id,
@@ -94,7 +102,7 @@ def _build_stack(
         thought_mode="slow" if slow else "fast",
         knowledge=knowledge,
         settings=settings,
-        persona=eff_persona,
+        skill_id=_bundle_skill_param(skill_id),
         exclude_tool_names=set(_WEB_EXCLUDED_MEMORY_WRITE_TOOLS),
         extra_instructions=list(_WEB_EXTRA_INSTRUCTIONS),
     )
@@ -109,15 +117,16 @@ def _get_bundle_for(
     client_id: str,
     user_id: str | None,
     use_slow_reasoning: bool | None = None,
+    skill_id: str | None = None,
 ) -> tuple[Settings, MemoryController, Any]:
     slow = _resolve_use_slow(use_slow_reasoning)
-    k = _bundle_key(client_id, user_id, slow)
+    k = _bundle_key(client_id, user_id, slow, skill_id)
     if k not in _bundles:
         _bundles[k] = _build_stack(
             client_id=client_id,
             user_id=user_id,
             no_knowledge=_no_knowledge,
-            persona=_persona,
+            skill_id=skill_id,
             slow=slow,
         )
     return _bundles[k]
@@ -153,11 +162,14 @@ def _agent_inspect_payload(
     client_id: str,
     user_id: str | None,
     use_slow_reasoning: bool | None = None,
+    skill_id: str | None = None,
 ) -> dict[str, Any]:
     """当前 Web 进程内、与对话一致的 Agent 实例：指令栈、工具名、Manifest 与路径（供 /debug 调试）。"""
     slow_applied = _resolve_use_slow(use_slow_reasoning)
-    settings, _ctrl, agent = _get_bundle_for(client_id, user_id, slow_applied)
-    manifest = load_agent_manifest(settings.agent_manifest_path)
+    settings, _ctrl, agent = _get_bundle_for(client_id, user_id, slow_applied, skill_id=skill_id)
+    reg = load_skill_manifest_registry(settings.agent_manifest_dir)
+    eff = resolve_effective_skill_id(_bundle_skill_param(skill_id), settings.default_skill_id, reg)
+    manifest = reg.get(eff)
     model = getattr(agent, "model", None)
     model_id = getattr(model, "id", None) or getattr(model, "name", None) or str(model)
     tools_raw = getattr(agent, "tools", None) or []
@@ -173,19 +185,21 @@ def _agent_inspect_payload(
         "tools": tool_names,
         "manifest": manifest.model_dump() if manifest else None,
         "paths": {
-            "agent_manifest": str(settings.agent_manifest_path) if settings.agent_manifest_path else None,
+            "agent_manifest_dir": str(settings.agent_manifest_dir) if settings.agent_manifest_dir else None,
             "handoff": str(settings.handoff_manifest_path) if settings.handoff_manifest_path else None,
             "golden_rules": str(settings.golden_rules_path) if settings.golden_rules_path else None,
             "knowledge_fallback": str(settings.knowledge_fallback_path) if settings.knowledge_fallback_path else None,
             "local_memory": str(_resolve_under_ops_agent(settings.local_memory_path)),
             "hindsight": str(_resolve_under_ops_agent(settings.hindsight_path)),
         },
+        "skill_id_resolved": eff,
         "use_slow_reasoning_applied": slow_applied,
         "env_slow_default": _env_slow(),
         "env_flags": {
             "OPS_WEB_NO_KNOWLEDGE": _no_knowledge,
             "OPS_WEB_SLOW_env_parsed_default": _env_slow(),
-            "OPS_AGENT_PERSONA": _persona or settings.agent_persona,
+            "OPS_WEB_SKILL_ID": _web_skill,
+            "OPS_AGENT_DEFAULT_SKILL_ID": settings.default_skill_id,
         },
         "web_excluded_tools": sorted(_WEB_EXCLUDED_MEMORY_WRITE_TOOLS),
     }
@@ -231,6 +245,10 @@ class ChatIn(BaseModel):
     session_id: str | None = None
     client_id: str = "demo_client"
     user_id: str | None = None
+    skill_id: str | None = Field(
+        default=None,
+        description="与 OPS_WEB_SKILL_ID / 默认 skill 一致；未传则按环境与会话策略解析",
+    )
     use_slow_reasoning: bool | None = Field(
         default=None,
         description="是否启用 Agno 慢推理（reasoning）；None 表示采用环境默认（OPS_WEB_SLOW，默认开启）",
@@ -266,6 +284,7 @@ class MemoryIngestIn(BaseModel):
 
     client_id: str = Field(default="demo_client", min_length=1)
     user_id: str | None = None
+    skill_id: str | None = Field(default=None, description="与对话 skill 对齐，用于选取同一 Agent bundle")
     use_slow_reasoning: bool | None = Field(default=None, description="选取与对话一致的 bundle")
     text: str = Field(..., min_length=1)
     kind: str = Field(..., description="fact | preference | feedback")
@@ -283,6 +302,7 @@ class SessionEndIn(BaseModel):
     session_id: str = Field(..., min_length=1)
     client_id: str = Field(default="demo_client", min_length=1)
     user_id: str | None = None
+    skill_id: str | None = Field(default=None, description="与对话 skill 对齐")
     use_slow_reasoning: bool | None = Field(
         default=None,
         description="与对话请求一致，用于选取同一 MemoryController（复盘写入等）",
@@ -300,17 +320,19 @@ class SessionEndOut(BaseModel):
 class ProfileDeleteLocalIn(BaseModel):
     client_id: str = Field(..., min_length=1)
     user_id: str | None = None
+    skill_id: str | None = Field(default=None, description="与对话 skill 对齐")
     use_slow_reasoning: bool | None = Field(default=None, description="选取与对话一致的 bundle（默认随环境）")
     index: int = Field(..., ge=0, description="local_memory.json 内该用户 memories 数组下标")
 
 
 class HindsightDeleteIn(BaseModel):
     client_id: str = Field(..., min_length=1)
+    skill_id: str | None = Field(default=None, description="与对话 skill 对齐")
     use_slow_reasoning: bool | None = Field(default=None, description="选取与对话一致的 bundle")
     file_line: int = Field(..., ge=1, description="hindsight.jsonl 中的物理行号（自列表接口返回）")
 
 
-app = FastAPI(title="ops-agent web demo", version="0.5.3")
+app = FastAPI(title="ops-agent web demo", version="0.6.0")
 
 
 def _nav_html(active: str) -> str:
@@ -1527,7 +1549,7 @@ def _page_debug_html(default_cid: str) -> str:
 
 <fieldset class="demo-panel demo-panel--emerald">
 <legend>系统指令栈（instructions）</legend>
-<p class="hint">下列顺序与 <code>get_agent</code> 注入一致（manifest、人格、handoff、golden、Web 附加说明等）。调试时改文案请优先改 manifest / 环境或源码中的基座指令。</p>
+<p class="hint">下列顺序与 <code>get_agent</code> 注入一致（skill manifest、handoff、golden、Web 附加说明等）。调试时改文案请优先改 <code>OPS_AGENT_MANIFEST_DIR</code> 下对应 <code>{{skill_id}}.json</code> 或内置配方。</p>
 <ol id="instrList" class="instr-ol"></ol>
 </fieldset>
 
@@ -1538,7 +1560,7 @@ def _page_debug_html(default_cid: str) -> str:
 </fieldset>
 
 <fieldset class="demo-panel demo-panel--amber">
-<legend>Manifest（OPS_AGENT_MANIFEST_PATH）</legend>
+<legend>Manifest（skill 注册表 / OPS_AGENT_MANIFEST_DIR）</legend>
 <pre id="manifestPre" class="code-block">加载中…</pre>
 </fieldset>
 
@@ -1583,7 +1605,8 @@ function renderInspect(j) {{
     ['本页开关（已应用）', String(j.use_slow_reasoning_applied)],
     ['环境默认（未传参时）', String(j.env_slow_default)],
     ['Markdown', String(j.markdown)],
-    ['Persona', j.env_flags.OPS_AGENT_PERSONA],
+    ['Skill（解析后）', j.skill_id_resolved || '—'],
+    ['OPS_WEB_SKILL_ID', j.env_flags.OPS_WEB_SKILL_ID || '—'],
     ['OPS_WEB_NO_KNOWLEDGE', String(j.env_flags.OPS_WEB_NO_KNOWLEDGE)],
   ];
   rows.forEach(([k, v]) => {{
@@ -1663,6 +1686,7 @@ def page_debug():
 def api_agent_inspect(
     client_id: str = "demo_client",
     user_id: str | None = None,
+    skill_id: str | None = Query(None, description="与对话请求 skill_id 对齐；省略则 OPS_WEB_SKILL_ID / 默认"),
     use_slow: bool | None = Query(
         None,
         description="与对话页「启用 Reasoning」一致；省略时采用环境默认（OPS_WEB_SLOW，默认开启）",
@@ -1671,13 +1695,13 @@ def api_agent_inspect(
     """返回当前 Web 进程内与对话一致的 Agent 元数据、指令栈与工具名（供 /debug 调试）。"""
     cid = (client_id or "").strip() or "demo_client"
     uid = (user_id or "").strip() or None
-    return _agent_inspect_payload(cid, uid, use_slow)
+    return _agent_inspect_payload(cid, uid, use_slow, skill_id=skill_id)
 
 
 @app.post("/chat", response_model=ChatOut)
 def chat(inp: ChatIn):
     slow_applied = _resolve_use_slow(inp.use_slow_reasoning)
-    _, ctrl, agent = _get_bundle_for(inp.client_id, inp.user_id, slow_applied)
+    _, ctrl, agent = _get_bundle_for(inp.client_id, inp.user_id, slow_applied, skill_id=inp.skill_id)
     sid = inp.session_id or new_session_id()
     try:
         ctrl.bump_turn_and_maybe_snapshot(inp.client_id, inp.user_id)
@@ -1709,9 +1733,10 @@ def memory_profile_list(
     client_id: str,
     user_id: str | None = None,
     use_slow: bool | None = Query(None),
+    skill_id: str | None = Query(None),
 ):
     """列出画像层记忆：本地 JSON 带 index 可删；Mem0 仅搜索展示。"""
-    settings, ctrl, _ = _get_bundle_for(client_id, user_id, use_slow)
+    settings, ctrl, _ = _get_bundle_for(client_id, user_id, use_slow, skill_id=skill_id)
     uid = _mem_uid(client_id, user_id)
     if settings.mem0_api_key:
         hits = ctrl.search_profile("", client_id=client_id, user_id=user_id, limit=100)
@@ -1735,7 +1760,9 @@ def memory_profile_list(
 
 @app.post("/api/memory/profile/delete-local")
 def memory_profile_delete_local(inp: ProfileDeleteLocalIn):
-    settings, _, _ = _get_bundle_for(inp.client_id, inp.user_id, inp.use_slow_reasoning)
+    settings, _, _ = _get_bundle_for(
+        inp.client_id, inp.user_id, inp.use_slow_reasoning, skill_id=inp.skill_id
+    )
     if settings.mem0_api_key:
         raise HTTPException(501, detail="当前为 Mem0 云端后端，删除请使用 Mem0 控制台")
     uid = _mem_uid(inp.client_id, inp.user_id)
@@ -1754,8 +1781,12 @@ def memory_profile_delete_local(inp: ProfileDeleteLocalIn):
 
 
 @app.get("/api/memory/hindsight/list")
-def memory_hindsight_list(client_id: str, use_slow: bool | None = Query(None)):
-    settings, _, _ = _get_bundle_for(client_id, None, use_slow)
+def memory_hindsight_list(
+    client_id: str,
+    use_slow: bool | None = Query(None),
+    skill_id: str | None = Query(None),
+):
+    settings, _, _ = _get_bundle_for(client_id, None, use_slow, skill_id=skill_id)
     path = _resolve_under_ops_agent(settings.hindsight_path)
     items: list[dict[str, Any]] = []
     if path.exists():
@@ -1775,7 +1806,9 @@ def memory_hindsight_list(client_id: str, use_slow: bool | None = Query(None)):
 
 @app.post("/api/memory/hindsight/delete-line")
 def memory_hindsight_delete(inp: HindsightDeleteIn):
-    settings, _, _ = _get_bundle_for(inp.client_id, None, inp.use_slow_reasoning)
+    settings, _, _ = _get_bundle_for(
+        inp.client_id, None, inp.use_slow_reasoning, skill_id=inp.skill_id
+    )
     path = _resolve_under_ops_agent(settings.hindsight_path)
     if not path.exists():
         raise HTTPException(404, detail="hindsight 文件不存在")
@@ -1809,7 +1842,9 @@ def memory_ingest(inp: MemoryIngestIn):
     else:
         raise HTTPException(status_code=400, detail="kind 须为 fact | preference | feedback")
 
-    _, ctrl, _ = _get_bundle_for(inp.client_id, inp.user_id, inp.use_slow_reasoning)
+    _, ctrl, _ = _get_bundle_for(
+        inp.client_id, inp.user_id, inp.use_slow_reasoning, skill_id=inp.skill_id
+    )
     fact = UserFact(
         lane=lane,
         client_id=inp.client_id,
@@ -1835,7 +1870,9 @@ def session_end(inp: SessionEndIn):
     sid = inp.session_id.strip()
     transcript = _transcripts.pop(sid, [])
 
-    _, ctrl, _ = _get_bundle_for(inp.client_id, inp.user_id, inp.use_slow_reasoning)
+    _, ctrl, _ = _get_bundle_for(
+        inp.client_id, inp.user_id, inp.use_slow_reasoning, skill_id=inp.skill_id
+    )
     review_status: str | None = None
 
     if inp.run_review:

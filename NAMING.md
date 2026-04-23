@@ -31,7 +31,7 @@
 
 | 变量 | 用途 |
 |------|------|
-| `OPS_*` | ③ 与跨仓衔接（`OPS_HANDOFF_MANIFEST_PATH`、`OPS_AGENT_MANIFEST_PATH` 等） |
+| `OPS_*` | ③ 与跨仓衔接（`OPS_HANDOFF_MANIFEST_PATH`、`OPS_AGENT_MANIFEST_DIR` 等） |
 | `OPS_FORGE_*` | ②b 工坊可选配置 |
 | `VIDEO_RAW_INGEST_ROOT` | 指向 **①** 仓库根，供 `ops-knowledge` 定位 `schema/lesson_merged.schema.json` |
 | `OPS_STACK_REPO_*` | 覆盖 **`ops-stack.toml`** 中对应 `repos` 键的目录名 |

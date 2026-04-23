@@ -2,13 +2,33 @@
 
 格式基于实际交付，版本号与 `pyproject.toml` / `ops_agent.__version__` 对齐。
 
-## [0.5.0] - 2026-04-17
+## [0.6.0] - 2026-04-17
+
+### 破坏性变更
+
+- **主键改为 `skill_id`**：移除 **`OPS_AGENT_PERSONA`**、**`--persona`** 与 **`Settings.agent_persona`**；CLI 使用 **`--skill`**；`get_agent(..., skill_id=...)`。
+- **Manifest**：废弃 **`OPS_AGENT_MANIFEST_PATH`**；改为 **`OPS_AGENT_MANIFEST_DIR`** 目录扫描 + 包内置 **`data/skill_manifests/{skill_id}.json`** 注册表（`load_skill_manifest_registry`）；默认 skill：**`OPS_AGENT_DEFAULT_SKILL_ID`**。
+- **Graphiti / JSONL `group_id`**：由纯 `sanitize_group_id(client_id)` 改为 **`graphiti_group_id(client_id, skill_id)`**；**旧数据须按新键重新 ingest 或迁移**。
 
 ### 新增
 
-- **`OPS_AGENT_MANIFEST_PATH`**：加载 **② forge** 导出的 `agent_config.json`（`AgentManifestV1`）：注入 `system_prompt`、按 `enabled_tools` 筛选工具、覆盖默认 `model`（可选）、展示 `handbook_version`。
+- **`agent/skills/`**：**`get_incremental_tools(skill_id)`**（Phase 1 占位，返回空列表）；平台工具与增量工具在 `build_memory_tools` 内合并后再按 manifest 筛选。
+- **`AgentManifestV1.agent_name`**：可选 Agno `Agent.name`（forge 模型已对齐可选字段）。
+- **Web**：**`ChatIn.skill_id`**、**`OPS_WEB_SKILL_ID`**；记忆相关 API 增加可选 **`skill_id`** 以与对话 bundle 一致。
+
+### 文档
+
+- **`ENGINEERING.md` / `ARCHITECTURE.md` / `AGENTS.md` / `OPERATIONS.md`**：Skill 与复合 `group_id` 说明。
+
+## [0.5.0] - 2026-04-17
+
+> **0.6.0 起**：单文件 **`OPS_AGENT_MANIFEST_PATH`** 及上述 **`doctor`** 检查已移除；以 **`OPS_AGENT_MANIFEST_DIR`** 与注册表为准（见 **[0.6.0]**）。
+
+### 新增
+
+- **`OPS_AGENT_MANIFEST_PATH`**（已于 0.6.0 废弃）：加载 **② forge** 导出的 `agent_config.json`（`AgentManifestV1`）：注入 `system_prompt`、按 `enabled_tools` 筛选工具、覆盖默认 `model`（可选）、展示 `handbook_version`。
 - **`manifest_loader.py`**：与 forge 字段对齐的 Pydantic 模型（无运行时依赖 forge）。
-- **`doctor`**：检查 `OPS_AGENT_MANIFEST_PATH` 文件是否存在。
+- **`doctor`**（已于 0.6.0 调整）：曾检查 `OPS_AGENT_MANIFEST_PATH` 文件是否存在。
 
 ### 修复
 

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ops_agent.knowledge.group_id import sanitize_group_id
+from ops_agent.knowledge.group_id import graphiti_group_id
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +29,14 @@ async def ingest_episodes_file(
 
     raw = json.loads(episodes_json.read_text(encoding="utf-8"))
     default_client = "demo_client"
+    default_skill = "default_ops"
     items: list[dict[str, Any]]
     if isinstance(raw, list):
         items = raw
     elif isinstance(raw, dict) and "episodes" in raw:
         items = list(raw["episodes"])
         default_client = str(raw.get("client_id") or default_client)
+        default_skill = str(raw.get("default_skill_id") or raw.get("skill_id") or default_skill)
     else:
         raise ValueError("JSON 须为数组或含 episodes 数组的对象")
 
@@ -48,7 +50,8 @@ async def ingest_episodes_file(
             continue
         desc = str(ep.get("source_description", "offline_ingest"))
         cid = str(ep.get("client_id") or default_client)
-        group_id = ep.get("group_id") or sanitize_group_id(cid)
+        sid = str(ep.get("skill_id") or ep.get("skill") or default_skill)
+        group_id = ep.get("group_id") or graphiti_group_id(cid, sid)
         ref = ep.get("reference_time_utc")
         if ref:
             reference_time = datetime.fromisoformat(str(ref).replace("Z", "+00:00"))

@@ -104,8 +104,8 @@ ops-distiller-forge/
 
 ## 7. 与 ③ 的衔接（实施清单）
 
-1. **Graphiti**：使用本仓产出的 `episodes.json`，在运维环境执行 `ops-agent graphiti-ingest`（需 Neo4j + OpenAI）。**`group_id`** 与运行时 `sanitize_group_id(client_id)` 一致。
-2. **Manifest**：将 `export-manifest` 输出路径设为 ③ 的环境变量 **`OPS_AGENT_MANIFEST_PATH`**（由 `ops-agent` 加载，见该仓库 `manifest_loader.py`）；工具仍由 ③ 代码注册，JSON 仅含工具名字符串列表。
+1. **Graphiti**：使用本仓产出的 `episodes.json`，在运维环境执行 `ops-agent graphiti-ingest`（需 Neo4j + OpenAI）。每条 episode 默认 **`group_id = graphiti_group_id(client_id, skill_id)`**（顶层可设 **`default_skill_id`**，单条可设 **`skill_id`**），须与运行时 `skill_id` 一致。
+2. **Manifest**：将 `export-manifest` 输出复制为 ③ 的 **`OPS_AGENT_MANIFEST_DIR`** 下 **`{skill_id}.json`**（例如 **`default_ops.json`**），由 `ops-agent` 的 **`manifest_loader.load_skill_manifest_registry`** 加载；工具仍由 ③ 代码注册，JSON 仅含工具名字符串列表。
 
 ---
 

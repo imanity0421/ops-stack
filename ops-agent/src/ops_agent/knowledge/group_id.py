@@ -5,14 +5,30 @@ import re
 # 与 graphiti_core.helpers.validate_group_id 对齐：^[a-zA-Z0-9_-]+$
 _SAFE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+# 复合分区键中 client 段与 skill 段的分隔（双下划线，避免与业务 id 中单 _ 混淆）
+_COMPOSITE_SEP = "__"
 
-def sanitize_group_id(client_id: str) -> str:
+
+def sanitize_group_id(segment: str) -> str:
     """
-    将业务侧 client_id 映射为 Graphiti group_id（与入库时的 partition 一致）。
-    非法字符替换为下划线；若为空则使用 'default'。
+    将任意业务段（client_id、skill_id 或历史意义上的单租户键）清洗为 Graphiti 合法片段。
+
+    复合分区请使用 ``graphiti_group_id(client_id, skill_id)``，须与入库、JSONL fallback 一致。
     """
-    s = re.sub(r"[^a-zA-Z0-9_-]+", "_", client_id.strip())
+    s = re.sub(r"[^a-zA-Z0-9_-]+", "_", segment.strip())
     s = s.strip("_") or "default"
     if not _SAFE.match(s):
-        s = "client_" + re.sub(r"[^a-zA-Z0-9_-]", "_", client_id)[:64]
+        s = "seg_" + re.sub(r"[^a-zA-Z0-9_-]", "_", segment)[:64]
     return s
+
+
+def graphiti_group_id(client_id: str, skill_id: str) -> str:
+    """
+    Graphiti / JSONL 领域知识分区：租户 × skill，防止不同 skill 的 Episode 串味。
+
+    形如 ``{sanitize(client)}__{sanitize(skill)}``；须与 ``graphiti_ingest``、
+    ``GraphitiReadService``、``append_knowledge_lines`` 使用同一函数。
+    """
+    a = sanitize_group_id(client_id)
+    b = sanitize_group_id(skill_id)
+    return f"{a}{_COMPOSITE_SEP}{b}"

@@ -2,12 +2,18 @@ from pathlib import Path
 
 from ops_agent.knowledge.fallback import KnowledgeJsonlFallback
 from ops_agent.knowledge.graphiti_reader import GraphitiReadService
-from ops_agent.knowledge.group_id import sanitize_group_id
+from ops_agent.knowledge.group_id import graphiti_group_id, sanitize_group_id
 
 
 def test_sanitize_group_id_basic() -> None:
     assert sanitize_group_id("demo_client") == "demo_client"
     assert sanitize_group_id("a b c") == "a_b_c"
+
+
+def test_graphiti_group_id_composite() -> None:
+    g = graphiti_group_id("demo_client", "default_ops")
+    assert g == "demo_client__default_ops"
+    assert graphiti_group_id("a b", "x y") == "a_b__x_y"
 
 
 def test_fallback_jsonl(tmp_path: Path) -> None:
@@ -34,5 +40,5 @@ def test_graphiti_service_no_neo4j_uses_message(tmp_path: Path) -> None:
         bfs_max_depth=2,
         fallback=KnowledgeJsonlFallback(p),
     )
-    text = svc.search_domain_knowledge("test", "any_client")
+    text = svc.search_domain_knowledge("test", "any_client", skill_id="default_ops")
     assert "未配置" in text or "NEO4J" in text

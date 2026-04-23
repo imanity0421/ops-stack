@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ops_agent.config import Settings
+from ops_agent.manifest_loader import load_skill_manifest_registry
 
 
 def _ok(msg: str) -> None:
@@ -80,13 +81,17 @@ def run_doctor(*, strict: bool = False) -> int:
         else:
             _warn(f"OPS_HANDOFF_MANIFEST_PATH 不存在: {p}")
 
-    am = os.getenv("OPS_AGENT_MANIFEST_PATH")
-    if am:
-        ap = Path(am)
-        if ap.is_file():
-            _ok(f"OPS_AGENT_MANIFEST_PATH 存在: {ap}")
+    am_dir = os.getenv("OPS_AGENT_MANIFEST_DIR")
+    if am_dir:
+        dp = Path(am_dir)
+        if dp.is_dir():
+            reg = load_skill_manifest_registry(dp)
+            _ok(f"OPS_AGENT_MANIFEST_DIR 可扫描: {dp}（skill 数: {len(reg)}）")
         else:
-            _warn(f"OPS_AGENT_MANIFEST_PATH 指向的文件不存在: {ap}")
+            _warn(f"OPS_AGENT_MANIFEST_DIR 不是目录: {dp}")
+    else:
+        reg = load_skill_manifest_registry(None)
+        _ok(f"未设置 OPS_AGENT_MANIFEST_DIR，使用内置 skill 配方（skill 数: {len(reg)}）")
 
     mp = os.getenv("OPS_MCP_PROBE_FIXTURE_PATH")
     if mp:

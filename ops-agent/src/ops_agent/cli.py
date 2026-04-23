@@ -56,10 +56,15 @@ def _knowledge_append_main(argv: list[str]) -> int:
         description="向 OPS_KNOWLEDGE_FALLBACK_PATH 格式 JSONL 追加领域知识行（无需 Neo4j）",
     )
     p.add_argument("--output", "-o", type=Path, required=True, help="JSONL 路径")
-    p.add_argument("--client-id", required=True, help="租户 ID（映射为 group_id）")
+    p.add_argument("--client-id", required=True, help="租户 ID（与 skill 共同映射为 Graphiti group_id）")
+    p.add_argument(
+        "--skill",
+        default="default_ops",
+        help="skill_id，与运行时 OPS_AGENT_DEFAULT_SKILL_ID 一致；写入 graphiti_group_id(client, skill)",
+    )
     p.add_argument("--text", action="append", required=True, help="一条或多条文本（可重复）")
     args = p.parse_args(argv)
-    n = append_knowledge_lines(args.output, args.client_id, args.text)
+    n = append_knowledge_lines(args.output, args.client_id, args.text, skill_id=args.skill)
     print(f"appended {n} lines -> {args.output}")
     return 0
 
@@ -121,10 +126,9 @@ def _chat_main(argv: list[str]) -> int:
     p.add_argument("--session-id", default=None, help="会话 ID（调试用，默认随机）")
     p.add_argument("--no-knowledge", action="store_true", help="不挂载 search_domain_knowledge（仅 Mem0）")
     p.add_argument(
-        "--persona",
-        choices=("ops", "short_video"),
+        "--skill",
         default=None,
-        help="Agent 人设：ops=私域运营（默认）；short_video=短视频编导/脚本 demo。也可用环境变量 OPS_AGENT_PERSONA。",
+        help="Agent skill_id（默认见 OPS_AGENT_DEFAULT_SKILL_ID，通常为 default_ops 或 short_video）。",
     )
     p.add_argument(
         "--no-async-review",
@@ -144,7 +148,7 @@ def _chat_main(argv: list[str]) -> int:
 
     knowledge = None if args.no_knowledge else GraphitiReadService.from_env(settings.knowledge_fallback_path)
 
-    persona = args.persona if args.persona is not None else settings.agent_persona
+    skill_id = args.skill if args.skill is not None else None
 
     agent = get_agent(
         ctrl,
@@ -153,7 +157,7 @@ def _chat_main(argv: list[str]) -> int:
         thought_mode="slow" if args.slow else "fast",
         knowledge=knowledge,
         settings=settings,
-        persona=persona,
+        skill_id=skill_id,
     )
 
     session_id = args.session_id or new_session_id()

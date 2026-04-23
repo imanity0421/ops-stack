@@ -24,11 +24,13 @@
 | 类别 | 约束 |
 |------|------|
 | **环境变量名** | 保持现有 `OPS_*`、`OPENAI_*`、`NEO4J_*`、`MEM0_*` 等语义；重命名旧变量须保留兼容期或文档迁移说明（见 `config.py` / `OPERATIONS.md`）。 |
-| **`OPS_AGENT_MANIFEST_PATH`** | 指向的 JSON 须仍能被 **`manifest_loader.AgentManifestV1`** 解析；与 **`ops-distiller-forge`** 的 `export-manifest` 字段对齐。扩展字段可增，**勿随意改必填语义或删字段**。 |
+| **`OPS_AGENT_MANIFEST_DIR`** | 目录内 **`*.json`** 文件名即 **`skill_id`**；与 **`ops-distiller-forge`** 的 `export-manifest` 产出字段对齐（可拷贝为 **`default_ops.json`**）。扩展字段可增，**勿随意改必填语义或删字段**。 |
+| **`OPS_AGENT_DEFAULT_SKILL_ID`** | 须为注册表中存在的 skill；与 **`get_agent(..., skill_id=None)`** 解析一致。 |
 | **`OPS_HANDOFF_MANIFEST_PATH`** | `handbook_handoff.json` 中 **`video_raw_ingest_schema_ref`** 等字段仅作文本/展示用；勿假设本包会加载 ① 的代码。 |
 | **`client_id` / `user_id`** | 所有记忆与检索工具必须继续支持租户隔离（见 **ENGINEERING.md §6**）。 |
 | **工厂函数** | 外部集成优先依赖 **`ops_agent.agent.factory.get_agent` / `get_reasoning_agent`** 及 **`Settings.from_env()`**；签名变更视为公共 API 变更。 |
 | **`get_agent(..., exclude_tool_names=...)`** | Web 演示等调用方依赖；删除或改名参数须同步更新 **`examples/web_chat_fastapi.py`** 与相关测试。 |
+| **`get_agent(..., skill_id=...)`** | 与 Graphiti **`graphiti_group_id`**、manifest 注册表绑定；删除或改名须同步 CLI / Web / 文档。 |
 
 ---
 
@@ -40,9 +42,9 @@
 
 ---
 
-## 4. 人设与可选能力
+## 4. Skill 与可选能力
 
-- **`OPS_AGENT_PERSONA`**：仅允许约定值（如 `ops` / `short_video`），见 **`config.py`**；新增 persona 须在 **ENGINEERING / OPERATIONS** 中说明并考虑 **manifest** 与工具列表兼容性。
+- **`skill_id`**：业务主键（如 **`default_ops`**、**`short_video`**），由 **`OPS_AGENT_MANIFEST_DIR`** 下 JSON 文件名与包内置配方共同定义；新增 skill 须在 **ENGINEERING / OPERATIONS** 中说明，并考虑 **Graphiti `group_id`** 与 **增量工具** 兼容性。
 - **可选 extras**：`[graphiti]`、`[mcp]`、`[web]`；新增 extra 时更新 **`README.md`** 与 **`pyproject.toml`**，避免默认安装变重。
 
 ---

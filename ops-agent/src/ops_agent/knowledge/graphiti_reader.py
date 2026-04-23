@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ops_agent.knowledge.fallback import KnowledgeJsonlFallback
-from ops_agent.knowledge.group_id import sanitize_group_id
+from ops_agent.knowledge.group_id import graphiti_group_id
 from ops_agent.util.retry import retry_sync
 
 logger = logging.getLogger(__name__)
@@ -129,11 +129,11 @@ class GraphitiReadService:
         )
         return _format_results(results)
 
-    def search_domain_knowledge(self, query: str, client_id: str) -> str:
+    def search_domain_knowledge(self, query: str, client_id: str, skill_id: str) -> str:
         """
-        同步入口：先按租户 group_id 查 Graphiti；失败或超时则走 JSONL fallback。
+        同步入口：按 ``graphiti_group_id(client_id, skill_id)`` 查 Graphiti；失败或超时则走 JSONL fallback。
         """
-        gid = sanitize_group_id(client_id)
+        gid = graphiti_group_id(client_id, skill_id)
         notes: list[str] = []
 
         if self.is_graphiti_configured():

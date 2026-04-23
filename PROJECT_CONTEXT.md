@@ -12,6 +12,11 @@
 
 各模块版本仍以各自 **`pyproject.toml`** 的 `version` 为准（`pipeline-demo` 无包版本时可与演示脚本变更同步）。
 
+**最近合入（2026-04-17，换机接续）**
+
+- **`ops-agent` 0.6.0**：主键 **`skill_id`**；**`OPS_AGENT_MANIFEST_DIR`** 技能注册表 + 包内 **`src/ops_agent/data/skill_manifests/*.json`**；Graphiti / JSONL 分区 **`graphiti_group_id(client_id, skill_id)`**；废弃 **`OPS_AGENT_PERSONA`** / **`OPS_AGENT_MANIFEST_PATH`**。详见 **`ops-agent/docs/CHANGELOG.md`** 与 **`coding-sync/SESSION_LOG.md`**。
+- **`.gitignore`**：`ops-agent` 下仅忽略仓库根 **`/data/`**（本地运行时文件），**不**忽略包内 `src/ops_agent/data/skill_manifests/`，换机 `git pull` 后内置配方即可用。
+
 ---
 
 ## 1. 需求背景与目标
@@ -86,7 +91,7 @@ ops-agent（③）Loader + CLI + Agno/Mem0/Hindsight/Graphiti 只读
 |------|------|
 | `VIDEO_RAW_INGEST_ROOT` | ① 仓库根，供 `ops-knowledge` 找 `schema/lesson_merged.schema.json` |
 | `OPS_HANDOFF_MANIFEST_PATH` | `handbook_handoff.json` |
-| `OPS_AGENT_MANIFEST_PATH` | ②b 导出的 Agent 配方 JSON |
+| `OPS_AGENT_MANIFEST_DIR` | ②b 导出的 Agent 配方目录（`*.json` 即 `skill_id`） |
 | `OPS_KNOWLEDGE_FALLBACK_PATH` | 无 Neo4j 时的 JSONL 降级知识 |
 | `OPENAI_API_KEY` | ③ 及可选 LLM 路径必需 |
 

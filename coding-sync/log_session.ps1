@@ -3,7 +3,7 @@
 .SYNOPSIS
   封装 log_session.py：会话摘要或命令运行记录。
 .EXAMPLE
-  .\log_session.ps1 session -Title "改 ops-agent" -Body "完成 persona 切换"
+  .\log_session.ps1 session -Title "改 ops-agent" -Body "完成 skill_id / manifest 目录改造"
   .\log_session.ps1 run -Cmd "pytest -q" -ExitCode 0
 #>
 param(

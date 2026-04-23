@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from ops_agent.mcp.fixture_probe import format_probe_for_agent, load_probe_data
 
 

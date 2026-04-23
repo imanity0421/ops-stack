@@ -1,5 +1,6 @@
 {
   "client_id": "demo_client",
+  "default_skill_id": "default_ops",
   "episodes": [
     {
       "name": "lesson_ops_intro",

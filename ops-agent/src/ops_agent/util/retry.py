@@ -32,12 +32,10 @@ def retry_sync(
     label: str = "call",
 ) -> T:
     """对瞬时网络/传输错误做有限次重试（指数退避）。"""
-    last: BaseException | None = None
     for i in range(attempts):
         try:
             return fn()
         except retry_on as e:
-            last = e
             if i == attempts - 1:
                 logger.warning("%s 最终失败 (%s/%s): %s", label, i + 1, attempts, e)
                 raise
