@@ -1,0 +1,7 @@
+[
+  {
+    "id": "no_absolute_terms",
+    "pattern": "百分之百|包治|必火",
+    "message": "避免绝对化、夸大宣传用语。"
+  }
+]

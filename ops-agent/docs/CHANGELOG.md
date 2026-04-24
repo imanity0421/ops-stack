@@ -2,6 +2,15 @@
 
 格式基于实际交付，版本号与 `pyproject.toml` / `ops_agent.__version__` 对齐。
 
+## [Unreleased]
+
+### 新增
+
+- **Asset Store（案例库 / LanceDB）**：新增第四层“参考案例库”能力（整存整取、Dynamic Few-Shot，语感参考），设计见 `docs/ASSET_STORE.md`；`retrieve_ordered_context` 增加第④层，新增工具 `search_reference_cases`。
+- **离线入库**：新增 CLI `ops-agent asset-ingest <input>`（规则校验 + LLM gatekeeper + 特征抽取 + embedding + 写入）。
+- **插件化开关**：新增 `OPS_ENABLE_ASSET_STORE` / `OPS_ASSET_STORE_PATH`、`OPS_ENABLE_HINDSIGHT`、`OPS_ENABLE_MEM0_LEARNING`。
+- **依赖**：新增可选 extra `.[asset_store]`（包含 `lancedb`）。
+
 ## [0.6.0] - 2026-04-17
 
 ### 破坏性变更

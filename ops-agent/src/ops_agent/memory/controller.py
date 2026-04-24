@@ -70,6 +70,7 @@ class MemoryController:
         mem0_host: str | None,
         local_memory_path: Path,
         hindsight_path: Path,
+        enable_hindsight: bool = True,
         snapshot_every_n_turns: int = 5,
     ) -> MemoryController:
         if mem0_api_key:
@@ -79,7 +80,7 @@ class MemoryController:
             backend = LocalMemoryBackend(local_memory_path)
             logger.warning("未设置 MEM0_API_KEY，使用本地 JSON 后端: %s", local_memory_path)
 
-        hs = HindsightStore(hindsight_path)
+        hs = HindsightStore(hindsight_path) if enable_hindsight else None
         return cls(backend, hindsight=hs, snapshot_every_n_turns=snapshot_every_n_turns)
 
     def ingest_user_fact(self, fact: UserFact) -> MemoryWriteResult:

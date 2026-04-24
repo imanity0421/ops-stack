@@ -81,6 +81,26 @@ def test_task_feedback_writes_stub(tmp_paths: tuple[Path, Path]) -> None:
     assert "太硬" in hind.read_text(encoding="utf-8")
 
 
+def test_disable_hindsight_disallows_task_feedback(tmp_paths: tuple[Path, Path]) -> None:
+    local, hind = tmp_paths
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=local,
+        hindsight_path=hind,
+        enable_hindsight=False,
+    )
+    with pytest.raises(RuntimeError):
+        ctrl.ingest_user_fact(
+            UserFact(
+                lane=MemoryLane.TASK_FEEDBACK,
+                client_id="c1",
+                text="这次不满意",
+                fact_type="feedback",
+            )
+        )
+
+
 def test_snapshot_counter(tmp_paths: tuple[Path, Path]) -> None:
     local, hind = tmp_paths
     ctrl = MemoryController.create_default(

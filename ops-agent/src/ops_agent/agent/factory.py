@@ -17,6 +17,7 @@ from ops_agent.manifest_loader import (
     load_skill_manifest_registry,
     resolve_effective_skill_id,
 )
+from ops_agent.knowledge.asset_store import AssetStore, asset_store_from_settings
 from ops_agent.memory.controller import MemoryController
 
 if TYPE_CHECKING:
@@ -65,6 +66,7 @@ def get_agent(
     thought_mode: str = "fast",
     extra_instructions: Optional[List[str]] = None,
     knowledge: Optional["GraphitiReadService"] = None,
+    asset_store: Optional[AssetStore] = None,
     settings: Optional[Settings] = None,
     skill_id: str | None = None,
     exclude_tool_names: Optional[set[str]] = None,
@@ -81,17 +83,25 @@ def get_agent(
     manifest = registry.get(eff_skill)
     golden_rules = load_golden_rules(s.golden_rules_path)
     incremental = get_incremental_tools(eff_skill)
+    resolved_asset_store: AssetStore | None = asset_store
+    if s.enable_asset_store and resolved_asset_store is None:
+        resolved_asset_store = asset_store_from_settings(enable=True, path=s.asset_store_path)
     tools = build_memory_tools(
         controller,
         client_id,
         user_id,
         knowledge=knowledge,
+        asset_store=resolved_asset_store,
         golden_rules=golden_rules,
         mcp_probe_fixture_path=s.mcp_probe_fixture_path,
         enabled_tool_names=enabled_tool_name_set(manifest),
         exclude_tool_names=exclude_tool_names,
         skill_id=eff_skill,
         incremental_tools=incremental,
+        enable_mem0_learning=s.enable_mem0_learning,
+        enable_hindsight=s.enable_hindsight,
+        enable_asset_store=s.enable_asset_store,
+        skill_compliance_dir=s.skill_compliance_dir,
     )
 
     instructions: list[str] = []
@@ -151,6 +161,7 @@ def get_reasoning_agent(
     user_id: str | None = None,
     extra_instructions: Optional[List[str]] = None,
     knowledge: Optional["GraphitiReadService"] = None,
+    asset_store: Optional[AssetStore] = None,
     settings: Optional[Settings] = None,
     skill_id: str | None = None,
     exclude_tool_names: Optional[set[str]] = None,
@@ -163,6 +174,7 @@ def get_reasoning_agent(
         thought_mode="slow",
         extra_instructions=extra_instructions,
         knowledge=knowledge,
+        asset_store=asset_store,
         settings=settings,
         skill_id=skill_id,
         exclude_tool_names=exclude_tool_names,

@@ -50,13 +50,14 @@ ops-agent（本仓库，③）→  运行时 Agent + Mem0 + Graphiti 只读
 |------|------|
 | **Mem0 / 本地后端** | 存储 **属性（attribute）** 与 **稳定偏好（preference）**；唯一长期记忆主存储 |
 | **Hindsight** | **`HindsightStore`**：`data/hindsight.jsonl`（`OPS_HISTORICAL_PATH`）；含 `feedback` 与 `lesson`；检索 `search_hindsight` / 工具 `search_past_lessons` |
+| **Asset Store（案例库）** | **整存整取**的参考案例库（Dynamic Few-Shot，语感参考）。运行时仅检索；**清洗/特征抽取在入库阶段完成**。默认落地为本地 **LanceDB**（可选插件）。设计见 `docs/ASSET_STORE.md` |
 | **Graphiti** | **只读**：`GraphitiReadService.search_domain_knowledge` → `graphiti.search_`；分区键 **`graphiti_group_id(client_id, skill_id)`**（`client` 与 `skill` 两段经 `sanitize_group_id` 后以 `__` 拼接），须与 **`graphiti-ingest`**、JSONL fallback 写入一致；BFS 深度默认 **2**（`OPS_GRAPHITI_BFS_MAX_DEPTH`） |
 | **Skill / Manifest** | 主键 **`skill_id`**（如 `default_ops`、`short_video`）。`manifest_loader.load_skill_manifest_registry`：先读包内 `data/skill_manifests/*.json`，再合并 **`OPS_AGENT_MANIFEST_DIR`** 下同名文件覆盖。`get_agent(..., skill_id=...)` 未传时用 **`OPS_AGENT_DEFAULT_SKILL_ID`**。已弃用 **`OPS_AGENT_PERSONA`** / **`OPS_AGENT_MANIFEST_PATH`**。 |
 | **工具合并** | **平台工具**（`build_memory_tools`）常驻 + **`get_incremental_tools(skill_id)`** 增量（当前为空占位）；再按 manifest `enabled_tools` 筛选。 |
 
-### 3.2 检索顺序（阶段 c）
+### 3.2 检索顺序（阶段 c+）
 
-- **工具 `retrieve_ordered_context`**：固定顺序 **① Mem0（`search_profile`）→ ② Hindsight（`search_hindsight`）→ ③ Graphiti（若已挂载）**。
+- **工具 `retrieve_ordered_context`**：固定顺序 **① Mem0（`search_profile`）→ ② Hindsight（`search_hindsight`）→ ③ Graphiti（若已挂载）→ ④ Asset Store（若已挂载）**。
 - 仍保留单独工具 `search_client_memory`、`search_past_lessons`、`search_domain_knowledge` 供细粒度调用。
 
 ### 3.3 领域知识降级
@@ -137,6 +138,7 @@ ops-agent/
 - **降级 JSONL**：`OPS_KNOWLEDGE_FALLBACK_PATH`（示例见 `docs/examples/knowledge_fallback.example.jsonl`）。
 - **Hindsight 路径**：`OPS_HISTORICAL_PATH`（兼容 `OPS_HISTORICAL_STUB_PATH`），默认 `data/hindsight.jsonl`。
 - **AsyncReview**：`OPS_ASYNC_REVIEW_ON_EXIT`（默认 `1`）、`OPS_ASYNC_REVIEW_MODEL`（可选）。
+- **Asset Store（可选）**：`OPS_ENABLE_ASSET_STORE`、`OPS_ASSET_STORE_PATH`（见 `docs/ASSET_STORE.md`）。
 
 安装 Graphiti 依赖：`pip install -e ".[graphiti]"`。
 
@@ -177,6 +179,7 @@ ops-agent/
 | ADR-004 | Graphiti 仅 `search_`，不写 episode | 运行时只读，与离线建图解耦 |
 | ADR-005 | `graphiti-core` 为可选 extra | 无 Neo4j 环境仍可安装核心 Agent |
 | ADR-006 | AsyncReview 用独立线程 + `join` | 避免 daemon 线程被进程退出打断 |
+| ADR-007 | 案例库采用 Asset Store（整案 few-shot）而非 Graph-RAG | 目标为“语感参考”而非实体关系解释；运行时仅检索，清洗/特征抽取在离线入库阶段完成 |
 
 ---
 

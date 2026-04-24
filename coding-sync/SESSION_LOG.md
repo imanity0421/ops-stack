@@ -91,3 +91,40 @@
 **下一台机器**：
 
 - 在 **`ops-stack`** 根执行 **`git pull`**；按 **`PROJECT_CONTEXT.md`** 与 **`ops-agent/docs/OPERATIONS.md`** 配置 `.env`（注意 **`OPS_AGENT_MANIFEST_DIR`** 等变量名变更）。
+
+---
+
+## 2026-04-24 | Asset Store（案例库）落地（LanceDB）
+
+**标题**：新增“参考案例库”第四层记忆 + 离线入库管线骨架
+
+**本轮做了什么**：
+
+- **设计稿落盘**：新增 `ops-agent/docs/ASSET_STORE.md`，定义整存整取（case-level）+ 向量仅对特征文本（摘要+风格指纹+标签）+ 插件化开关 + 离线 ingestion pipeline。
+- **架构文档更新**：`docs/ARCHITECTURE.md` / `docs/ENGINEERING.md` / `docs/OPERATIONS.md` 增加 Asset Store 第④层说明与配置变量。
+- **实现 Asset Store 封装**：新增 `src/ops_agent/knowledge/asset_store.py`（LanceDB 封装 + `NullAssetStore`），并加可选依赖 extra：`pip install -e ".[asset_store]"`。
+- **运行时工具接入**：`retrieve_ordered_context` 扩展为 ①Mem0→②Hindsight→③Graphiti→④Asset Store；新增工具 `search_reference_cases`。**factory 不直接查库**，仅传入 store/开关并挂工具。
+- **插件化开关**：新增环境变量
+  - `OPS_ENABLE_ASSET_STORE` / `OPS_ASSET_STORE_PATH`
+  - `OPS_ENABLE_HINDSIGHT`（可完全关闭 hindsight 存储与工具挂载）
+  - `OPS_ENABLE_MEM0_LEARNING`（关闭 Mem0 写入工具但仍可读）
+- **离线入库 CLI**：新增 `ops-agent asset-ingest <input>`（规则校验 + LLM gatekeeper + LLM 特征抽取 + embedding + 写入）。
+- **测试**：新增/更新单测，`pytest` 全通过。
+
+**运行过的关键命令**：
+
+- `cd ops-agent; python -m pytest`（36 passed）
+
+**未竟 / 下一台机器先做**：
+
+- 若要更强的数据治理：在 `asset_ingest.py` 增加去重/合规规则/人工复核流（status=quarantined 的处理）。
+- 若运行时 embedding 成本/延迟过高：考虑本地 embedding 或缓存 query embedding（保持“秒查秒回”体验）。
+
+**2026-04-24 补充（风险修复 + 生产向能力）**：
+
+- `get_agent` 在 `OPS_ENABLE_ASSET_STORE=1` 且未显式传入 `asset_store` 时自动 `asset_store_from_settings`，避免「只开开关不生效」。
+- LanceDB 检索改为**向量多取 + 内存按租户过滤**，去掉无过滤回退，避免多租户数据串案。
+- 入库：**强指纹** `dedup_key`、可选 **L2 近似去重**（`OPS_ASSET_NEAR_DEDUP_L2_MAX`）、**每 skill 硬合规**（`OPS_SKILL_COMPLIANCE_DIR`）；运行时新增工具 `check_skill_compliance_text`。
+- 回退：`ops-agent asset-rm` 支持按 `case_id` 或 `client_id+skill+--all-skill` 清库块。
+- 未传 `user_id` 的检索只命中**租户共享**（`user_id` 为空的行），避免多用户互串。
+

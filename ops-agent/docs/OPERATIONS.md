@@ -32,12 +32,18 @@ pip install -e ".[graphiti]"
 | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | 可选；设置后启用 Graphiti 只读检索（需 `[graphiti]`） |
 | `OPS_KNOWLEDGE_FALLBACK_PATH` | 可选；JSONL 降级，格式见 `docs/examples/knowledge_fallback.example.jsonl` |
 | `OPS_HISTORICAL_PATH` | 可选；Hindsight JSONL 路径，默认 `data/hindsight.jsonl`（兼容 `OPS_HISTORICAL_STUB_PATH`） |
+| `OPS_ENABLE_HINDSIGHT` | 默认 `1`；设为 `0` 可完全关闭 Hindsight（不创建 store，不挂载相关工具） |
 | `OPS_ASYNC_REVIEW_ON_EXIT` | 默认 `1`；设为 `0` 关闭退出时复盘 |
 | `OPS_HANDOFF_MANIFEST_PATH` | 可选；`ops-knowledge manifest` 生成的 `handbook_handoff.json`；**运行时**会摘要注入 `get_agent` 指令 |
 | `OPS_AGENT_MANIFEST_DIR` | 可选；扫描其中 **`*.json`** 作为 skill 配方（文件名即 **`skill_id`**）；可与包内置 `default_ops` / `short_video` 合并覆盖 |
 | `OPS_AGENT_DEFAULT_SKILL_ID` | 可选；未传 `--skill` / `skill_id` 时的默认 skill（默认 `default_ops`） |
 | `OPS_GOLDEN_RULES_PATH` | 可选；JSON 数组正则规则（见 `data/golden_rules.example.json`）；启用工具 `check_delivery_text` |
 | `OPS_MCP_PROBE_FIXTURE_PATH` | 可选；覆盖默认探针 JSON（否则使用包内 `mcp_probe_default.json`）；工具 `fetch_ops_probe_context` |
+| `OPS_ENABLE_ASSET_STORE` | 可选；启用参考案例库（Asset Store / LanceDB），运行时仅检索 |
+| `OPS_ASSET_STORE_PATH` | 可选；Asset Store 的本地路径（LanceDB 目录） |
+| `OPS_ENABLE_MEM0_LEARNING` | 默认 `1`；设为 `0` 则不挂载 Mem0 写入工具（仍允许检索画像） |
+| `OPS_SKILL_COMPLIANCE_DIR` | 可选；目录下 ``<skill_id>.json`` 为硬合规（与 Golden rules 同格式）；**asset-ingest 入库**与工具 **check_skill_compliance_text** 共用 |
+| `OPS_ASSET_NEAR_DEDUP_L2_MAX` | 可选；设置如 `0.18` 时启用**近似去重**（特征向量 L2）；不设置则只做强指纹去重 |
 | `VIDEO_RAW_INGEST_ROOT` | 可选；供 `doctor` 检查与 `ops-knowledge` 定位 schema |
 | `OPS_GRAPHITI_SEARCH_TIMEOUT_SEC` 等 | 见 [ENGINEERING.md](ENGINEERING.md) §5 |
 
@@ -70,6 +76,12 @@ ops-agent knowledge-append-jsonl -o data/knowledge.jsonl --client-id my_client -
 
 # Graphiti 离线写入：先 dry-run，再在有 NEO4J_* + OPENAI_API_KEY 时实跑
 ops-agent graphiti-ingest docs/examples/graphiti_episodes.example.json --dry-run
+
+# 参考案例库：离线导入（需 pip install -e ".[asset_store]"，含 lancedb）
+# ops-agent asset-ingest my_case.txt --client-id my_client --skill short_video
+# 删除单条或按 tenant+skill 清空（回退垃圾入库）
+# ops-agent asset-rm --case-id <uuid>
+# ops-agent asset-rm --client-id my_client --skill short_video --all-skill
 
 # MCP 探针 stdio 服务（需 pip install -e ".[mcp]"）
 ops-agent mcp-probe-server

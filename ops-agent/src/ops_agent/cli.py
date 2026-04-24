@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ops_agent.agent.factory import get_agent, new_session_id
 from ops_agent.config import Settings
+from ops_agent.knowledge.asset_store import asset_store_from_settings
 from ops_agent.knowledge.graphiti_reader import GraphitiReadService
 from ops_agent.memory.controller import MemoryController
 from ops_agent.review.async_review import AsyncReviewService
@@ -108,6 +109,78 @@ def _graphiti_ingest_main(argv: list[str]) -> int:
     return 0
 
 
+def _asset_ingest_main(argv: list[str]) -> int:
+    from ops_agent.knowledge.asset_ingest import IngestOptions, ingest_jsonl, ingest_text
+
+    p = argparse.ArgumentParser(
+        prog="ops-agent asset-ingest",
+        description="离线导入参考案例库（Asset Store / LanceDB）。运行时不清洗，清洗/特征抽取在此阶段完成。",
+    )
+    p.add_argument("input", type=Path, help="输入：.jsonl（每行一个案例）或 .txt（单案例纯文本）")
+    p.add_argument("--client-id", required=True, help="租户 ID")
+    p.add_argument("--user-id", default=None, help="终端用户 ID（可选；为空表示租户共享）")
+    p.add_argument("--skill", default="default_ops", help="skill_id（如 short_video）")
+    p.add_argument("--source", default=None, help="来源标识（文件名/URL/备注）")
+    p.add_argument("--model", default=os.getenv("OPS_AGENT_MODEL", "gpt-4o-mini"), help="用于 gatekeeper/extract 的模型")
+    p.add_argument("--no-llm", action="store_true", help="不调用 LLM（仅做规则校验 + 最小字段入库）")
+    args = p.parse_args(argv)
+
+    settings = Settings.from_env()
+    store = asset_store_from_settings(enable=True, path=settings.asset_store_path)
+    opt = IngestOptions(
+        client_id=args.client_id,
+        user_id=args.user_id,
+        skill_id=args.skill,
+        source=args.source,
+        model=args.model,
+        allow_llm=not args.no_llm,
+        compliance_dir=settings.skill_compliance_dir,
+    )
+    if args.input.suffix.lower() == ".jsonl":
+        r = ingest_jsonl(args.input, store=store, opt=opt)
+        print(json.dumps(r, ensure_ascii=False, indent=2))
+        return 0
+    raw = args.input.read_text(encoding="utf-8")
+    r = ingest_text(raw, store=store, opt=opt)
+    print(json.dumps(r, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _asset_rm_main(argv: list[str]) -> int:
+    """按 case_id 删除单条，或按 client_id + skill 清空该 skill 下全部案例（回退/清库）。"""
+    from ops_agent.knowledge.asset_store import LanceDbAssetStore
+
+    p = argparse.ArgumentParser(
+        prog="ops-agent asset-rm",
+        description="删除 Asset Store（LanceDB）中的案例行。用于垃圾数据回退或清库。",
+    )
+    p.add_argument("--case-id", default=None, help="删除指定 case_id")
+    p.add_argument("--client-id", default=None, help="与 --skill --all-skill 联用")
+    p.add_argument("--skill", default=None, help="与 --client-id --all-skill 联用")
+    p.add_argument(
+        "--all-skill",
+        action="store_true",
+        help="删除该 tenant 下某 skill 的全部案例（危险操作）",
+    )
+    args = p.parse_args(argv)
+
+    settings = Settings.from_env()
+    store = LanceDbAssetStore(path=settings.asset_store_path)
+
+    if args.case_id:
+        r = store.delete_by_case_id(args.case_id.strip())
+        print(json.dumps(r, ensure_ascii=False, indent=2))
+        return 0 if r.get("status") == "ok" else 1
+
+    if args.all_skill and args.client_id and args.skill:
+        r = store.delete_by_client_skill(args.client_id.strip(), args.skill.strip())
+        print(json.dumps(r, ensure_ascii=False, indent=2))
+        return 0 if r.get("status") == "ok" else 1
+
+    print("必须指定 --case-id，或同时指定 --client-id --skill --all-skill", file=sys.stderr)
+    return 1
+
+
 def _mcp_probe_server_main(argv: list[str]) -> int:
     from ops_agent.mcp.probe_server import main as mcp_main
 
@@ -143,10 +216,12 @@ def _chat_main(argv: list[str]) -> int:
         mem0_host=settings.mem0_host,
         local_memory_path=settings.local_memory_path,
         hindsight_path=settings.hindsight_path,
+        enable_hindsight=settings.enable_hindsight,
         snapshot_every_n_turns=settings.snapshot_every_n_turns,
     )
 
     knowledge = None if args.no_knowledge else GraphitiReadService.from_env(settings.knowledge_fallback_path)
+    asset_store = asset_store_from_settings(enable=settings.enable_asset_store, path=settings.asset_store_path)
 
     skill_id = args.skill if args.skill is not None else None
 
@@ -156,6 +231,7 @@ def _chat_main(argv: list[str]) -> int:
         user_id=args.user_id,
         thought_mode="slow" if args.slow else "fast",
         knowledge=knowledge,
+        asset_store=asset_store,
         settings=settings,
         skill_id=skill_id,
     )
@@ -208,6 +284,10 @@ def main(argv: list[str] | None = None) -> int:
         return _knowledge_append_main(argv[1:])
     if argv and argv[0] == "graphiti-ingest":
         return _graphiti_ingest_main(argv[1:])
+    if argv and argv[0] == "asset-ingest":
+        return _asset_ingest_main(argv[1:])
+    if argv and argv[0] == "asset-rm":
+        return _asset_rm_main(argv[1:])
     if argv and argv[0] == "mcp-probe-server":
         return _mcp_probe_server_main(argv[1:])
     return _chat_main(argv)

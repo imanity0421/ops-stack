@@ -14,6 +14,7 @@ from ops_agent.memory.models import MemoryLane, UserFact
 
 if TYPE_CHECKING:
     from ops_agent.knowledge.graphiti_reader import GraphitiReadService
+    from ops_agent.knowledge.asset_store import AssetStore
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ def build_memory_tools(
     client_id: str,
     user_id: str | None,
     knowledge: Optional["GraphitiReadService"] = None,
+    asset_store: Optional["AssetStore"] = None,
     golden_rules: Optional[list[dict[str, Any]]] = None,
     mcp_probe_fixture_path: Path | None = None,
     enabled_tool_names: set[str] | None = None,
@@ -45,6 +47,10 @@ def build_memory_tools(
     *,
     skill_id: str = "default_ops",
     incremental_tools: Optional[list[Callable[..., object]]] = None,
+    enable_mem0_learning: bool = True,
+    enable_hindsight: bool = True,
+    enable_asset_store: bool = False,
+    skill_compliance_dir: Path | None = None,
 ) -> list[Callable]:
     """绑定租户上下文后的记忆工具，供 Agno Agent 使用。
 
@@ -132,6 +138,25 @@ def build_memory_tools(
         return "\n---\n".join(lines)
 
     @tool(
+        name="search_reference_cases",
+        description="检索参考案例库（Asset Store，整案 few-shot 语感参考）。运行时仅检索，不做清洗与入库治理。",
+    )
+    def search_reference_cases(query: str, limit: int = 3, include_raw: bool = False) -> str:
+        if not enable_asset_store or asset_store is None:
+            return "（当前未启用案例库 Asset Store）"
+        from ops_agent.knowledge.asset_store import format_hits_for_agent
+
+        hits = asset_store.search(
+            query,
+            client_id=client_id,
+            user_id=user_id,
+            skill_id=skill_id,
+            limit=max(1, min(int(limit), 6)),
+            include_raw=bool(include_raw),
+        )
+        return format_hits_for_agent(hits, include_raw=bool(include_raw))
+
+    @tool(
         name="suggest_memory_lane",
         description="对用户一句话做记忆槽启发式分类（任务反馈 vs 长期画像），不写入存储；不确定时请自行判断。",
     )
@@ -151,31 +176,54 @@ def build_memory_tools(
 
     @tool(
         name="retrieve_ordered_context",
-        description="按固定顺序检索上下文：① Mem0 客户画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）。回答策略/方案类问题前应优先调用本工具。",
+        description="按固定顺序检索上下文：① Mem0 客户画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）④ Asset Store 参考案例（若已配置）。回答策略/方案类问题前应优先调用本工具。",
     )
     def retrieve_ordered_context(query: str) -> str:
         blocks: list[str] = []
         mem = controller.search_profile(query, client_id=client_id, user_id=user_id, limit=8)
         blocks.append("## ① 客户画像 (Mem0)\n" + ("\n---\n".join(h.text for h in mem) if mem else "（无）"))
-        hs = controller.search_hindsight(query, client_id=client_id, limit=8)
-        blocks.append("## ② 历史教训与反馈 (Hindsight)\n" + ("\n---\n".join(hs) if hs else "（无）"))
+        if enable_hindsight:
+            hs = controller.search_hindsight(query, client_id=client_id, limit=8)
+            blocks.append("## ② 历史教训与反馈 (Hindsight)\n" + ("\n---\n".join(hs) if hs else "（无）"))
+        else:
+            blocks.append("## ② 历史教训与反馈 (Hindsight)\n（当前未启用）")
         if knowledge is not None:
             dom = knowledge.search_domain_knowledge(query, client_id=client_id, skill_id=skill_id)
             blocks.append("## ③ 领域知识 (Graphiti / 降级)\n" + dom)
         else:
             blocks.append("## ③ 领域知识 (Graphiti)\n（当前未挂载 Graphiti，依赖模型常识）")
+
+        if enable_asset_store and asset_store is not None:
+            from ops_agent.knowledge.asset_store import format_hits_for_agent
+
+            hits = asset_store.search(
+                query,
+                client_id=client_id,
+                user_id=user_id,
+                skill_id=skill_id,
+                limit=3,
+                include_raw=False,
+            )
+            blocks.append("## ④ 参考案例 (Asset Store)\n" + format_hits_for_agent(hits, include_raw=False))
+        else:
+            blocks.append("## ④ 参考案例 (Asset Store)\n（当前未启用）")
         return "\n\n".join(blocks)
 
     tools: list[Callable] = [
-        record_client_fact,
-        record_client_preference,
-        record_task_feedback,
         suggest_memory_lane_tool,
         fetch_ops_probe_context,
         retrieve_ordered_context,
         search_client_memory,
-        search_past_lessons,
     ]
+
+    if enable_mem0_learning:
+        tools.extend([record_client_fact, record_client_preference])
+
+    if enable_hindsight:
+        tools.extend([record_task_feedback, search_past_lessons])
+
+    if enable_asset_store:
+        tools.append(search_reference_cases)
 
     rules = golden_rules or []
     if rules:
@@ -202,6 +250,22 @@ def build_memory_tools(
             return knowledge.search_domain_knowledge(query, client_id=client_id, skill_id=skill_id)
 
         tools.append(search_domain_knowledge)
+
+    if skill_compliance_dir is not None:
+
+        @tool(
+            name="check_skill_compliance_text",
+            description="按 OPS_SKILL_COMPLIANCE_DIR/<skill_id>.json 校验文案是否违反该 skill 硬规则（与 asset-ingest 入库合规同源）。",
+        )
+        def check_skill_compliance_text(text: str) -> str:
+            from ops_agent.knowledge.skill_compliance import check_skill_compliance
+
+            v = check_skill_compliance(text, skill_id, skill_compliance_dir)
+            if not v:
+                return "ok: 未命中 skill 合规规则。"
+            return "violations:\n" + "\n".join(v)
+
+        tools.append(check_skill_compliance_text)
 
     if incremental_tools:
         tools.extend(incremental_tools)

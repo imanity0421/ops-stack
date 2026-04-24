@@ -17,6 +17,7 @@ flowchart LR
   subgraph Storage["存储"]
     M[(Mem0 或 local_memory.json)]
     H[hindsight.jsonl]
+    S[(Asset Store / LanceDB)]
     G[Graphiti search_ 只读]
     N[(Neo4j)]
     F[knowledge_fallback.jsonl]
@@ -30,6 +31,7 @@ flowchart LR
   R --> MC
   MC -->|① profile| M
   MC -->|② hindsight| H
+  R -->|④ reference cases| S
   R --> G
   G --> N
   R -.->|③ 降级| F
@@ -40,7 +42,7 @@ flowchart LR
 
 ## 读路径
 
-1. **推荐**：`retrieve_ordered_context` → ① Mem0 → ② Hindsight → ③ Graphiti（或降级）。
+1. **推荐**：`retrieve_ordered_context` → ① Mem0 → ② Hindsight → ③ Graphiti（或降级）→ ④ Asset Store（参考案例，可选）。
 2. **客户画像**：`search_client_memory`。
 3. **历史教训**：`search_past_lessons`。
 4. **领域知识**：`search_domain_knowledge`。

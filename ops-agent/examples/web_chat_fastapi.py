@@ -92,6 +92,7 @@ def _build_stack(
         mem0_host=settings.mem0_host,
         local_memory_path=settings.local_memory_path,
         hindsight_path=settings.hindsight_path,
+        enable_hindsight=settings.enable_hindsight,
         snapshot_every_n_turns=settings.snapshot_every_n_turns,
     )
     knowledge = None if no_knowledge else GraphitiReadService.from_env(settings.knowledge_fallback_path)
