@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _SKILL_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
+# 与 agent/skills/loader 一致：可加载子包名
+_SKILL_PKG = re.compile(r"^[a-zA-Z0-9_]+$")
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,18 @@ class Settings:
     agent_manifest_dir: Path | None = None
     #: 未显式传 ``skill_id`` 时使用的默认 skill（须存在于注册表，通常为 ``default_ops``）。
     default_skill_id: str = "default_ops"
+    #: 允许动态加载的 ``ops_agent.agent.skills.<name>`` 子包名（逗号分隔）；空则**不**加载任何技能包
+    skill_packages_allowlist: frozenset[str] = frozenset()
+    #: 是否将 Agno 会话/运行元数据落库，并在下一轮注入**最近 N 条**到模型上文（N 见下项）
+    enable_session_db: bool = True
+    #: 单机默认 Sqlite 文件路径；若设置 ``OPS_SESSION_DB_URL`` 则本项仅在不使用 URL 时生效
+    session_sqlite_path: Path = Path("data/agno_session.db")
+    #: 非空时优先于 ``session_sqlite_path``：``sqlite:``/``postgres(ql)://``/``redis://``/``rediss://``，或无 ``://`` 的本地路径字符串
+    session_db_url: str | None = None
+    #: 将历史拼入模型上文时的最大消息条数；0 表示**仍落库**但不把历史拼进 context
+    session_history_max_messages: int = 20
+    #: P1-3 是否在 system 最前注入「系统宪法·冲突解决序」
+    enable_constitutional_prompt: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -53,6 +67,30 @@ class Settings:
         raw_skill = (os.getenv("OPS_AGENT_DEFAULT_SKILL_ID") or "default_ops").strip()
         default_skill_id = raw_skill if _SKILL_ID.match(raw_skill) else "default_ops"
 
+        allow_raw = os.getenv("OPS_AGENT_LOADABLE_SKILL_PACKAGES", "")
+        allow_set: set[str] = set()
+        for p in allow_raw.split(","):
+            t = p.strip()
+            if not t:
+                continue
+            if not _SKILL_PKG.match(t):
+                raise ValueError(
+                    f"OPS_AGENT_LOADABLE_SKILL_PACKAGES 项非法: {t!r}，仅允许 [a-zA-Z0-9_]+"
+                )
+            allow_set.add(t)
+
+        sdb = os.getenv("OPS_SESSION_DB_PATH", "data/agno_session.db")
+        sdb_url = os.getenv("OPS_SESSION_DB_URL")
+        hist_n = int(os.getenv("OPS_SESSION_HISTORY_MAX_MESSAGES", "20"))
+        if hist_n < 0:
+            raise ValueError("OPS_SESSION_HISTORY_MAX_MESSAGES 须 >= 0")
+
+        enable_const = os.getenv("OPS_ENABLE_CONSTITUTIONAL", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+
         return cls(
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             openai_api_base=os.getenv("OPENAI_API_BASE"),
@@ -60,10 +98,18 @@ class Settings:
             mem0_host=os.getenv("MEM0_HOST"),
             snapshot_every_n_turns=int(os.getenv("OPS_SNAPSHOT_EVERY_N_TURNS", "5")),
             local_memory_path=Path(os.getenv("OPS_LOCAL_MEMORY_PATH", "data/local_memory.json")),
-            hindsight_path=Path(os.getenv("OPS_HISTORICAL_PATH", os.getenv("OPS_HISTORICAL_STUB_PATH", "data/hindsight.jsonl"))),
-            enable_hindsight=os.getenv("OPS_ENABLE_HINDSIGHT", "1").lower() not in ("0", "false", "no"),
-            enable_mem0_learning=os.getenv("OPS_ENABLE_MEM0_LEARNING", "1").lower() not in ("0", "false", "no"),
-            enable_asset_store=os.getenv("OPS_ENABLE_ASSET_STORE", "0").lower() in ("1", "true", "yes"),
+            hindsight_path=Path(
+                os.getenv(
+                    "OPS_HISTORICAL_PATH",
+                    os.getenv("OPS_HISTORICAL_STUB_PATH", "data/hindsight.jsonl"),
+                )
+            ),
+            enable_hindsight=os.getenv("OPS_ENABLE_HINDSIGHT", "1").lower()
+            not in ("0", "false", "no"),
+            enable_mem0_learning=os.getenv("OPS_ENABLE_MEM0_LEARNING", "1").lower()
+            not in ("0", "false", "no"),
+            enable_asset_store=os.getenv("OPS_ENABLE_ASSET_STORE", "0").lower()
+            in ("1", "true", "yes"),
             asset_store_path=Path(os.getenv("OPS_ASSET_STORE_PATH", "data/asset_store.lancedb")),
             knowledge_fallback_path=Path(fb) if fb else None,
             handoff_manifest_path=Path(ho) if ho else None,
@@ -72,6 +118,13 @@ class Settings:
             mcp_probe_fixture_path=Path(mp) if mp else None,
             agent_manifest_dir=Path(am_dir) if am_dir else None,
             default_skill_id=default_skill_id,
+            skill_packages_allowlist=frozenset(allow_set),
+            enable_session_db=os.getenv("OPS_ENABLE_SESSION_DB", "1").lower()
+            not in ("0", "false", "no"),
+            session_sqlite_path=Path(sdb),
+            session_db_url=(sdb_url.strip() or None) if sdb_url else None,
+            session_history_max_messages=hist_n,
+            enable_constitutional_prompt=enable_const,
         )
 
 

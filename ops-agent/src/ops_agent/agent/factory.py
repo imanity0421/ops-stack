@@ -7,6 +7,8 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
+from ops_agent.agent.constitutional import build_constitutional_instruction_blocks
+from ops_agent.agent.session_db import create_session_db, session_db_summary
 from ops_agent.agent.skills import get_incremental_tools
 from ops_agent.agent.tools import build_memory_tools
 from ops_agent.config import Settings
@@ -17,6 +19,7 @@ from ops_agent.manifest_loader import (
     load_skill_manifest_registry,
     resolve_effective_skill_id,
 )
+from ops_agent.manifest_output import resolve_structured_output_model
 from ops_agent.knowledge.asset_store import AssetStore, asset_store_from_settings
 from ops_agent.memory.controller import MemoryController
 
@@ -30,9 +33,7 @@ def _knowledge_status_hint(skill_id: str, knowledge: Optional["GraphitiReadServi
     if knowledge is not None:
         return None
     if skill_id == "short_video":
-        return (
-            "当前未挂载领域知识库：脚本可依赖对话与 Mem0；若有固定话术库可配置 OPS_KNOWLEDGE_FALLBACK_PATH。"
-        )
+        return "当前未挂载领域知识库：脚本可依赖对话与 Mem0；若有固定话术库可配置 OPS_KNOWLEDGE_FALLBACK_PATH。"
     return "当前未挂载 Graphiti：retrieve_ordered_context 的第三层将提示未配置。"
 
 
@@ -82,7 +83,7 @@ def get_agent(
     eff_skill = resolve_effective_skill_id(skill_id, s.default_skill_id, registry)
     manifest = registry.get(eff_skill)
     golden_rules = load_golden_rules(s.golden_rules_path)
-    incremental = get_incremental_tools(eff_skill)
+    incremental = get_incremental_tools(eff_skill, settings=s)
     resolved_asset_store: AssetStore | None = asset_store
     if s.enable_asset_store and resolved_asset_store is None:
         resolved_asset_store = asset_store_from_settings(enable=True, path=s.asset_store_path)
@@ -105,6 +106,12 @@ def get_agent(
     )
 
     instructions: list[str] = []
+    instructions.extend(
+        build_constitutional_instruction_blocks(
+            manifest,
+            enabled=s.enable_constitutional_prompt,
+        )
+    )
     if manifest is not None:
         sp = str(getattr(manifest, "system_prompt", "") or "").strip()
         if sp:
@@ -145,11 +152,25 @@ def get_agent(
         kwargs["reasoning_min_steps"] = 1
         kwargs["reasoning_max_steps"] = 8
 
+    session_db = create_session_db(s)
+    if session_db is not None:
+        kwargs["db"] = session_db
+        n = s.session_history_max_messages
+        if n > 0:
+            kwargs["add_history_to_context"] = True
+            kwargs["num_history_messages"] = n
+
+    out_model = resolve_structured_output_model(manifest)
+    if out_model is not None:
+        kwargs["output_schema"] = out_model
+        kwargs["structured_outputs"] = True
+
     logger.info(
-        "get_agent skill_id=%s client_id=%s tools=%s",
+        "get_agent skill_id=%s client_id=%s tools=%s session_db=%s",
         eff_skill,
         client_id,
         len(tools),
+        "off" if session_db is None else session_db_summary(session_db),
     )
     return Agent(**kwargs)
 

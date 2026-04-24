@@ -20,7 +20,11 @@ def load_probe_data(fixture_path: Path | None) -> dict[str, Any]:
         raw = fixture_path.read_text(encoding="utf-8")
         return json.loads(raw)
     try:
-        txt = resources.files("ops_agent.resources").joinpath("mcp_probe_default.json").read_text(encoding="utf-8")
+        txt = (
+            resources.files("ops_agent.resources")
+            .joinpath("mcp_probe_default.json")
+            .read_text(encoding="utf-8")
+        )
         return json.loads(txt)
     except (FileNotFoundError, ModuleNotFoundError, OSError, KeyError):
         p = _builtin_probe_path()

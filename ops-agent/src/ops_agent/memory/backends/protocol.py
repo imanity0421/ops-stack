@@ -19,8 +19,7 @@ class MemoryBackendProtocol(Protocol):
         client_id: str,
         user_id: str | None,
         metadata: dict[str, Any],
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
     def search(
         self,
@@ -29,8 +28,7 @@ class MemoryBackendProtocol(Protocol):
         client_id: str,
         user_id: str | None,
         limit: int = 8,
-    ) -> List[MemorySearchHit]:
-        ...
+    ) -> List[MemorySearchHit]: ...
 
     def snapshot_client_profile(self, client_id: str, user_id: str | None) -> None:
         """可选：定期快照钩子（本地后端可为空操作）。"""

@@ -53,7 +53,7 @@ ops-agent（本仓库，③）→  运行时 Agent + Mem0 + Graphiti 只读
 | **Asset Store（案例库）** | **整存整取**的参考案例库（Dynamic Few-Shot，语感参考）。运行时仅检索；**清洗/特征抽取在入库阶段完成**。默认落地为本地 **LanceDB**（可选插件）。设计见 `docs/ASSET_STORE.md` |
 | **Graphiti** | **只读**：`GraphitiReadService.search_domain_knowledge` → `graphiti.search_`；分区键 **`graphiti_group_id(client_id, skill_id)`**（`client` 与 `skill` 两段经 `sanitize_group_id` 后以 `__` 拼接），须与 **`graphiti-ingest`**、JSONL fallback 写入一致；BFS 深度默认 **2**（`OPS_GRAPHITI_BFS_MAX_DEPTH`） |
 | **Skill / Manifest** | 主键 **`skill_id`**（如 `default_ops`、`short_video`）。`manifest_loader.load_skill_manifest_registry`：先读包内 `data/skill_manifests/*.json`，再合并 **`OPS_AGENT_MANIFEST_DIR`** 下同名文件覆盖。`get_agent(..., skill_id=...)` 未传时用 **`OPS_AGENT_DEFAULT_SKILL_ID`**。已弃用 **`OPS_AGENT_PERSONA`** / **`OPS_AGENT_MANIFEST_PATH`**。 |
-| **工具合并** | **平台工具**（`build_memory_tools`）常驻 + **`get_incremental_tools(skill_id)`** 增量（当前为空占位）；再按 manifest `enabled_tools` 筛选。 |
+| **工具合并** | **平台工具**（`build_memory_tools`）常驻 + **`get_incremental_tools(skill_id, settings=...)`** 增量：自 ``ops_agent.agent.skills.<skill_id>`` **白名单**动态加载（``OPS_AGENT_LOADABLE_SKILL_PACKAGES``）；再按 manifest `enabled_tools` 筛选。测试包见 ``toy_skill``。 |
 
 ### 3.2 检索顺序（阶段 c+）
 
@@ -80,6 +80,21 @@ ops-agent（本仓库，③）→  运行时 Agent + Mem0 + Graphiti 只读
 
 - **逻辑重于命名**：对外只依赖 `ops_agent.agent.factory` 中工厂函数；Agno 类名变更时优先改工厂内实现。
 - **推理路由**：`get_agent(..., thought_mode="fast"|"slow")`；`slow` 时启用 Agno `reasoning`。**若模型不支持导致异常**，应优先使用 `fast` 或升级模型（见 OPERATIONS 排障）。
+
+### 3.7 系统宪法（P1-3）与交付物结构（P1-4）
+
+- **宪法**（`ops_agent.agent.constitutional`）：在 `get_agent` 的 instructions **最前**注入固定段落「**冲突解决序**」：红线（硬合规/不编造/隐私）→ 当轮显式用户 → Hindsight → 领域 SOP/Graphiti/handoff → Asset 参考语感。与 `retrieve_ordered_context` 的**检索**序（Mem0→…）是**互补**关系（见该工具 description）。可设 **`OPS_ENABLE_CONSTITUTIONAL=0`** 关闭；配方 JSON 可含 **`constitutional_prompt`** 追加本 skill 的合宪说明。
+- **交付物 `structured_v1`**（`ops_agent.manifest_output`）：当 manifest 设 **`"output_mode": "structured_v1"`** 与 **`output_schema_version`**（当前 **`"1.0"`** 对应 **`OpsPlanStructuredV1`**）时，工厂为 Agno 设置 **`output_schema` + `structured_outputs`**。提纲、要点与 **`body_markdown`（长文）** 分字段，避免**单段 JSON 过深**；更长的二轮扩写可继续用**普通多轮对话**或独立接口（不在此强制）。
+
+### 3.8 可观测（P2-5）与 `POST /ingest`（P2-6）
+
+- **日志**：`ops_agent.observability` 从 Agno **`RunOutput`** 抽取 `model`、`tools`（`ToolExecution.tool_name`）、`metrics` 粗算 token，拼 **`OPS_OBS`** 稳定行，便于 grep。
+- **HTTP**：`examples/web_chat_fastapi.py` 为 **`Starlette` 中间件** 注入/透传 **`X-Request-ID`**；**`/ingest`** 由 **`ops_agent.ingest_gateway.run_ingest_v1`** 实现显式 **target** 路由；与 **`/api/memory/ingest`** 并存。生产**鉴权/限流在网关**（见 [OPERATIONS.md](OPERATIONS.md)）。
+
+### 3.9 按 Skill 的评测目录（P3-7）与数据备份（P3-8）
+
+- **专项回归**：`tests/skills/short_video/` 与 `tests/skills/business/` 各自持有 **fixtures**，pytest marker **`skill_short_video`** / **`skill_business`**；只跑某一集：`pytest -m skill_short_video`。仍仅使用 **`run_e2e_eval_*`** 一套 Golden 引擎，见 [tests/skills/README.md](../tests/skills/README.md)。
+- **备份**：`ops_agent.backup_data_core` + **`python scripts/backup_data.py`** → `backups/*.zip`（**不含** `.env`）；Mem0 云端以官方能力或人工 SOP 为准，见 [DATA_BACKUP.md](DATA_BACKUP.md)。
 
 ---
 
@@ -116,11 +131,22 @@ ops-agent/
       fallback.py
       group_id.py
     resources/             # 包内默认 JSON（如 mcp_probe_default.json）
-    data/skill_manifests/  # 内置 skill 配方 JSON（default_ops / short_video）
+    data/skill_manifests/  # 内置 skill 配方（含 planning_draft 等）
     agent/
       factory.py           # get_agent / get_reasoning_agent
+      constitutional.py    # P1-3 系统宪法文案
       tools.py             # Agno 工具（绑定 client_id + skill_id → Graphiti 分区）
-      skills/              # skill 增量工具（get_incremental_tools）
+      skills/              # loader 白名单动态加载 + 示例子包 toy_skill/（get_incremental_tools）
+    manifest_output.py     # P1-4 结构化输出 Pydantic 与 manifest 解析
+    observability.py        # P2-5 从 RunOutput 拼 OPS_OBS 日志
+    ingest_gateway.py         # P2-6 显式 target 摄入
+    backup_data_core.py        # P3-8 本地 data/ 打包（zip）
+  scripts/
+    backup_data.py             # CLI 包装，调用 backup_data_core
+  tests/
+    skills/                    # P3-7 按 skill 隔离的 e2e fixture
+      short_video/
+      business/
 ```
 
 ---
@@ -166,6 +192,10 @@ ops-agent/
 | **(c) 当前** | **`retrieve_ordered_context`**、**AsyncReview**、**handoff**、**Golden rules**、**`suggest_memory_lane`**、**MCP fixture + 可选 MCP 服务**、**`ops-agent eval` 规则门**、**JSONL 离线知识追加**、**Graphiti 离线 ingest（需 Neo4j+LLM）** |
 
 每阶段更新 **CHANGELOG** 与本文件 **§7**。
+
+### 7.1 Agent OS 定版路线图（面向 Web/API + 持续扩展 Skill）
+
+面向 **CLI + Web/API 对外、持续新增 Skill** 的 Sprint 级实施表、DoD、Mermaid 设计图与实现落点见 **[AGENT_OS_ROADMAP.md](AGENT_OS_ROADMAP.md)**（定版 v1.0）。
 
 ---
 

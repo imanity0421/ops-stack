@@ -30,8 +30,14 @@ def _doctor_main(argv: list[str]) -> int:
 def _eval_main(argv: list[str]) -> int:
     from ops_agent.evaluator.e2e import run_e2e_eval_file
 
-    p = argparse.ArgumentParser(prog="ops-agent eval", description="端到端规则评测（Golden rules，无 LLM）")
-    p.add_argument("case_file", type=Path, help="JSON：name / assistant_turns / golden_rules 或 golden_rules_path")
+    p = argparse.ArgumentParser(
+        prog="ops-agent eval", description="端到端规则评测（Golden rules，无 LLM）"
+    )
+    p.add_argument(
+        "case_file",
+        type=Path,
+        help="JSON：name / assistant_turns / golden_rules 或 golden_rules_path",
+    )
     args = p.parse_args(argv)
     r = run_e2e_eval_file(args.case_file)
     print(
@@ -57,7 +63,9 @@ def _knowledge_append_main(argv: list[str]) -> int:
         description="向 OPS_KNOWLEDGE_FALLBACK_PATH 格式 JSONL 追加领域知识行（无需 Neo4j）",
     )
     p.add_argument("--output", "-o", type=Path, required=True, help="JSONL 路径")
-    p.add_argument("--client-id", required=True, help="租户 ID（与 skill 共同映射为 Graphiti group_id）")
+    p.add_argument(
+        "--client-id", required=True, help="租户 ID（与 skill 共同映射为 Graphiti group_id）"
+    )
     p.add_argument(
         "--skill",
         default="default_ops",
@@ -75,9 +83,11 @@ def _graphiti_ingest_main(argv: list[str]) -> int:
 
     p = argparse.ArgumentParser(
         prog="ops-agent graphiti-ingest",
-        description="离线 Graphiti add_episode（需 NEO4J_*、OPENAI_API_KEY、pip install -e \".[graphiti]\"）",
+        description='离线 Graphiti add_episode（需 NEO4J_*、OPENAI_API_KEY、pip install -e ".[graphiti]"）',
     )
-    p.add_argument("episodes_json", type=Path, help="见 docs/examples/graphiti_episodes.example.json")
+    p.add_argument(
+        "episodes_json", type=Path, help="见 docs/examples/graphiti_episodes.example.json"
+    )
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -121,8 +131,14 @@ def _asset_ingest_main(argv: list[str]) -> int:
     p.add_argument("--user-id", default=None, help="终端用户 ID（可选；为空表示租户共享）")
     p.add_argument("--skill", default="default_ops", help="skill_id（如 short_video）")
     p.add_argument("--source", default=None, help="来源标识（文件名/URL/备注）")
-    p.add_argument("--model", default=os.getenv("OPS_AGENT_MODEL", "gpt-4o-mini"), help="用于 gatekeeper/extract 的模型")
-    p.add_argument("--no-llm", action="store_true", help="不调用 LLM（仅做规则校验 + 最小字段入库）")
+    p.add_argument(
+        "--model",
+        default=os.getenv("OPS_AGENT_MODEL", "gpt-4o-mini"),
+        help="用于 gatekeeper/extract 的模型",
+    )
+    p.add_argument(
+        "--no-llm", action="store_true", help="不调用 LLM（仅做规则校验 + 最小字段入库）"
+    )
     args = p.parse_args(argv)
 
     settings = Settings.from_env()
@@ -197,7 +213,9 @@ def _chat_main(argv: list[str]) -> int:
     p.add_argument("--task-id", default=None, help="任务 ID（写入 Hindsight / AsyncReview 关联）")
     p.add_argument("--slow", action="store_true", help="启用慢推理模式（Agno reasoning）")
     p.add_argument("--session-id", default=None, help="会话 ID（调试用，默认随机）")
-    p.add_argument("--no-knowledge", action="store_true", help="不挂载 search_domain_knowledge（仅 Mem0）")
+    p.add_argument(
+        "--no-knowledge", action="store_true", help="不挂载 search_domain_knowledge（仅 Mem0）"
+    )
     p.add_argument(
         "--skill",
         default=None,
@@ -220,8 +238,14 @@ def _chat_main(argv: list[str]) -> int:
         snapshot_every_n_turns=settings.snapshot_every_n_turns,
     )
 
-    knowledge = None if args.no_knowledge else GraphitiReadService.from_env(settings.knowledge_fallback_path)
-    asset_store = asset_store_from_settings(enable=settings.enable_asset_store, path=settings.asset_store_path)
+    knowledge = (
+        None
+        if args.no_knowledge
+        else GraphitiReadService.from_env(settings.knowledge_fallback_path)
+    )
+    asset_store = asset_store_from_settings(
+        enable=settings.enable_asset_store, path=settings.asset_store_path
+    )
 
     skill_id = args.skill if args.skill is not None else None
 

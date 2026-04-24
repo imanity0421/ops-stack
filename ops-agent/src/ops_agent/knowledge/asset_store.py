@@ -182,13 +182,18 @@ def format_hits_for_agent(hits: Sequence[AssetSearchHit], *, include_raw: bool) 
         blocks.append(
             "\n".join(
                 [
-                    f"### Case {i} | id={h.case_id}" + (f" | score={h.score:.4f}" if h.score is not None else ""),
+                    f"### Case {i} | id={h.case_id}"
+                    + (f" | score={h.score:.4f}" if h.score is not None else ""),
                     f"- 摘要：{_safe_short(h.summary, 400)}",
                     f"- 风格指纹：{_safe_short(h.style_fingerprint, 500)}",
                     f"- 标签：{', '.join(h.tags) if h.tags else '（无）'}",
                     f"- 平台/体裁/时长：{h.platform or '（无）'} / {h.content_type or '（无）'} / {h.duration_bucket or '（无）'}",
                     "- 关键片段：\n  - "
-                    + ("\n  - ".join(_safe_short(x, 220) for x in (h.key_excerpts or [])[:4]) if h.key_excerpts else "（无）"),
+                    + (
+                        "\n  - ".join(_safe_short(x, 220) for x in (h.key_excerpts or [])[:4])
+                        if h.key_excerpts
+                        else "（无）"
+                    ),
                 ]
             )
         )
@@ -278,24 +283,29 @@ class LanceDbAssetStore:
         self._db = None
         self._table = None
 
-    def _ensure(self) -> None:
-        if self._table is not None:
+    def _connect(self) -> None:
+        if self._db is not None:
             return
         try:
             import lancedb  # type: ignore
         except Exception as e:  # pragma: no cover
             raise RuntimeError("未安装 lancedb；请安装 ops-agent 的 asset-store 依赖") from e
-
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db = lancedb.connect(str(self._path))
+
+    def _open_table(self) -> bool:
+        """若表已存在则打开并置 self._table；否则返回 False（LanceDB 0.30+ 禁止无 schema 的空表 create）。"""
+        if self._table is not None:
+            return True
+        self._connect()
         try:
-            self._table = self._db.open_table(self._table_name)
+            self._table = self._db.open_table(self._table_name)  # type: ignore[union-attr]
+            return True
         except Exception:
-            # 用最小 schema 初始化；vector 列会由首批写入自动推断
-            self._table = self._db.create_table(self._table_name, data=[])
+            return False
 
     def upsert_many(self, cases: Sequence[AssetCase]) -> dict[str, Any]:
-        self._ensure()
+        self._connect()
         rows: list[dict[str, Any]] = []
         for c in cases:
             rows.append(
@@ -324,12 +334,25 @@ class LanceDbAssetStore:
                     "vector": _embed_text_openai(c.retrieval_text, cfg=self._embedding),
                 }
             )
-        # LanceDB 的 merge/upsert 语义依版本而异；去重在 ingestion 中通过 dedup_key 拦截
-        self._table.add(rows)  # type: ignore[union-attr]
-        return {"status": "ok", "count": len(rows), "path": str(self._path), "table": self._table_name}
+        if not rows:
+            return {"status": "ok", "count": 0, "path": str(self._path), "table": self._table_name}
+        # 首批写入时 create_table(data=rows) 推导语义；LanceDB 0.30+ 不允许 data=[] 无 schema
+        if not self._open_table():
+            self._table = self._db.create_table(  # type: ignore[union-attr]
+                self._table_name, data=rows
+            )
+        else:
+            self._table.add(rows)  # type: ignore[union-attr]
+        return {
+            "status": "ok",
+            "count": len(rows),
+            "path": str(self._path),
+            "table": self._table_name,
+        }
 
     def find_case_id_by_dedup_key(self, dedup_key: str) -> str | None:
-        self._ensure()
+        if not self._open_table():
+            return None
         try:
             t = self._table.to_arrow()  # type: ignore[union-attr]
         except Exception as e:  # pragma: no cover
@@ -356,7 +379,8 @@ class LanceDbAssetStore:
         l2_max: float,
     ) -> str | None:
         """对 retrieval_text 做向量近邻，在租户作用域内若 L2 距离小于阈值则视为近似重复。"""
-        self._ensure()
+        if not self._open_table():
+            return None
         qv = _embed_text_openai(retrieval_text, cfg=self._embedding)
         over = 40
         raw_list = self._table.search(qv, vector_column_name="vector").limit(over).to_list()  # type: ignore[union-attr]
@@ -379,7 +403,8 @@ class LanceDbAssetStore:
         return None
 
     def delete_by_case_id(self, case_id: str) -> dict[str, Any]:
-        self._ensure()
+        if not self._open_table():
+            return {"status": "ok", "case_id": case_id, "note": "no_table"}
         c = _lance_str_literal(case_id)
         try:
             self._table.delete(f"case_id == '{c}'")  # type: ignore[union-attr]
@@ -389,7 +414,13 @@ class LanceDbAssetStore:
 
     def delete_by_client_skill(self, client_id: str, skill_id: str) -> dict[str, Any]:
         """删除某租户+skill 下全部案例行（清库/回退用，慎用）。"""
-        self._ensure()
+        if not self._open_table():
+            return {
+                "status": "ok",
+                "client_id": client_id,
+                "skill_id": skill_id,
+                "note": "no_table",
+            }
         c = _lance_str_literal(client_id)
         s = _lance_str_literal(skill_id)
         try:
@@ -408,7 +439,8 @@ class LanceDbAssetStore:
         limit: int = 4,
         include_raw: bool = False,
     ) -> list[AssetSearchHit]:
-        self._ensure()
+        if not self._open_table():
+            return []
         qv = _embed_text_openai(query, cfg=self._embedding)
         # 多取后仅在内存中按租户/用户过滤，避免无过滤回退导致串租户；不依赖 .where 方言
         over = max(limit * 30, 50)
@@ -439,4 +471,3 @@ def asset_store_from_settings(*, enable: bool, path: Path) -> AssetStore:
     if not enable:
         return NullAssetStore()
     return LanceDbAssetStore(path=path)
-

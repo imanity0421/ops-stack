@@ -128,3 +128,54 @@
 - 回退：`ops-agent asset-rm` 支持按 `case_id` 或 `client_id+skill+--all-skill` 清库块。
 - 未传 `user_id` 的检索只命中**租户共享**（`user_id` 为空的行），避免多用户互串。
 
+---
+
+## 2026-04-24 | Agent OS 定版路线图文档
+
+**标题**：Sprint 1–4 实施表、DoD、Mermaid 设计图落地为 `docs/AGENT_OS_ROADMAP.md`
+
+- 定版内容：Skill 白名单与工厂边界、会话持久化与多机预留、宪法与交付契约、可观测与显式 target 的 ingest、per-skill eval、备份 SOP；`ENGINEERING.md` §7.1 引用；`CHANGELOG.md` [Unreleased] 文档条目。
+
+---
+
+## 2026-04-24 | Sprint1 P0-1：Skill 包白名单动态加载
+
+- **`OPS_AGENT_LOADABLE_SKILL_PACKAGES`** + `ops_agent.agent.skills.loader`；`get_incremental_tools(skill_id, settings=...)`；示例包 **`toy_skill`** / `ping_toy_skill`；`pytest` 全绿。
+
+---
+
+## 2026-04-24 | Sprint1 P0-2：Agno 会话持久化
+
+- **`ops_agent.agent.session_db.create_session_db`**：`OPS_ENABLE_SESSION_DB` / `OPS_SESSION_DB_PATH` / `OPS_SESSION_DB_URL` / `OPS_SESSION_HISTORY_MAX_MESSAGES`；`get_agent` 挂 `db` + `add_history_to_context`（N>0 时）。
+- **Web**：`GET /api/session/messages`（进程重启后按 `session_id` 拉消息）；`/api/agent/inspect` 的 `paths.session_persistence` 元数据；`examples/web_chat_fastapi.py` 文档说明。
+- **文档**：`OPERATIONS.md`、`.env.example`、`CHANGELOG`、`AGENT_OS_ROADMAP` §11；`tests/test_session_persistence.py`。
+
+---
+
+## 2026-04-24 | Sprint2 P1：宪法 + 交付物 `structured_v1`
+
+- **P1-3**：`agent/constitutional.py` 段首注入；`OPS_ENABLE_CONSTITUTIONAL`；`AgentManifestV1.constitutional_prompt`；`docs/examples/constitutional_test_cases.md`；`tests/test_p1_constitutional_output.py`。
+- **P1-4**：`manifest_output.OpsPlanStructuredV1` + `resolve_structured_output_model`；`get_agent` 在 `structured_v1` 时设 `output_schema`+`structured_outputs`；包内 skill **`planning_draft`**。
+- **ENGINEERING.md** §3.7、目录树更新。
+
+---
+
+## 2026-04-24 | Sprint3 P2：可观测 + POST /ingest
+
+- **P2-5**：`observability.py`（`OPS_OBS`）、Web `X-Request-ID` 中间件、`/chat` 后结构化日志。
+- **P2-6**：`ingest_gateway.py`、`POST /ingest`（显式 target）、`docs/examples/ingest_post_samples.md`；`OPS_INGEST_ALLOW_LLM`；单测 `test_observability.py` / `test_ingest_gateway.py`（asset 需 `lancedb` 时跑）。
+
+---
+
+## 2026-04-24 | Sprint4 P3：按 skill 评测 + 本地备份
+
+- **P3-7**：`tests/skills/short_video`、`tests/skills/business` + markers；`pyproject` 登记 markers；`tests/skills/README.md`。
+- **P3-8**：`backup_data_core.py`、`scripts/backup_data.py`、`docs/DATA_BACKUP.md`；`backups/` 与 `.gitignore`；`test_backup_data_core.py`。
+
+---
+
+## 2026-04-24 | 收尾：E402、token 聚合、Web 结构化、dev+lancedb
+
+- 模块 docstring 顺序；`observability.details` 聚合；`ChatOut` 增加 `reply_content_kind`/`structured`；`pyproject` 的 `dev` extra 增加 `lancedb`；`OPERATIONS` 安装说明。
+
+

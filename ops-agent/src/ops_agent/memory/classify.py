@@ -27,7 +27,13 @@ def suggest_memory_lane(text: str) -> tuple[MemoryLane | None, str]:
         attr_score += 2
 
     if task_score > attr_score and task_score >= 1:
-        return MemoryLane.TASK_FEEDBACK, f"启发式偏任务反馈（task={task_score}, attr={attr_score}）。"
+        return (
+            MemoryLane.TASK_FEEDBACK,
+            f"启发式偏任务反馈（task={task_score}, attr={attr_score}）。",
+        )
     if attr_score > task_score and attr_score >= 1:
-        return MemoryLane.ATTRIBUTE, f"启发式偏长期画像/偏好（task={task_score}, attr={attr_score}）。"
+        return (
+            MemoryLane.ATTRIBUTE,
+            f"启发式偏长期画像/偏好（task={task_score}, attr={attr_score}）。",
+        )
     return None, f"启发式不确定（task={task_score}, attr={attr_score}），请结合语义选择 record_*。"

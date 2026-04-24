@@ -19,7 +19,11 @@ def test_exclude_removes_record_tools(tmp_path: Path) -> None:
         "c1",
         None,
         golden_rules=None,
-        exclude_tool_names={"record_client_fact", "record_client_preference", "record_task_feedback"},
+        exclude_tool_names={
+            "record_client_fact",
+            "record_client_preference",
+            "record_task_feedback",
+        },
     )
     names = {getattr(t, "name", None) or getattr(t, "__name__", "") for t in tools}
     assert "record_client_fact" not in names

@@ -4,7 +4,31 @@
 
 ## [Unreleased]
 
+### 改进
+
+- **工程卫生**：模块 docstring 置于文件首（符合 PEP 236 + Ruff E402）；`observability` 在顶层 token 为 0 时聚合 ``RunMetrics.details``；Web ``/chat`` 增加 ``reply_content_kind`` / ``structured`` 以支持 ``planning_draft`` 等结构化输出；**可选依赖** ``dev`` 含 ``lancedb`` 便于全量测试。
+- **工程卫生（继续）**：``pyproject.toml`` 增加 ``[tool.ruff]``；CI 增加 ``ruff format --check``；全仓已 ``ruff format`` 对齐；Asset 入库单测改为显式 ``import lancedb``（缺依赖时失败而非 skip，与 ``.[dev]`` 一致）；``docs/OPERATIONS.md`` 默认安装改为 ``.[dev]`` 以匹配 CI。
+- **Pre-commit**：仓库根 ``.pre-commit-config.yaml``（``ruff-check`` + ``ruff-format``）；``.[dev]`` 含 ``pre-commit``；见 ``docs/OPERATIONS.md`` 启用 ``pre-commit install``。
+
 ### 新增
+
+- **Sprint 4 P3-7 Skill 专项评测**：`tests/skills/short_video`、`tests/skills/business` 独立 fixtures；pytest markers **`skill_short_video`** / **`skill_business`**；仍统一 `run_e2e_eval_*` 引擎。
+- **Sprint 4 P3-8 数据运维**：`ops_agent.backup_data_core`、`scripts/backup_data.py` 生成本地 `data/` 候选文件 zip；`docs/DATA_BACKUP.md`（含 Mem0 官方/人工 SOP）；`backups/` 已加入 `.gitignore`。
+- **Sprint 3 P2-5 可观测性**：`ops_agent.observability`（`OPS_OBS` 日志行）；Web 示例中间件透传 **`X-Request-ID`**；**`/chat`** 结束打 `session_id` / `model` / `tools` / `elapsed_ms` / token 粗算。
+- **Sprint 3 P2-6 数据摄入网关**：`ops_agent.ingest_gateway.run_ingest_v1` + **`POST /ingest`**（`target=mem0_profile|hindsight|asset_store`）；样例见 `docs/examples/ingest_post_samples.md`；可选 **`OPS_INGEST_ALLOW_LLM`**。
+- **Sprint 2 P1-3 系统宪法**：`ops_agent.agent.constitutional` 固定「冲突解决序」并置于 `get_agent` 指令最前；`OPS_ENABLE_CONSTITUTIONAL`；`AgentManifestV1.constitutional_prompt` 可选补充。`retrieve_ordered_context` 说明与宪法互补。验收表见 `docs/examples/constitutional_test_cases.md`。
+- **Sprint 2 P1-4 交付物契约**：`manifest.output_mode`=`structured_v1` + `output_schema_version`=`1.0` → Agno `output_schema`=`OpsPlanStructuredV1`（`body_markdown` 承载长文）；内置 skill **`planning_draft`**。
+- **Sprint 1 P0-2 会话持久化**：`config.Settings` 增加 `enable_session_db`、`session_sqlite_path`、`session_db_url`、`session_history_max_messages`；`ops_agent.agent.session_db.create_session_db` 供 `get_agent` 挂接 Agno `db`；默认注入最近 N 条历史。Web 增加 `GET /api/session/messages` 供重启后拉取与模型一致的历史。
+
+### 文档
+
+- **Agent OS 定版路线图**：新增 [docs/AGENT_OS_ROADMAP.md](AGENT_OS_ROADMAP.md)（Sprint 1–4、DoD、Mermaid 设计图与实现落点）；`ENGINEERING.md` §7.1 引用。
+
+### 新增
+
+- **Sprint 1 P0-1 Skill 扩展协议**：`ops_agent.agent.skills.loader` 白名单动态加载 `ops_agent.agent.skills.<name>`；环境变量 **`OPS_AGENT_LOADABLE_SKILL_PACKAGES`**；`get_agent` 向 `get_incremental_tools` 传入 `Settings`；示例包 **`toy_skill`**（`ping_toy_skill` 工具）与 `toy_skill.json` 配方。
+
+### 历史新增（Asset Store 等）
 
 - **Asset Store（案例库 / LanceDB）**：新增第四层“参考案例库”能力（整存整取、Dynamic Few-Shot，语感参考），设计见 `docs/ASSET_STORE.md`；`retrieve_ordered_context` 增加第④层，新增工具 `search_reference_cases`。
 - **离线入库**：新增 CLI `ops-agent asset-ingest <input>`（规则校验 + LLM gatekeeper + 特征抽取 + embedding + 写入）。

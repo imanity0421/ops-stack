@@ -10,5 +10,7 @@ def test_load_default_probe() -> None:
 
 
 def test_format_probe() -> None:
-    s = format_probe_for_agent({"probe_version": "1", "market_snapshot": {"platform": "x", "category": "y"}})
+    s = format_probe_for_agent(
+        {"probe_version": "1", "market_snapshot": {"platform": "x", "category": "y"}}
+    )
     assert "x" in s and "y" in s

@@ -27,7 +27,9 @@ class LocalMemoryBackend:
         return self._data
 
     def _save(self) -> None:
-        self._path.write_text(json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._path.write_text(
+            json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     @staticmethod
     def mem_user_id(client_id: str, user_id: str | None) -> str:

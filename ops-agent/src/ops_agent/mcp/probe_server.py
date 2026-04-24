@@ -6,6 +6,7 @@
 
 在 Cursor / MCP 客户端中配置 command 为当前解释器，args 为 `-m ops_agent.mcp.probe_server`。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError:
-        print("需要安装 MCP SDK：pip install -e \".[mcp]\"", file=sys.stderr)
+        print('需要安装 MCP SDK：pip install -e ".[mcp]"', file=sys.stderr)
         return 1
 
     p = argparse.ArgumentParser(description="ops-agent MCP 探针（stdio）")

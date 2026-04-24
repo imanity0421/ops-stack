@@ -26,6 +26,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -U pip
 pip install -e ".[dev]"
+pre-commit install               # 可选：git commit 前跑 Ruff；无 PATH 时用: python -m pre_commit install（见 OPERATIONS.md）
 pip install -e ".[graphiti]"   # 可选：Graphiti 只读
 # pip install -e ".[mcp]"     # 可选：MCP 探针 stdio 服务
 copy .env.example .env

@@ -1,0 +1,13 @@
+# 在仓库根执行一次： pre-commit install
+# 全量检查：            pre-commit run --all-files
+# 与 CI 一致：ruff check + ruff format（见 pyproject [tool.ruff]）
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.11
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]

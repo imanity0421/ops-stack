@@ -176,15 +176,19 @@ def build_memory_tools(
 
     @tool(
         name="retrieve_ordered_context",
-        description="按固定顺序检索上下文：① Mem0 客户画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）④ Asset Store 参考案例（若已配置）。回答策略/方案类问题前应优先调用本工具。",
+        description="按固定顺序**检索**上下文：① Mem0 客户画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）④ Asset Store 参考案例（若已配置）。多源冲突时如何整合到最终回复，须遵守系统指令中的「宪法·冲突解决序」（与检索顺序不同）。回答策略/方案类问题前应优先调用本工具。",
     )
     def retrieve_ordered_context(query: str) -> str:
         blocks: list[str] = []
         mem = controller.search_profile(query, client_id=client_id, user_id=user_id, limit=8)
-        blocks.append("## ① 客户画像 (Mem0)\n" + ("\n---\n".join(h.text for h in mem) if mem else "（无）"))
+        blocks.append(
+            "## ① 客户画像 (Mem0)\n" + ("\n---\n".join(h.text for h in mem) if mem else "（无）")
+        )
         if enable_hindsight:
             hs = controller.search_hindsight(query, client_id=client_id, limit=8)
-            blocks.append("## ② 历史教训与反馈 (Hindsight)\n" + ("\n---\n".join(hs) if hs else "（无）"))
+            blocks.append(
+                "## ② 历史教训与反馈 (Hindsight)\n" + ("\n---\n".join(hs) if hs else "（无）")
+            )
         else:
             blocks.append("## ② 历史教训与反馈 (Hindsight)\n（当前未启用）")
         if knowledge is not None:
@@ -204,7 +208,9 @@ def build_memory_tools(
                 limit=3,
                 include_raw=False,
             )
-            blocks.append("## ④ 参考案例 (Asset Store)\n" + format_hits_for_agent(hits, include_raw=False))
+            blocks.append(
+                "## ④ 参考案例 (Asset Store)\n" + format_hits_for_agent(hits, include_raw=False)
+            )
         else:
             blocks.append("## ④ 参考案例 (Asset Store)\n（当前未启用）")
         return "\n\n".join(blocks)

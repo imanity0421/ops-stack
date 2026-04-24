@@ -13,10 +13,27 @@ python -m venv .venv
 # Windows:
 .venv\Scripts\activate
 pip install -U pip
-pip install -e .
+# 全量单测、Ruff 检查与无 skip 的 Asset 用例需 dev（pytest、ruff、lancedb）：
+pip install -e ".[dev]"
+# 仅运行核心包、接受部分用例因缺 lancedb 失败时，可 `pip install -e .`（不推荐，与 CI 不一致）
 # 领域知识（Graphiti，可选）
 pip install -e ".[graphiti]"
 ```
+
+## 开发：pre-commit（提交前跑 Ruff）
+
+在 **`ops-agent` 仓库根**（与 `pyproject.toml` 同级）执行一次，把 Git 钩子装上；之后每次 `git commit` 会先跑 **`ruff check --fix`** 与 **`ruff format`**，与 CI 一致、减少漏跑。
+
+```bash
+cd ops-agent
+pre-commit install
+# 若 `pre-commit` 不在 PATH（常见于仅当前 venv）：`python -m pre_commit install`
+# 可选：对当前树全量验一遍
+pre-commit run --all-files
+# 同上可：`python -m pre_commit run --all-files`
+```
+
+未装钩子时，也可手动：``ruff check src tests``、``ruff format --check src tests``（或 ``ruff format src tests`` 写回）。
 
 ## 配置
 
@@ -36,6 +53,7 @@ pip install -e ".[graphiti]"
 | `OPS_ASYNC_REVIEW_ON_EXIT` | 默认 `1`；设为 `0` 关闭退出时复盘 |
 | `OPS_HANDOFF_MANIFEST_PATH` | 可选；`ops-knowledge manifest` 生成的 `handbook_handoff.json`；**运行时**会摘要注入 `get_agent` 指令 |
 | `OPS_AGENT_MANIFEST_DIR` | 可选；扫描其中 **`*.json`** 作为 skill 配方（文件名即 **`skill_id`**）；可与包内置 `default_ops` / `short_video` 合并覆盖 |
+| `OPS_AGENT_LOADABLE_SKILL_PACKAGES` | 可选；逗号分隔子包名（仅 `[a-zA-Z0-9_]+`），对应 `ops_agent.agent.skills.<name>`；**空**则不加载任何技能包增量工具。测试/示例可设 `toy_skill` |
 | `OPS_AGENT_DEFAULT_SKILL_ID` | 可选；未传 `--skill` / `skill_id` 时的默认 skill（默认 `default_ops`） |
 | `OPS_GOLDEN_RULES_PATH` | 可选；JSON 数组正则规则（见 `data/golden_rules.example.json`）；启用工具 `check_delivery_text` |
 | `OPS_MCP_PROBE_FIXTURE_PATH` | 可选；覆盖默认探针 JSON（否则使用包内 `mcp_probe_default.json`）；工具 `fetch_ops_probe_context` |
@@ -46,6 +64,23 @@ pip install -e ".[graphiti]"
 | `OPS_ASSET_NEAR_DEDUP_L2_MAX` | 可选；设置如 `0.18` 时启用**近似去重**（特征向量 L2）；不设置则只做强指纹去重 |
 | `VIDEO_RAW_INGEST_ROOT` | 可选；供 `doctor` 检查与 `ops-knowledge` 定位 schema |
 | `OPS_GRAPHITI_SEARCH_TIMEOUT_SEC` 等 | 见 [ENGINEERING.md](ENGINEERING.md) §5 |
+| `OPS_ENABLE_SESSION_DB` | 默认 `1`；`0`/`false`/`no` 关闭 Agno 会话落库（不注入历史、不保留运行记录） |
+| `OPS_SESSION_DB_PATH` | 单机 Sqlite 文件路径，默认 `data/agno_session.db`；父目录不存在时会自动创建 |
+| `OPS_SESSION_DB_URL` | 可选；**优先于** `OPS_SESSION_DB_PATH`。支持 `sqlite:`、`postgres://`/`postgresql://`、`redis://`/`rediss://`；或**无** `://` 的绝对/相对路径字符串（走 Sqlite 文件） |
+| `OPS_SESSION_HISTORY_MAX_MESSAGES` | 将**最近 N 条**历史拼入模型上文；默认 `20`；`0` 表示仍**写入**库但不把历史拼进当轮（适合仅审计） |
+| `OPS_ENABLE_CONSTITUTIONAL` | 默认 `1`；`0`/`false`/`no` 关闭系统「宪法」固定段（不推荐生产关闭） |
+
+多 worker / 多机部署时，**不要**在每台机各自写本地 Sqlite，应设 **`OPS_SESSION_DB_URL`** 指向**共享** Postgres 或 Redis（与 Agno 支持的后端一致）。Web 示例中 `/chat` 的 **`session_id`** 须前后端稳定一致（F5 后仍从 `localStorage` 带上；进程重启后可用 `GET /api/session/messages` 拉取转录，见 `examples/web_chat_fastapi.py`）。
+
+**P1 策划类结构化输出**：内置 skill **`planning_draft`**（`--skill planning_draft` 或 Web 传 `skill_id`）在 manifest 中声明 **`output_mode: structured_v1`**，由 Agno 以 Pydantic 强类型输出（见 [ENGINEERING.md](ENGINEERING.md) §3.7）；长文放返回 JSON 的 **`body_markdown`** 字段。
+
+**P2 可观测（Web）**：`examples/web_chat_fastapi.py` 对 **`/chat`** 在请求结束后写 **一条** `OPS_OBS` 前缀日志，含 `request_id`（与头 **`X-Request-ID`** 一致）、`session_id`、`model`、`tools`（分号拼接）、`elapsed_ms`、`tok_in`/`tok_out`/`tok_total`（来自 Agno RunMetrics，作趋势粗算）。grep：`OPS_OBS route=/chat`。
+
+**P2 摄入网关**：**`POST /ingest`**，body 须含显式 **`target`**：`mem0_profile` | `hindsight` | `asset_store`（见 [ingest_post_samples.md](examples/ingest_post_samples.md)）。可选 **`OPS_INGEST_ALLOW_LLM=0`** 在开发时跳过 Asset 入库的 LLM 裁判/抽取（仍做合规与去重）。**生产前**必须在 BFF/网关做 **鉴权 + 限流**（本仓库进程不内置）。
+
+**P3 按 skill 回归**：`pytest -m skill_short_video` / `pytest -m skill_business`（见 [tests/skills/README.md](../tests/skills/README.md)）。
+
+**P3 本地数据备份**：`python scripts/backup_data.py` → `backups/ops_agent_data_*.zip`；Mem0 与恢复说明见 [DATA_BACKUP.md](DATA_BACKUP.md)。
 
 ## 环境与依赖自检
 

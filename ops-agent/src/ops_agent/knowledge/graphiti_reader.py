@@ -25,9 +25,21 @@ def _build_search_config(limit: int, bfs_max_depth: int) -> Any:
     from graphiti_core.search.search_config_recipes import COMBINED_HYBRID_SEARCH_RRF
 
     base = COMBINED_HYBRID_SEARCH_RRF
-    edge = base.edge_config.model_copy(update={"bfs_max_depth": bfs_max_depth}) if base.edge_config else None
-    node = base.node_config.model_copy(update={"bfs_max_depth": bfs_max_depth}) if base.node_config else None
-    comm = base.community_config.model_copy(update={"bfs_max_depth": bfs_max_depth}) if base.community_config else None
+    edge = (
+        base.edge_config.model_copy(update={"bfs_max_depth": bfs_max_depth})
+        if base.edge_config
+        else None
+    )
+    node = (
+        base.node_config.model_copy(update={"bfs_max_depth": bfs_max_depth})
+        if base.node_config
+        else None
+    )
+    comm = (
+        base.community_config.model_copy(update={"bfs_max_depth": bfs_max_depth})
+        if base.community_config
+        else None
+    )
     ep = base.episode_config
 
     return SearchConfig(
@@ -111,7 +123,7 @@ class GraphitiReadService:
         try:
             from graphiti_core.graphiti import Graphiti
         except ImportError as e:
-            raise RuntimeError("未安装 graphiti-core，请执行: pip install -e \".[graphiti]\"") from e
+            raise RuntimeError('未安装 graphiti-core，请执行: pip install -e ".[graphiti]"') from e
         assert self._neo4j_uri and self._neo4j_password
         self._graphiti = Graphiti(
             uri=self._neo4j_uri,

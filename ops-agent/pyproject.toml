@@ -28,7 +28,7 @@ mcp = [
 asset_store = [
   "lancedb",
 ]
-dev = ["ruff>=0.4.0", "pytest>=8.0.0"]
+dev = ["ruff>=0.4.0", "pytest>=8.0.0", "lancedb", "pre-commit>=3.5"]
 web = ["fastapi>=0.115.0", "uvicorn[standard]>=0.32.0"]
 
 [project.scripts]
@@ -40,7 +40,19 @@ where = ["src"]
 [tool.setuptools.package-data]
 ops_agent = ["py.typed", "resources/*.json", "data/skill_manifests/*.json"]
 
+[tool.ruff]
+target-version = "py310"
+src = ["src", "tests"]
+line-length = 100
+
+[tool.ruff.format]
+quote-style = "double"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q"
+markers = [
+  "skill_short_video: 短视频 skill 专项回归（独立目录，与 business 用例数据隔离）",
+  "skill_business: 商业/运营 skill 专项回归（独立目录）",
+]

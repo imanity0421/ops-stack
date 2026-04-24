@@ -17,30 +17,42 @@
 - 终端 CLI `python -m ops_agent` 仍为完整工具集，不受影响。
 - **0.5+**：三页统一 Demo 样式；**`/debug`** 展示 Agent 工作流与指令栈。**Reasoning** 默认开启（环境 `OPS_WEB_SLOW` 未设视为开）；对话页可勾选覆盖，并与记忆 API 共用 `localStorage`。身份支持 **client_id / user_id** 预设（localStorage）。
 - **0.6+**：**身份增删** 仅在 **记忆管理** 页；**对话** 页仅选预设并支持 **多会话**（localStorage 按身份分桶，刷新可恢复）。**Skill**：请求体可传 **`skill_id`**；或环境 **`OPS_WEB_SKILL_ID`** / **`OPS_AGENT_DEFAULT_SKILL_ID`**（与 Graphiti **`group_id`** 分区一致）。
+- **会话落库 (Agno `db`)**：默认开启，路径见 ``OPS_SESSION_DB_PATH``；多机可设 ``OPS_SESSION_DB_URL`` 指向 Postgres/Redis 等。前端**每次 /chat 携带同一 `session_id`**（F5 后从 localStorage 恢复）；进程重启后 UI 可调用 ``GET /api/session/messages`` 从库中补全与模型一致的历史条数。详见 `docs/OPERATIONS.md`。
+- **P2 可观测性**：``X-Request-ID`` / ``X-Correlation-ID`` 透传；``/chat`` 结束后打一条可 grep 的 **OPS_OBS** 日志（``session_id``、``model``、``tools``、``elapsed_ms``、token 粗算）。
+- **P2 摄入网关**：``POST /ingest`` 显式 ``target=mem0_profile|hindsight|asset_store``，见 `docs/examples/ingest_post_samples.md`；生产前须 **BFF/网关** 鉴权与限流（本进程无鉴权）。
+- **结构化输出（如 ``planning_draft``）**：``/chat`` 响应体含 ``reply_content_kind`` 与 ``structured``，便于前端区分 JSON 与纯文本（``reply`` 在结构化时为 JSON 字符串）。
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from dotenv import load_dotenv
 
 _ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(_ROOT / ".env")
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from ops_agent.agent.factory import get_agent, new_session_id
 from ops_agent.config import Settings
+from ops_agent.ingest_gateway import run_ingest_v1
 from ops_agent.manifest_loader import load_skill_manifest_registry, resolve_effective_skill_id
+from ops_agent.observability import log_agent_run_obs
 from ops_agent.knowledge.graphiti_reader import GraphitiReadService
 from ops_agent.memory.controller import MemoryController
 from ops_agent.memory.models import MemoryLane, UserFact
 from ops_agent.review.async_review import AsyncReviewService
+
+_web_log = logging.getLogger(__name__)
 
 # Web 演示：从 Agent 工具列表移除三项，仅保留页面 / API 手动写入
 _WEB_EXCLUDED_MEMORY_WRITE_TOOLS = frozenset(
@@ -192,6 +204,14 @@ def _agent_inspect_payload(
             "knowledge_fallback": str(settings.knowledge_fallback_path) if settings.knowledge_fallback_path else None,
             "local_memory": str(_resolve_under_ops_agent(settings.local_memory_path)),
             "hindsight": str(_resolve_under_ops_agent(settings.hindsight_path)),
+            "session_persistence": {
+                "enable": settings.enable_session_db,
+                "has_url": bool(settings.session_db_url),
+                "sqlite_path": str(_resolve_under_ops_agent(settings.session_sqlite_path))
+                if not settings.session_db_url
+                else None,
+                "history_max_messages": settings.session_history_max_messages,
+            },
         },
         "skill_id_resolved": eff,
         "use_slow_reasoning_applied": slow_applied,
@@ -241,6 +261,24 @@ def _serialize_run_trace(out: Any) -> dict[str, Any]:
     return trace
 
 
+def _format_web_chat_reply(agent: Any, out: Any) -> tuple[str, Literal["text", "structured_json"], dict[str, Any] | None]:
+    """当 Agent 挂载 ``output_schema``（如 ``planning_draft``）时，将 Pydantic/dict 转为 JSON 字符串 + 附带 ``structured``。"""
+    if getattr(agent, "output_schema", None) is None:
+        c = out.content
+        text = c if isinstance(c, str) else str(c)
+        return (text, "text", None)
+    c = out.content
+    if c is None:
+        return ("", "structured_json", None)
+    if hasattr(c, "model_dump"):
+        d = c.model_dump()
+        return (json.dumps(d, ensure_ascii=False), "structured_json", d)
+    if isinstance(c, dict):
+        return (json.dumps(c, ensure_ascii=False), "structured_json", c)
+    text = c if isinstance(c, str) else str(c)
+    return (text, "text", None)
+
+
 class ChatIn(BaseModel):
     message: str = Field(..., min_length=1)
     session_id: str | None = None
@@ -277,6 +315,14 @@ class ChatOut(BaseModel):
     history: list[ChatHistoryTurn] = Field(
         default_factory=list,
         description="本 session 至今全部轮次，便于前端像聊天应用一样展示",
+    )
+    reply_content_kind: Literal["text", "structured_json"] = Field(
+        default="text",
+        description="text：普通文本；structured_json：Agno output_schema 返回（如 planning_draft），见 structured",
+    )
+    structured: dict[str, Any] | None = Field(
+        default=None,
+        description="当 reply_content_kind=structured_json 时，与 model 输出等价的 dict（可 JSON 序列化展示）",
     )
 
 
@@ -333,7 +379,46 @@ class HindsightDeleteIn(BaseModel):
     file_line: int = Field(..., ge=1, description="hindsight.jsonl 中的物理行号（自列表接口返回）")
 
 
+class IngestV1In(BaseModel):
+    """P2-6 显式 target 数据摄入；与旧版 ``/api/memory/ingest`` 并存。"""
+
+    target: Literal["mem0_profile", "hindsight", "asset_store"]
+    text: str = Field(..., min_length=1, description="写入正文")
+    client_id: str = Field(default="demo_client", min_length=1)
+    user_id: str | None = None
+    skill_id: str | None = Field(
+        default=None,
+        description="asset_store 时建议显式；其它 target 可省略（用默认 skill）",
+    )
+    mem_kind: str | None = Field(
+        default=None,
+        description="仅 target=mem0_profile：fact | preference，默认 fact",
+    )
+    task_id: str | None = Field(default=None, description="仅 target=hindsight：与反馈关联的任务 id")
+    use_slow_reasoning: bool | None = Field(
+        default=None,
+        description="与 ``/api/memory/ingest`` 一致，用于复用同一 MemoryController bundle",
+    )
+
+
+class _RequestIdMiddleware(BaseHTTPMiddleware):
+    """P2-5：``X-Request-ID`` 或 ``X-Correlation-ID`` 透传，缺失则生成 UUID。"""
+
+    async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
+        h = request.headers
+        rid = (h.get("x-request-id") or h.get("X-Request-ID") or "").strip()
+        if not rid:
+            rid = (h.get("x-correlation-id") or h.get("X-Correlation-ID") or "").strip()
+        if not rid:
+            rid = str(uuid4())
+        request.state.request_id = rid
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
+
+
 app = FastAPI(title="ops-agent web demo", version="0.6.0")
+app.add_middleware(_RequestIdMiddleware)
 
 
 def _nav_html(active: str) -> str:
@@ -1699,20 +1784,77 @@ def api_agent_inspect(
     return _agent_inspect_payload(cid, uid, use_slow, skill_id=skill_id)
 
 
+@app.get("/api/session/messages")
+def api_session_messages(
+    session_id: str = Query(
+        ...,
+        min_length=1,
+        description="与 POST /chat 使用同一值；F5 后仍由 localStorage 提供",
+    ),
+    client_id: str = "demo_client",
+    user_id: str | None = None,
+    skill_id: str | None = Query(None, description="与当时对话 bundle 的 skill 一致"),
+    use_slow: bool | None = Query(
+        None,
+        description="与对话页「启用 Reasoning」一致；省略时采用环境默认",
+    ),
+    limit: int = Query(200, ge=1, le=2000, description="最多返回条数（消息数）"),
+):
+    """
+    从 Agno 会话存储读取该 ``session_id`` 下的消息。用于**进程重启**后，前端在仅有 ``session_id`` 时
+    补全展示（与 ``OPS_SESSION_HISTORY_MAX_MESSAGES`` 所注入到模型的条数可分开配置）。
+    """
+    settings = Settings.from_env()
+    if not settings.enable_session_db:
+        raise HTTPException(400, detail="未启用会话落库 (OPS_ENABLE_SESSION_DB=0)")
+    cid = (client_id or "").strip() or "demo_client"
+    uid = (user_id or "").strip() or None
+    slow_applied = _resolve_use_slow(use_slow)
+    _s, _c, agent = _get_bundle_for(cid, uid, slow_applied, skill_id=skill_id)
+    if getattr(agent, "db", None) is None:
+        raise HTTPException(503, detail="当前 Agent 未挂载会话库")
+    raw = agent.get_session_messages(
+        session_id=session_id.strip(),
+        limit=limit,
+        skip_history_messages=False,
+    )
+    items: list[dict[str, str]] = []
+    for m in raw:
+        role = getattr(m, "role", None) or "assistant"
+        c = getattr(m, "content", None)
+        content = c if isinstance(c, str) else str(c)
+        items.append({"role": str(role), "content": content})
+    return {
+        "session_id": session_id.strip(),
+        "use_slow_reasoning_applied": slow_applied,
+        "messages": items,
+        "count": len(items),
+    }
+
+
 @app.post("/chat", response_model=ChatOut)
-def chat(inp: ChatIn):
+def chat(inp: ChatIn, request: Request):
     slow_applied = _resolve_use_slow(inp.use_slow_reasoning)
     _, ctrl, agent = _get_bundle_for(inp.client_id, inp.user_id, slow_applied, skill_id=inp.skill_id)
     sid = inp.session_id or new_session_id()
+    rid = getattr(request.state, "request_id", "-")
     try:
         ctrl.bump_turn_and_maybe_snapshot(inp.client_id, inp.user_id)
+        t0 = time.perf_counter()
         out = agent.run(
             inp.message,
             session_id=sid,
             user_id=inp.user_id or inp.client_id,
             stream=False,
         )
-        text = out.content if isinstance(out.content, str) else str(out.content)
+        log_agent_run_obs(
+            request_id=rid,
+            session_id=sid,
+            out=out,
+            elapsed_s=time.perf_counter() - t0,
+            route="/chat",
+        )
+        text, rkind, structured = _format_web_chat_reply(agent, out)
         tr = _transcripts.setdefault(sid, [])
         tr.append(("user", inp.message))
         tr.append(("assistant", text))
@@ -1724,7 +1866,39 @@ def chat(inp: ChatIn):
             use_slow_reasoning_applied=slow_applied,
             trace=trace,
             history=history,
+            reply_content_kind=rkind,
+            structured=structured,
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/ingest")
+def http_ingest_v1(inp: IngestV1In, request: Request):
+    """
+    P2-6：统一显式 **target** 入口；成功时返回 200 与 ``status``/写入摘要。
+    部署在生产前**必须**由网关做鉴权与限流；本进程默认**不**校验密钥。
+    """
+    settings = Settings.from_env()
+    eff_skill = (inp.skill_id or "").strip() or settings.default_skill_id
+    slow_applied = _resolve_use_slow(inp.use_slow_reasoning)
+    _, ctrl, _ = _get_bundle_for(inp.client_id, inp.user_id, slow_applied, skill_id=inp.skill_id)
+    rid = getattr(request.state, "request_id", "-")
+    _web_log.info("OPS_OBS route=/ingest request_id=%s target=%s client_id=%s", rid, inp.target, inp.client_id)
+    try:
+        return run_ingest_v1(
+            target=inp.target,
+            text=inp.text,
+            client_id=inp.client_id,
+            user_id=inp.user_id,
+            skill_id=eff_skill,
+            settings=settings,
+            controller=ctrl,
+            mem_kind=inp.mem_kind,
+            task_id=inp.task_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

@@ -58,7 +58,9 @@ async def ingest_episodes_file(
         else:
             reference_time = datetime.now(timezone.utc)
         src_raw = ep.get("source", "text")
-        src = EpisodeType.text if str(src_raw).lower() in ("text", "lesson") else EpisodeType.message
+        src = (
+            EpisodeType.text if str(src_raw).lower() in ("text", "lesson") else EpisodeType.message
+        )
 
         kwargs = {
             "name": name,
@@ -73,5 +75,11 @@ async def ingest_episodes_file(
     return uuids
 
 
-def run_ingest_sync(episodes_json: Path, *, neo4j_uri: str, neo4j_user: str, neo4j_password: str) -> list[str]:
-    return asyncio.run(ingest_episodes_file(episodes_json, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user, neo4j_password=neo4j_password))
+def run_ingest_sync(
+    episodes_json: Path, *, neo4j_uri: str, neo4j_user: str, neo4j_password: str
+) -> list[str]:
+    return asyncio.run(
+        ingest_episodes_file(
+            episodes_json, neo4j_uri=neo4j_uri, neo4j_user=neo4j_user, neo4j_password=neo4j_password
+        )
+    )

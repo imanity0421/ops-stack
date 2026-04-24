@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 from openai import OpenAI
@@ -223,7 +223,11 @@ def ingest_text(raw: str, *, store: AssetStore, opt: IngestOptions) -> dict[str,
         pass
 
     r = store.upsert_many([case])
-    return {"status": "ok", "store": r, "case": {"case_id": case.case_id, "status": case.status, "reason": reason}}
+    return {
+        "status": "ok",
+        "store": r,
+        "case": {"case_id": case.case_id, "status": case.status, "reason": reason},
+    }
 
 
 def ingest_jsonl(path: Path, *, store: AssetStore, opt: IngestOptions) -> dict[str, Any]:
@@ -258,7 +262,9 @@ def ingest_jsonl(path: Path, *, store: AssetStore, opt: IngestOptions) -> dict[s
             continue
         if st == "rejected":
             rejected += 1
-            reasons[str(r.get("reason") or "rejected")] = reasons.get(str(r.get("reason") or "rejected"), 0) + 1
+            reasons[str(r.get("reason") or "rejected")] = (
+                reasons.get(str(r.get("reason") or "rejected"), 0) + 1
+            )
         else:
             cs = (r.get("case") or {}).get("status")
             if cs == "accepted":
@@ -278,4 +284,3 @@ def ingest_jsonl(path: Path, *, store: AssetStore, opt: IngestOptions) -> dict[s
         "duplicate_skipped": reasons.get("duplicate_skip", 0),
         "reasons": reasons,
     }
-

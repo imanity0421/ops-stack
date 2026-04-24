@@ -57,7 +57,7 @@ def run_doctor(*, strict: bool = False) -> int:
 
             _ok("graphiti-core 已安装")
         except ImportError:
-            _warn("未安装 graphiti-core，请 pip install -e \".[graphiti]\"")
+            _warn('未安装 graphiti-core，请 pip install -e ".[graphiti]"')
     else:
         _warn("未配置 Neo4j，Graphiti 检索将走 JSONL 或提示未配置")
 

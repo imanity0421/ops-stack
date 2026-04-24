@@ -27,6 +27,11 @@ class AgentManifestV1(BaseModel):
     enabled_tools: list[str] = Field(default_factory=list)
     notes: str | None = None
     agent_name: str | None = None
+    #: P1-3 可选；追加在系统宪法核心段**之后**、``system_prompt`` 之前
+    constitutional_prompt: str | None = None
+    #: P1-4；为 ``structured_v1`` 时由 ``manifest_output.resolve_structured_output_model`` 解析为 Agno ``output_schema``
+    output_mode: str | None = None
+    output_schema_version: str | None = None
 
 
 def packaged_skill_manifest_dir() -> Path:

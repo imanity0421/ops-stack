@@ -1,0 +1,14 @@
+{
+  "name": "business_ops_skill_smoke",
+  "skill_id": "default_ops",
+  "assistant_turns": [
+    "可先做渠道盘点与客户分层，再定本周触达节奏；不编造未提供的客户数据。"
+  ],
+  "golden_rules": [
+    {
+      "id": "forbidden_phrase_demo",
+      "pattern":  "三天涨粉十万",
+      "message": "短视频 skill 的 fixture 不应出现该短语；本规则用于隔离性自检"
+    }
+  ]
+}

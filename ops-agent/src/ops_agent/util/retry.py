@@ -40,6 +40,8 @@ def retry_sync(
                 logger.warning("%s 最终失败 (%s/%s): %s", label, i + 1, attempts, e)
                 raise
             delay = base_delay_sec * (2**i)
-            logger.info("%s 重试 %s/%s 前等待 %.2fs: %s", label, i + 1, attempts, delay, type(e).__name__)
+            logger.info(
+                "%s 重试 %s/%s 前等待 %.2fs: %s", label, i + 1, attempts, delay, type(e).__name__
+            )
             time.sleep(delay)
     raise AssertionError("unreachable")  # pragma: no cover

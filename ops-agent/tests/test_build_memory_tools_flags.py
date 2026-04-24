@@ -64,4 +64,3 @@ def test_enable_asset_store_adds_search_tool(tmp_path: Path) -> None:
     )
     names = _names(tools)
     assert "search_reference_cases" in names
-
