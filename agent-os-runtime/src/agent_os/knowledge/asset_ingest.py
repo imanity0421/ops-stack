@@ -110,11 +110,11 @@ def _llm_extract_features(raw: str, *, opt: IngestOptions) -> dict[str, Any]:
         "你是参考案例库的特征提取器。对下面整案案例抽取用于“语感检索”的特征。输出严格 JSON，字段：\n"
         "{\n"
         '  "summary": "高密度摘要（1段）",\n'
-        '  "style_fingerprint": "风格指纹：语气/节奏/结构/人设/镜头语言/句式偏好等（1段）",\n'
+        '  "style_fingerprint": "风格指纹：语气/节奏/结构/表达方式/句式偏好等（1段）",\n'
         '  "tags": ["若干短标签"],\n'
-        '  "platform": "抖音|快手|B站|小红书|公众号|其他|unknown",\n'
-        '  "content_type": "口播|剧情|测评|带货|种草|科普|其他|unknown",\n'
-        '  "duration_bucket": "15s|30s|60s|3min+|unknown",\n'
+        '  "platform": "交付场景或使用环境，如 chat|doc|web|api|report|code|other|unknown",\n'
+        '  "content_type": "内容类型，如 方案|说明|复盘|清单|报告|代码|其他|unknown",\n'
+        '  "duration_bucket": "长度区间，如 short|medium|long|unknown",\n'
         '  "key_excerpts": ["关键片段1","关键片段2","关键片段3"]\n'
         "}\n"
         "要求：key_excerpts 选最能体现写法的片段；不要输出多余字段。\n\n"
@@ -178,7 +178,7 @@ def ingest_text(raw: str, *, store: AssetStore, opt: IngestOptions) -> dict[str,
             f"摘要：{summary}",
             f"风格：{style}",
             f"标签：{', '.join(tags) if isinstance(tags, list) else ''}",
-            f"平台：{platform or ''} 体裁：{content_type or ''} 时长：{duration_bucket or ''}",
+            f"场景：{platform or ''} 类型：{content_type or ''} 长度：{duration_bucket or ''}",
         ]
     ).strip()
 
@@ -231,7 +231,7 @@ def ingest_text(raw: str, *, store: AssetStore, opt: IngestOptions) -> dict[str,
 
 
 def ingest_jsonl(path: Path, *, store: AssetStore, opt: IngestOptions) -> dict[str, Any]:
-    raw_lines = path.read_text(encoding="utf-8").splitlines()
+    raw_lines = path.read_text(encoding="utf-8-sig").splitlines()
     total = 0
     accepted = 0
     quarantined = 0
@@ -248,6 +248,10 @@ def ingest_jsonl(path: Path, *, store: AssetStore, opt: IngestOptions) -> dict[s
         except Exception:
             rejected += 1
             reasons["invalid_json"] = reasons.get("invalid_json", 0) + 1
+            continue
+        if not isinstance(row, dict):
+            rejected += 1
+            reasons["invalid_record"] = reasons.get("invalid_record", 0) + 1
             continue
         text = str(row.get("raw_content") or row.get("text") or "").strip()
         if not text:

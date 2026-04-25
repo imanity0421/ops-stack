@@ -1,7 +1,7 @@
 {
   "manifest_version": "1.0",
-  "handbook_version": "short-video-demo-0.1",
-  "system_prompt": "额外约束：脚本默认面向抖音竖屏 60 秒内；若用户未指定平台则先问一句。",
+  "handbook_version": "generic-demo-0.1",
+  "system_prompt": "额外约束：回答前先确认目标、约束、输出格式与验收标准；若关键信息缺失，先用一句话追问。",
   "model": "gpt-4o-mini",
   "enabled_tools": [],
   "notes": "enabled_tools 为空表示不筛选工具；可列出 retrieve_ordered_context、record_client_preference 等子集以缩小能力面。"

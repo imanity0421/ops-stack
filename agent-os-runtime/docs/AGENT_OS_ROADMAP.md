@@ -1,6 +1,6 @@
 # Agent OS 路线图（定版）— 实现流程与设计图
 
-本文档是 **agent-os-runtime** 在「CLI + 最终 Web/API 对外、持续新增 Skill、商业/运营向交付」目标下的**定版**实施蓝图，与 [ENGINEERING.md](ENGINEERING.md) 中的运行时边界一致，**不**覆盖账号/计费/多租户控制台等完整商业化（见 ENGINEERING §1.2）。
+本文档是 **agent-os-runtime** 在「CLI + 最终 Web/API 对外、持续新增 Skill、通用任务型交付」目标下的**定版**实施蓝图，与 [ENGINEERING.md](ENGINEERING.md) 中的运行时边界一致，**不**覆盖账户/计费/多租户控制台等完整商业化（见 ENGINEERING §1.2）。
 
 ---
 
@@ -10,7 +10,7 @@
 |------|------|
 | **可插拔 Skill** | 新增/迭代 Skill 时**不污染**核心对话工厂逻辑；通过**目录/注册表/白名单**完成工具挂载。 |
 | **多入口一致** | 本地 CLI、FastAPI 使用同一套 `get_agent` / 记忆与检索契约。 |
-| **生产可用** | Web 抗进程重启、多机可扩展的会话与存储抽象；ingest/排障/备份可运营。 |
+| **生产可用** | Web 抗进程重启、多机可扩展的会话与存储抽象；ingest/排障/备份可运维。 |
 | **可控输出** | 顶层「宪法」约束记忆冲突；关键交付物可结构化、可测。 |
 | **非目标** | 系统外权限、多模态、通用贾维斯；鉴权/限流以 **API 网关或 BFF** 为主，本仓库**仅**约定边界与钩子。 |
 
@@ -25,7 +25,7 @@
 | **Sprint 1**<br>底层重构<br>*(可并行)* | **P0** | **1. Skill 扩展协议**<br>(Tool Registry) | 明确 **允许加载的 skill 根目录白名单**（如仅 `agent_os.agent.skills.*` 或 `AGENT_OS_SKILLS_ROOT` 下子包）。`get_agent` **仅**做「从注册表/扫描结果组装 `incremental_tools`」，**不**写入各 Skill 业务代码。动态 import 必须 **importlib + 路径校验**，禁止从任意路径加载。 | 新增一个**测试用 Skill 包**（如 `sample_skill`），**不修改 `factory.py` 内与业务相关的分支**即可注册运行（允许**集中一行**的「从 env 读 skills 包列表」等**纯框架**改动）；对非白名单路径/模块尝试加载时 **明确报错** 并拒绝执行。 |
 | **Sprint 1**<br>*(可并行)* | **P0** | **2. 会话持久化**<br>(Session Storage) | 按**当前 Agno 主版本**文档接入 **Storage** 抽象；单机可用 Sqlite/本地，**接口层**抽象为可替换为 **Postgres/Redis**（多机/多 worker 时共享后端的唯一入口）。Web/FastAPI **全链路**使用同一 `session_id`（含 F5 与重连策略）。 | Web Demo 下：**(a)** 同一 `session_id` 在 **F5 刷新** 后仍连续对话；**(b)** **重启 Python 进程** 后，仍能从**共享存储**恢复**最近 N 条**（N 在配置中声明）；单 worker 下 Sqlite/文件路径需文档化。 |
 | **Sprint 2**<br>可控输出 | **P1** | **3. 系统「宪法」**<br>(Prompt Guardrails) | 在 `system` 最前或固定片段中注入**冲突解决序**：**硬合规/不编造/未授权信息** 等 **红线** → **当轮显式用户指令** → **Hindsight 教训** → **领域规则/SOP** → **Asset 案例语感**（顺序可经产品再确认，但须**写死、可测**）。 | 边界用例自动化或人工用例表：**(1)** 用户要求违反硬合规/编造事实 → 拒绝；**(2)** 用户要求与**纸面 SOP** 冲突但不触红线 → 从用户；**(3)** 可引用条款见测试文档。 |
-| **Sprint 2** | **P1** | **4. 交付物契约**<br>(Output Schema) | 对「策划/脚本」等 Skill 使用 **Pydantic / `response_model`（以 Agno 能力为准）** 输出 **强结构块**（如 `title`、`outline`）；**正文长文**用独立字段（Markdown 字符串）或**第二轮**扩写，避免**单段超长 JSON 嵌套**导致截断/解析失败。 | 至少一个**策划类** Skill 在压测/回归下 **连续多次** 返回 **可解析的 JSON**（含约定字段），**无** 解析器异常；超长正文有「提纲 JSON + 正文 API」的**备选**说明写在 ENGINEERING/本文件。 |
+| **Sprint 2** | **P1** | **4. 交付物契约**<br>(Output Schema) | 对结构化交付类 Skill 使用 **Pydantic / `response_model`（以 Agno 能力为准）** 输出 **强结构块**（如 `title`、`outline`）；**正文长文**用独立字段（Markdown 字符串）或**第二轮**扩写，避免**单段超长 JSON 嵌套**导致截断/解析失败。 | 至少一个结构化交付类 Skill 在压测/回归下 **连续多次** 返回 **可解析的 JSON**（含约定字段），**无** 解析器异常；超长正文有「提纲 JSON + 正文 API」的**备选**说明写在 ENGINEERING/本文件。 |
 | **Sprint 2.5**<br>认知稳定性 | **P1** | **4.5 运行时上下文 + 记忆治理**<br>(Ephemeral Metadata / Memory Policy / Temporal Grounding) | 每轮注入**临时环境元数据**（时间、入口、skill，禁止落库）；对 Mem0/Hindsight 写入增加 **Memory Policy**（工具描述 + 服务端 gate）；所有记忆写入带 **recorded_at/source**，检索渲染带时间，冲突时优先较新资料。 | 单测覆盖：临时元数据在 prompt 且不落库；玩笑/一次性/模糊内容被拒写；Hindsight/Mem0 本地 metadata 带时间；`retrieve_ordered_context` 输出含 `[记录于 ...]`。 |
 | **Sprint 2.5**<br>长会话 | **P1/P2** | **4.6 Task-aware Working Memory**<br>(Task Boundary + Task Summary) | 在同一 `session_id` 内自动维护 `task_id` 与当前 task 摘要：**task 不跨 session**，跨 session 连续性交给 Mem0/Hindsight。生产用户无感；debug 可查看/手动切 task。边界判断默认保守：低置信只记 candidate，高置信 confirmed 后才切；允许在最近 K 条内回溯到 candidate 边界并重分配 `task_id`，但不改原始消息。 | `task_id` 自动生成；`summary(session_id, task_id)` 固定容量覆盖更新；上下文 = 当前 task summary + 当前 task 最近原文 + 短 task index；候选/确认/回溯写 audit；默认不自动写长期记忆。 |
 | **Sprint 3**<br>基建补齐<br>*(可重叠)* | **P2** | **5. 可观测性**<br>(Observability) | 先 **轻量**：Request/Correlation ID、会话 id、**工具调用序列**、耗时、**粗算 Token**（与模型/分词器约定一致，仅作趋势）；再按需接 Langfuse/Phoenix 等。 | 单次请求在日志或调试端可看到：**session_id、模型 id、工具列表、总耗时、token 粗算**；格式稳定可 grep。 |
@@ -209,7 +209,7 @@ flowchart LR
 | 周次（参考） | 动作 |
 |--------------|------|
 | W1–W2 | Sprint 1：Skill 白名单 + `sample_skill`；Storage 抽象 + Web 联调 F5+重启。 |
-| W3–W4 | Sprint 2：宪法文案 + 测试用例；一个 Skill 上 `response_model` / 分步正文。 |
+| W3–W4 | Sprint 2：宪法文本 + 测试用例；一个 Skill 上 `response_model` / 分步正文。 |
 | W5–W6 | Sprint 3：日志与 ID；`POST /ingest` 显式 target 打通 + 单测/脚本验收。 |
 | 持续 | Sprint 4：拆 eval、backup cron、文档。 |
 

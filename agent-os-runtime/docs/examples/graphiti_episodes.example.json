@@ -4,7 +4,7 @@
   "episodes": [
     {
       "name": "lesson_general_intro",
-      "body": "交付方案应明确适用边界、成功条件与风险提示，避免夸大收益承诺。",
+      "body": "交付方案应明确适用边界、成功条件与风险提示，避免夸大效果或结果承诺。",
       "source_description": "offline_ingest_fixture",
       "source": "text"
     }

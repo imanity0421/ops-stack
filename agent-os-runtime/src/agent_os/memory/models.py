@@ -18,7 +18,7 @@ class UserFact(BaseModel):
     """经分类或工具抽取后、拟写入记忆的结构化事实。"""
 
     lane: MemoryLane
-    client_id: str = Field(..., min_length=1, description="租户/客户隔离键")
+    client_id: str = Field(..., min_length=1, description="租户或工作区隔离键")
     user_id: str | None = Field(None, description="终端用户，可选")
     task_id: str | None = None
     deliverable_type: str | None = None

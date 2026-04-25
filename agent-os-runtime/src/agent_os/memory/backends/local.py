@@ -22,8 +22,26 @@ class LocalMemoryBackend:
         if not self._path.exists():
             self._data: dict[str, Any] = {"users": {}}
             return self._data
-        self._data = json.loads(self._path.read_text(encoding="utf-8"))
-        self._data.setdefault("users", {})
+        try:
+            data = json.loads(self._path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("本地记忆文件无法解析，使用空内存视图: %s", e)
+            data = {}
+        if not isinstance(data, dict):
+            logger.warning("本地记忆文件根节点不是对象，使用空内存视图: %s", self._path)
+            data = {}
+        users = data.get("users")
+        if not isinstance(users, dict):
+            data["users"] = {}
+        else:
+            for uid, bucket in list(users.items()):
+                if not isinstance(bucket, dict):
+                    users[uid] = {"memories": []}
+                    continue
+                memories = bucket.get("memories")
+                if not isinstance(memories, list):
+                    bucket["memories"] = []
+        self._data = data
         return self._data
 
     def _save(self) -> None:
@@ -67,8 +85,17 @@ class LocalMemoryBackend:
         bucket = users.get(uid, {"memories": []})
         q = query.lower()
         hits: List[MemorySearchHit] = []
-        for m in reversed(bucket.get("memories", [])):
+        if not isinstance(bucket, dict):
+            return []
+        memories = bucket.get("memories", [])
+        if not isinstance(memories, list):
+            return []
+        for m in reversed(memories):
+            if not isinstance(m, dict):
+                continue
             text = m.get("text", "")
+            if not isinstance(text, str):
+                continue
             if q in text.lower() or not q:
                 hits.append(MemorySearchHit(text=text, metadata=m.get("metadata") or {}))
             if len(hits) >= limit:

@@ -11,7 +11,7 @@ def load_golden_rules(path: Path | None) -> list[dict[str, Any]]:
     if path is None or not path.is_file():
         return []
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8-sig")
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError, TypeError):
         return []

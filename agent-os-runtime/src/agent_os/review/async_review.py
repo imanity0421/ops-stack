@@ -28,7 +28,7 @@ def _extract_lessons(transcript_text: str, model: str | None) -> str:
     )
     prompt = (
         "你是任务复盘助手。根据以下对话，总结 1～3 条可复用的「教训/注意事项」，"
-        "每条一行，用中文，不要重复客户已写在 Mem0 的静态事实。"
+        "每条一行，用中文，不要重复已写在 Mem0 的静态事实。"
         "若无值得记录的教训，输出单独一行：无。\n\n对话：\n"
         f"{transcript_text[:12000]}"
     )

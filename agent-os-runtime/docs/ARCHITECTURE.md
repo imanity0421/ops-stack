@@ -43,7 +43,7 @@ flowchart LR
 ## 读路径
 
 1. **推荐**：`retrieve_ordered_context` → ① Mem0 → ② Hindsight → ③ Graphiti（或降级）→ ④ Asset Store（参考案例，可选）。
-2. **客户画像**：`search_client_memory`。
+2. **主体画像**：`search_client_memory`。
 3. **历史教训**：`search_past_lessons`。
 4. **领域知识**：`search_domain_knowledge`。
 5. **探针（fixture）**：`fetch_probe_context`（可选覆盖 `AGENT_OS_MCP_PROBE_FIXTURE_PATH`）；可选 **stdio MCP** 见 `agent-os-runtime mcp-probe-server`（依赖 `[mcp]`）。

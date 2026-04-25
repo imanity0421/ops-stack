@@ -215,3 +215,75 @@ Removed scenario-specific wording from generic task-memory/memory-policy tests a
 
 Renamed runtime directory and package from ops-agent / ops_agent to agent-os-runtime / agent_os; renamed CLI entrypoint and env prefixes to AGENT_OS_*; removed built-in vertical/test manifests and old skill-specific test directories; kept only neutral default_agent and planning_draft manifests. Reworked skill-loader tests to use external manifest + in-memory sample skill package, moved core tests under tests/core, renamed probe tools to fetch_probe_context / get_probe_snapshot, and removed old project/domain wording from core code/tests/docs. Verified: python -m ruff check src tests; python -m ruff format --check src tests; python -m pytest.
 
+
+---
+
+## 2026-04-26T01:08:00+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime architecture/runtime scan fixes
+
+Re-scanned agent-os-runtime from architecture and runtime perspectives. Fixed remaining generic-base purity issues in docs examples and Asset ingestion prompts; fixed MCP probe help so optional mcp dependency is not required for --help; fixed ingest_gateway source propagation into Memory temporal metadata; connected CLI task memory flag to TaskMemoryStore message recording and task index injection; corrected runtime docs for python -m agent_os and tests/core fixtures. Added focused CLI task-memory test. Follow-up bug scan fixed policy rejection reporting in tools/ingest_gateway, task-memory effective skill recording, and snapshot_every_n_turns=0 ZeroDivisionError. Verified: python -m ruff check src tests; python -m ruff format --check src tests; python -m pytest; PYTHONPATH=src python -m agent_os doctor; graphiti dry-run; mcp-probe-server --help; python -m compileall -q src.
+
+
+---
+
+## 2026-04-26T01:34:00+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime third bug and neutrality scan
+
+Ran a third bug-only scan (architecture gaps excluded) and a non-test neutrality scan. Fixed MCP probe invalid JSON handling, safe numeric env parsing in Settings and GraphitiReadService, additional neutral wording in src/docs/examples, handoff item wording, planning_draft manifest wording, and tool/prompt descriptions. Verified: python -m ruff check src tests; python -m ruff format --check src tests; python -m pytest.
+
+
+---
+
+## 2026-04-26T01:56:38+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime 第四次 bug 扫描
+
+按明确代码/运行 bug 口径完成第四次扫描。修复 3 项：PlanStructuredV1 空 outline 校验冲突、KnowledgeJsonlFallback 非对象 JSONL 行导致 search 崩溃、LocalMemoryBackend 损坏/非对象 JSON 初始化崩溃。新增对应回归测试。验证：ruff check src tests 通过；ruff format --check src tests 通过；pytest 全量 89 passed。
+
+
+---
+
+## 2026-04-26T02:03:17+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime 第五次 bug 扫描
+
+按明确代码/运行 bug 口径完成第五次扫描。修复 JSON/SQLite 脏持久化数据导致的运行崩溃：KnowledgeJsonlFallback 跳过字段类型不合法行；LocalMemoryBackend 规范化 users/bucket/memories 并跳过非法记忆项；HindsightStore 跳过非对象或 text 非字符串行；TaskMemoryStore 对 invoked_skills_json 解析失败回退到 primary_skill_id。新增对应回归测试。验证：ruff check src tests 通过；ruff format --check src tests 通过；pytest 全量 92 passed。独立复核未发现剩余明确 bug。
+
+
+---
+
+## 2026-04-26T02:13:28+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime 第六次 bug 扫描
+
+按明确代码/运行 bug 口径完成第六次扫描。修复：asset_ingest.ingest_jsonl 跳过非对象 JSON 行；Mem0MemoryBackend.search 对 None/非 dict/list 响应返回空结果；manifest_loader 捕获 Pydantic ValidationError 并跳过坏 manifest；graphiti_ingest 非法 reference_time_utc 回退当前 UTC、跳过非对象 episode、要求 episodes 为数组并延后 graphiti_core 可选依赖 import；CLI graphiti-ingest --dry-run 要求 episodes 为数组；search_reference_cases 对非数字 limit 做默认值回退与上下界钳位。新增对应回归测试。验证：ruff check src tests 通过；ruff format --check src tests 通过；pytest 全量 101 passed；独立最终复核没有发现剩余明确 bug。
+
+
+---
+
+## 2026-04-26T02:20:15+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime 第七次 bug 扫描
+
+按明确代码/运行 bug 口径完成第七次扫描。修复：Windows/PowerShell UTF-8 BOM JSON/JSONL 读取兼容（CLI graphiti dry-run、eval、manifest、golden rules、handoff、doctor、mcp fixture、asset jsonl、fallback、本地 memory、hindsight 等）；asset-ingest txt 读取兼容 utf-8-sig；MemoryController 去重指纹纳入 user_id 且仅写入成功后登记；KnowledgeJsonlFallback/HindsightStore 对目录路径安全返回；record_client_fact/record_client_preference/record_task_feedback 空文本返回 rejected: empty_text。新增对应回归测试。验证：ruff check src tests 通过；ruff format --check src tests 通过；pytest 全量 113 passed；独立最终复核没有发现剩余明确 bug。
+
+
+---
+
+## 2026-04-26T02:25:22+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime 第八次 bug 扫描
+
+按明确代码/运行 bug 口径完成第八次扫描。基础验证先行全绿；本轮修复：MCP probe 的 market_snapshot 非对象时 format_probe_for_agent 不再 .get 崩溃；Mem0MemoryBackend.search 对 dict 中 results/memories 非 list 的返回形态置为空列表，避免误解析。新增对应回归测试。验证：ruff check src tests 通过；ruff format --check src tests 通过；pytest 全量 114 passed；独立最终复核未发现剩余明确 bug。本轮缺陷类型已从核心路径转向外部返回形态/小概率输入边界，残余 bug 密度继续下降。
+
+
+---
+
+## 2026-04-26T02:28:48+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime 第九次 bug 扫描
+
+按明确代码/运行 bug 口径完成第九次扫描。基础验证全绿：ruff check src tests 通过；ruff format --check src tests 通过；pytest 全量 114 passed。人工复核重点检查第三方 API 返回形态、路径/JSON/SQLite/工具参数边界；独立只读扫描结论为：在正常可预期使用路径下没有发现需列为明确 bug 的项。异常第三方空 choices/data 等可作为后续韧性增强，不纳入本轮 bug。
+

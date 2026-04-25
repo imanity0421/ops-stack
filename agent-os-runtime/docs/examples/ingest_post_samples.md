@@ -13,7 +13,7 @@ X-Request-ID: demo-mem0-1
 
 {
   "target": "mem0_profile",
-  "text": "客户偏好晚间 20:00 后接收关键进展。",
+  "text": "用户偏好晚间 20:00 后接收关键进展。",
   "client_id": "demo_client",
   "mem_kind": "preference"
 }

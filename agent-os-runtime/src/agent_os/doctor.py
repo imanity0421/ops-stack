@@ -72,7 +72,7 @@ def run_doctor(*, strict: bool = False) -> int:
         p = Path(handoff)
         if p.is_file():
             try:
-                data: Any = json.loads(p.read_text(encoding="utf-8"))
+                data: Any = json.loads(p.read_text(encoding="utf-8-sig"))
                 lessons = data.get("lessons") if isinstance(data, dict) else None
                 n = len(lessons) if isinstance(lessons, list) else "?"
                 _ok(f"AGENT_OS_HANDOFF_MANIFEST_PATH 可读: {p} (lessons≈{n})")

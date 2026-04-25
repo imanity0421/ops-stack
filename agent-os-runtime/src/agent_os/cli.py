@@ -8,9 +8,11 @@ import sys
 from pathlib import Path
 
 from agent_os.agent.factory import get_agent, new_session_id
+from agent_os.agent.task_memory import TaskMemoryStore
 from agent_os.config import Settings
 from agent_os.knowledge.asset_store import asset_store_from_settings
 from agent_os.knowledge.graphiti_reader import GraphitiReadService
+from agent_os.manifest_loader import load_skill_manifest_registry, resolve_effective_skill_id
 from agent_os.memory.controller import MemoryController
 from agent_os.review.async_review import AsyncReviewService
 
@@ -97,13 +99,13 @@ def _graphiti_ingest_main(argv: list[str]) -> int:
     if args.dry_run:
         import json as _json
 
-        raw = _json.loads(args.episodes_json.read_text(encoding="utf-8"))
+        raw = _json.loads(args.episodes_json.read_text(encoding="utf-8-sig"))
         if isinstance(raw, list):
             _ = raw
-        elif isinstance(raw, dict) and "episodes" in raw:
+        elif isinstance(raw, dict) and isinstance(raw.get("episodes"), list):
             _ = raw["episodes"]
         else:
-            print("JSON 须为数组或含 episodes", file=sys.stderr)
+            print("JSON 须为数组或含 episodes 数组的对象", file=sys.stderr)
             return 1
         print("dry-run OK")
         return 0
@@ -156,7 +158,7 @@ def _asset_ingest_main(argv: list[str]) -> int:
         r = ingest_jsonl(args.input, store=store, opt=opt)
         print(json.dumps(r, ensure_ascii=False, indent=2))
         return 0
-    raw = args.input.read_text(encoding="utf-8")
+    raw = args.input.read_text(encoding="utf-8-sig")
     r = ingest_text(raw, store=store, opt=opt)
     print(json.dumps(r, ensure_ascii=False, indent=2))
     return 0
@@ -208,7 +210,7 @@ def _chat_main(argv: list[str]) -> int:
         prog="agent-os-runtime",
         description="Agent OS Runtime（Agno + Mem0 + Hindsight + Graphiti 只读 + AsyncReview）",
     )
-    p.add_argument("--client-id", default="demo_client", help="租户/客户 ID（必填隔离键）")
+    p.add_argument("--client-id", default="demo_client", help="租户或工作区隔离键（client_id）")
     p.add_argument("--user-id", default=None, help="终端用户 ID（可选）")
     p.add_argument("--task-id", default=None, help="任务 ID（写入 Hindsight / AsyncReview 关联）")
     p.add_argument("--slow", action="store_true", help="启用慢推理模式（Agno reasoning）")
@@ -249,21 +251,39 @@ def _chat_main(argv: list[str]) -> int:
         enable=settings.enable_asset_store, path=settings.asset_store_path
     )
 
-    skill_id = args.skill if args.skill is not None else None
-
-    agent = get_agent(
-        ctrl,
-        client_id=args.client_id,
-        user_id=args.user_id,
-        thought_mode="slow" if args.slow else "fast",
-        knowledge=knowledge,
-        asset_store=asset_store,
-        settings=settings,
-        skill_id=skill_id,
-        entrypoint="cli",
-    )
-
     session_id = args.session_id or new_session_id()
+    skill_id = args.skill if args.skill is not None else None
+    effective_skill_id = resolve_effective_skill_id(
+        skill_id,
+        settings.default_skill_id,
+        load_skill_manifest_registry(settings.agent_manifest_dir),
+    )
+    task_store = (
+        TaskMemoryStore(settings.task_memory_sqlite_path) if settings.enable_task_memory else None
+    )
+    active_task_id: str | None = None
+
+    def _build_agent_for_turn():
+        current_summary = None
+        task_index = None
+        if task_store is not None and active_task_id is not None:
+            current_summary = task_store.get_summary(session_id=session_id, task_id=active_task_id)
+            task_index = task_store.task_index(session_id=session_id)
+        return get_agent(
+            ctrl,
+            client_id=args.client_id,
+            user_id=args.user_id,
+            thought_mode="slow" if args.slow else "fast",
+            knowledge=knowledge,
+            asset_store=asset_store,
+            settings=settings,
+            skill_id=skill_id,
+            entrypoint="cli",
+            current_task_summary=current_summary,
+            session_task_index=task_index,
+        )
+
+    agent = None if task_store is not None else _build_agent_for_turn()
     transcript: list[tuple[str, str]] = []
     print(f"会话 session_id={session_id} | client_id={args.client_id} | exit: quit / exit")
     while True:
@@ -276,7 +296,25 @@ def _chat_main(argv: list[str]) -> int:
             continue
         if line.lower() in ("quit", "exit", "q"):
             break
+        if task_store is not None:
+            task = task_store.get_or_create_active_task(
+                session_id=session_id,
+                client_id=args.client_id,
+                user_id=args.user_id,
+                skill_id=effective_skill_id,
+                seed_message=line,
+            )
+            active_task_id = task.task_id
+            task_store.append_message(
+                session_id=session_id,
+                task_id=active_task_id,
+                role="user",
+                content=line,
+            )
+            agent = _build_agent_for_turn()
         ctrl.bump_turn_and_maybe_snapshot(args.client_id, args.user_id)
+        if agent is None:
+            agent = _build_agent_for_turn()
         out = agent.run(
             line,
             session_id=session_id,
@@ -288,13 +326,20 @@ def _chat_main(argv: list[str]) -> int:
         print(text)
         transcript.append(("user", line))
         transcript.append(("assistant", text))
+        if task_store is not None and active_task_id is not None:
+            task_store.append_message(
+                session_id=session_id,
+                task_id=active_task_id,
+                role="assistant",
+                content=text,
+            )
 
     if not args.no_async_review and ctrl.hindsight_store is not None and transcript:
         review = AsyncReviewService.from_env(ctrl.hindsight_store)
         review.submit_and_wait(
             client_id=args.client_id,
             user_id=args.user_id,
-            task_id=args.task_id,
+            task_id=args.task_id or active_task_id,
             transcript=transcript,
         )
 

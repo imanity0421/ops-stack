@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,9 +10,26 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 _SKILL_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 # 与 agent/skills/loader 一致：可加载子包名
 _SKILL_PKG = re.compile(r"^[a-zA-Z0-9_]+$")
+
+
+def _env_int(name: str, default: int, *, min_value: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        logger.warning("%s=%r 不是合法整数，使用默认值 %s", name, raw, default)
+        return default
+    if min_value is not None and value < min_value:
+        logger.warning("%s=%r 小于最小值 %s，使用默认值 %s", name, raw, min_value, default)
+        return default
+    return value
 
 
 @dataclass(frozen=True)
@@ -97,9 +115,7 @@ class Settings:
 
         sdb = os.getenv("AGENT_OS_SESSION_DB_PATH", "data/agno_session.db")
         sdb_url = os.getenv("AGENT_OS_SESSION_DB_URL")
-        hist_n = int(os.getenv("AGENT_OS_SESSION_HISTORY_MAX_MESSAGES", "20"))
-        if hist_n < 0:
-            raise ValueError("AGENT_OS_SESSION_HISTORY_MAX_MESSAGES 须 >= 0")
+        hist_n = _env_int("AGENT_OS_SESSION_HISTORY_MAX_MESSAGES", 20, min_value=0)
 
         enable_const = os.getenv("AGENT_OS_ENABLE_CONSTITUTIONAL", "1").lower() not in (
             "0",
@@ -115,7 +131,7 @@ class Settings:
             openai_api_base=os.getenv("OPENAI_API_BASE"),
             mem0_api_key=os.getenv("MEM0_API_KEY"),
             mem0_host=os.getenv("MEM0_HOST"),
-            snapshot_every_n_turns=int(os.getenv("AGENT_OS_SNAPSHOT_EVERY_N_TURNS", "5")),
+            snapshot_every_n_turns=_env_int("AGENT_OS_SNAPSHOT_EVERY_N_TURNS", 5),
             local_memory_path=Path(
                 os.getenv("AGENT_OS_LOCAL_MEMORY_PATH", "data/local_memory.json")
             ),
@@ -161,7 +177,7 @@ class Settings:
             task_memory_sqlite_path=Path(
                 os.getenv("AGENT_OS_TASK_MEMORY_DB_PATH", "data/task_memory.db")
             ),
-            task_summary_max_chars=int(os.getenv("AGENT_OS_TASK_SUMMARY_MAX_CHARS", "800")),
+            task_summary_max_chars=_env_int("AGENT_OS_TASK_SUMMARY_MAX_CHARS", 800, min_value=1),
         )
 
 

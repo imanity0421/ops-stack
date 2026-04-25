@@ -5,8 +5,30 @@ import re
 from agent_os.memory.models import MemoryLane
 
 # 启发式：辅助选择 record_* 工具，不替代模型判断。
-_TASK_HINTS = ("这次", "这篇", "本稿", "本方案", "本版", "交付物", "这版", "反馈", "稿子", "方案里")
-_ATTR_HINTS = ("以后", "长期", "一直", "偏好", "不要", "客户是", "我们是", "公司名", "品类", "渠道")
+_TASK_HINTS = (
+    "这次",
+    "本次",
+    "当前任务",
+    "本方案",
+    "本版",
+    "交付物",
+    "这版",
+    "反馈",
+    "当前交付",
+    "方案里",
+)
+_ATTR_HINTS = (
+    "以后",
+    "长期",
+    "一直",
+    "偏好",
+    "不要",
+    "主体是",
+    "我们是",
+    "组织名",
+    "稳定约束",
+    "默认流程",
+)
 
 
 def suggest_memory_lane(text: str) -> tuple[MemoryLane | None, str]:
@@ -21,7 +43,7 @@ def suggest_memory_lane(text: str) -> tuple[MemoryLane | None, str]:
     attr_score = sum(1 for h in _ATTR_HINTS if h in t)
 
     # 强信号：明确任务反馈句式
-    if re.search(r"(这|本)(次|篇|稿|版)", t):
+    if re.search(r"(这|本)(次|版)|当前任务|当前交付", t):
         task_score += 2
     if re.search(r"以后|长期|一直", t):
         attr_score += 2

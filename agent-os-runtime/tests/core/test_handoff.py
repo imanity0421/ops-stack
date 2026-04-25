@@ -28,6 +28,6 @@ def test_handoff_valid_summary(tmp_path: Path) -> None:
     )
     lines = load_handoff_instruction_lines(p)
     assert len(lines) == 3
-    assert "课程条目数=2" in lines[0]
+    assert "条目数=2" in lines[0]
     assert "校验通过=1" in lines[0]
     assert "未通过=1" in lines[0]

@@ -76,7 +76,7 @@
 ### 新增
 
 - **MCP 探针（默认 fixture）**：包内 `resources/mcp_probe_default.json`；环境变量 **`AGENT_OS_MCP_PROBE_FIXTURE_PATH`** 可覆盖；Agent 工具 **`fetch_probe_context`**；可选 **`pip install -e ".[mcp]"`** 后运行 **`agent-os-runtime mcp-probe-server`** 或 **`python -m agent_os.mcp`**（stdio MCP，工具 `get_probe_snapshot`）。
-- **端到端 Evaluator（规则门）**：`agent_os.evaluator.e2e`；CLI **`agent-os-runtime eval <case.json>`**（仅 Golden rules，无 LLM）；示例 `tests/fixtures/e2e_eval_case.json`。
+- **端到端 Evaluator（规则门）**：`agent_os.evaluator.e2e`；CLI **`agent-os-runtime eval <case.json>`**（仅 Golden rules，无 LLM）；示例 `tests/core/fixtures/e2e_eval_case.json`。
 - **离线领域知识（无 Neo4j）**：`agent_os.knowledge.jsonl_append`；CLI **`agent-os-runtime knowledge-append-jsonl -o path.jsonl --client-id X --text ...`**。
 - **离线 Graphiti 写入（需 Neo4j + OpenAI）**：`knowledge/graphiti_ingest.py`；CLI **`agent-os-runtime graphiti-ingest episodes.json`**；**`--dry-run`** 仅校验 JSON；示例 `docs/examples/graphiti_episodes.example.json`。
 - **`doctor`**：检查 **`AGENT_OS_MCP_PROBE_FIXTURE_PATH`**。
@@ -96,7 +96,7 @@
 
 ### 新增
 
-- **`AGENT_OS_HANDOFF_MANIFEST_PATH` 注入 Agent**：`get_agent` 读取 `handbook_handoff.json` 摘要写入系统指令（课数、校验通过/失败、时间、schema 引用）。
+- **`AGENT_OS_HANDOFF_MANIFEST_PATH` 注入 Agent**：`get_agent` 读取 `handbook_handoff.json` 摘要写入系统指令（条目数、校验通过/失败、时间、schema 引用）。
 - **Golden rules（可选）**：环境变量 **`AGENT_OS_GOLDEN_RULES_PATH`** 指向 JSON 数组（`pattern` + `message` + 可选 `id`）；工具 **`check_delivery_text`**；示例 `data/golden_rules.example.json`。
 - **记忆槽启发式工具**：**`suggest_memory_lane`**（不写入存储，辅助选择 `record_*`）。
 - **`doctor`**：检查 `AGENT_OS_GOLDEN_RULES_PATH` 文件是否存在。
@@ -149,7 +149,7 @@
 ### 新增
 
 - 阶段 **(a)** 垂直切片：**Agno Agent + Mem0 + 本地降级 + MemoryController + Hindsight JSONL 占位**。
-- CLI：`python -m agent-os-runtime`。
+- CLI：`python -m agent_os` 或安装后的 `agent-os-runtime`。
 - 工程文档：`ENGINEERING.md`、`ARCHITECTURE.md`、`OPERATIONS.md`。
 
 ### 说明

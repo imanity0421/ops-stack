@@ -80,7 +80,7 @@ pre-commit run --all-files
 
 多 worker / 多机部署时，**不要**在每台机各自写本地 Sqlite，应设 **`AGENT_OS_SESSION_DB_URL`** 指向**共享** Postgres 或 Redis（与 Agno 支持的后端一致）。Web 示例中 `/chat` 的 **`session_id`** 须前后端稳定一致（F5 后仍从 `localStorage` 带上；进程重启后可用 `GET /api/session/messages` 拉取转录，见 `examples/web_chat_fastapi.py`）。
 
-**P1 策划类结构化输出**：内置 skill **`planning_draft`**（`--skill planning_draft` 或 Web 传 `skill_id`）在 manifest 中声明 **`output_mode: structured_v1`**，由 Agno 以 Pydantic 强类型输出（见 [ENGINEERING.md](ENGINEERING.md) §3.7）；长文放返回 JSON 的 **`body_markdown`** 字段。
+**P1 结构化输出**：内置 skill **`planning_draft`**（`--skill planning_draft` 或 Web 传 `skill_id`）在 manifest 中声明 **`output_mode: structured_v1`**，由 Agno 以 Pydantic 强类型输出（见 [ENGINEERING.md](ENGINEERING.md) §3.7）；长文放返回 JSON 的 **`body_markdown`** 字段。
 
 **P2 可观测（Web）**：`examples/web_chat_fastapi.py` 对 **`/chat`** 在请求结束后写 **一条** `AGENT_OS_OBS` 前缀日志，含 `request_id`（与头 **`X-Request-ID`** 一致）、`session_id`、`model`、`tools`（分号拼接）、`elapsed_ms`、`tok_in`/`tok_out`/`tok_total`（来自 Agno RunMetrics，作趋势粗算）。grep：`AGENT_OS_OBS route=/chat`。
 
@@ -100,7 +100,9 @@ agent-os-runtime doctor --strict
 ## 运行 CLI
 
 ```bash
-python -m agent-os-runtime --client-id my_client
+agent-os-runtime --client-id my_client
+# 或在源码树未安装包时：
+PYTHONPATH=src python -m agent_os --client-id my_client
 ```
 
 - `--user-id`：多终端用户时区分。
@@ -112,7 +114,7 @@ python -m agent-os-runtime --client-id my_client
 
 ```bash
 # 端到端规则评测（仅 Golden rules，无 LLM）
-agent-os-runtime eval tests/fixtures/e2e_eval_case.json
+agent-os-runtime eval tests/core/fixtures/e2e_eval_case.json
 
 # 向 JSONL 降级知识库追加行（无需 Neo4j）
 agent-os-runtime knowledge-append-jsonl -o data/knowledge.jsonl --client-id my_client --skill default_agent --text "通用交付流程需先确认目标与约束..."
@@ -121,10 +123,10 @@ agent-os-runtime knowledge-append-jsonl -o data/knowledge.jsonl --client-id my_c
 agent-os-runtime graphiti-ingest docs/examples/graphiti_episodes.example.json --dry-run
 
 # 参考案例库：离线导入（需 pip install -e ".[asset_store]"，含 lancedb）
-# agent-os-runtime asset-ingest my_case.txt --client-id my_client --skill sample_skill
+# agent-os-runtime asset-ingest my_case.txt --client-id my_client --skill default_agent
 # 删除单条或按 tenant+skill 清空（回退垃圾入库）
 # agent-os-runtime asset-rm --case-id <uuid>
-# agent-os-runtime asset-rm --client-id my_client --skill sample_skill --all-skill
+# agent-os-runtime asset-rm --client-id my_client --skill default_agent --all-skill
 
 # MCP 探针 stdio 服务（需 pip install -e ".[mcp]"）
 agent-os-runtime mcp-probe-server

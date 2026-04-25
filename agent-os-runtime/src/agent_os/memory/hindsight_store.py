@@ -70,11 +70,11 @@ class HindsightStore:
         temporal_grounding: bool = True,
     ) -> list[str]:
         """检索反馈与教训（Hindsight），按简单词重叠排序。"""
-        if not self._path.exists():
+        if not self._path.is_file():
             return []
         qtokens = set(query.lower().split())
         scored: list[tuple[int, str]] = []
-        for line in self._path.read_text(encoding="utf-8").splitlines():
+        for line in self._path.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -82,11 +82,15 @@ class HindsightStore:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(row, dict):
+                continue
             if row.get("client_id") != client_id:
                 continue
             if row.get("type") not in ("feedback", "lesson"):
                 continue
             text = row.get("text") or ""
+            if not isinstance(text, str):
+                continue
             if not text:
                 continue
             recorded = row.get("recorded_at") or row.get("created_at") or "记录时间未知"

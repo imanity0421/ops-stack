@@ -14,6 +14,36 @@ from agent_os.util.retry import retry_sync
 logger = logging.getLogger(__name__)
 
 
+def _env_int(name: str, default: int, *, min_value: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        logger.warning("%s=%r 不是合法整数，使用默认值 %s", name, raw, default)
+        return default
+    if min_value is not None and value < min_value:
+        logger.warning("%s=%r 小于最小值 %s，使用默认值 %s", name, raw, min_value, default)
+        return default
+    return value
+
+
+def _env_float(name: str, default: float, *, min_value: float | None = None) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        logger.warning("%s=%r 不是合法数字，使用默认值 %s", name, raw, default)
+        return default
+    if min_value is not None and value < min_value:
+        logger.warning("%s=%r 小于最小值 %s，使用默认值 %s", name, raw, min_value, default)
+        return default
+    return value
+
+
 def _run_async(coro: Any) -> Any:
     """在同步工具内安全运行协程（避免与已有事件循环冲突）。"""
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -108,9 +138,9 @@ class GraphitiReadService:
             neo4j_uri=os.getenv("NEO4J_URI"),
             neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
             neo4j_password=os.getenv("NEO4J_PASSWORD"),
-            timeout_sec=float(os.getenv("AGENT_OS_GRAPHITI_SEARCH_TIMEOUT_SEC", "20")),
-            max_results=int(os.getenv("AGENT_OS_GRAPHITI_MAX_RESULTS", "12")),
-            bfs_max_depth=int(os.getenv("AGENT_OS_GRAPHITI_BFS_MAX_DEPTH", "2")),
+            timeout_sec=_env_float("AGENT_OS_GRAPHITI_SEARCH_TIMEOUT_SEC", 20.0, min_value=0.1),
+            max_results=_env_int("AGENT_OS_GRAPHITI_MAX_RESULTS", 12, min_value=1),
+            bfs_max_depth=_env_int("AGENT_OS_GRAPHITI_BFS_MAX_DEPTH", 2, min_value=0),
             fallback=KnowledgeJsonlFallback(fallback_path),
         )
 

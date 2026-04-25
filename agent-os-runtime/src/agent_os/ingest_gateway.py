@@ -68,14 +68,17 @@ def run_ingest_v1(
             user_id=user_id,
             text=raw,
             fact_type=fact_type,
+            source=source or "ingest_gateway",
         )
         r = controller.ingest_user_fact(fact)
         return {
-            "status": "ok",
+            "status": "rejected" if r.policy_rejected else "ok",
             "target": t,
             "written_to": list(r.written_to),
             "dedup_skipped": r.dedup_skipped,
             "detail": r.dedup_reason,
+            "policy_rejected": r.policy_rejected,
+            "policy_reason": r.policy_reason,
         }
 
     if t == "hindsight":
@@ -88,14 +91,17 @@ def run_ingest_v1(
             text=raw,
             fact_type="feedback",
             task_id=task_id,
+            source=source or "ingest_gateway",
         )
         r = controller.ingest_user_fact(fact)
         return {
-            "status": "ok",
+            "status": "rejected" if r.policy_rejected else "ok",
             "target": t,
             "written_to": list(r.written_to),
             "dedup_skipped": r.dedup_skipped,
             "detail": r.dedup_reason,
+            "policy_rejected": r.policy_rejected,
+            "policy_reason": r.policy_reason,
         }
 
     # asset_store

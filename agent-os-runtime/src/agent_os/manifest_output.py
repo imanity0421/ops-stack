@@ -13,12 +13,12 @@ STRUCTURED_V1 = "structured_v1"
 
 class PlanStructuredV1(BaseModel):
     """
-    策划/提纲类交付：提纲与长文**分离**，避免单段超深 JSON。
+    结构化文档/提纲类交付：提纲与长文**分离**，避免单段超深 JSON。
 
     模型返回中 ``body_markdown`` 可承载长正文；主字段保持可解析的短结构。
     """
 
-    title: str = Field(..., min_length=1, description="策划标题或主命题")
+    title: str = Field(..., min_length=1, description="标题或核心命题")
     outline: list[str] = Field(
         ...,
         min_length=1,
@@ -36,11 +36,17 @@ class PlanStructuredV1(BaseModel):
     @field_validator("outline", mode="before")
     @classmethod
     def _coerce_outline(cls, v: Any) -> list[str]:
+        items: list[str]
         if isinstance(v, str):
-            return [v] if v.strip() else []
-        if v is None:
-            return []
-        return list(v)
+            items = [v.strip()] if v.strip() else []
+        elif v is None:
+            items = []
+        else:
+            try:
+                items = [str(x).strip() for x in v if str(x).strip()]
+            except TypeError:
+                items = [str(v).strip()] if str(v).strip() else []
+        return items or ["（未生成提纲）"]
 
 
 def resolve_structured_output_model(

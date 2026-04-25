@@ -53,7 +53,7 @@ def _model_id() -> str:
 
 
 def _model_from_manifest(manifest: object | None, settings: Settings) -> OpenAIChat:
-    """创建 OpenAI 兼容客户端；必须传入 Settings 以应用 OPENAI_API_BASE（4zapi 等中转）。"""
+    """创建 OpenAI 兼容客户端；必须传入 Settings 以应用 OPENAI_API_BASE（自定义网关等）。"""
     mid = _model_id()
     if manifest is not None:
         m = getattr(manifest, "model", None)

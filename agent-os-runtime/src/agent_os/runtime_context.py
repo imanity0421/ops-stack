@@ -67,6 +67,6 @@ def build_ephemeral_instruction(ctx: EphemeralContext) -> str:
         f"- 入口：{ctx.entrypoint}\n"
         f"- 当前 skill_id：{ctx.skill_id}\n"
         f"- client_id：{ctx.client_id}；user_id：{uid}\n"
-        "- 以上信息只用于本轮推理与排期判断，不代表长期客户事实；"
+        "- 以上信息只用于本轮推理与排期判断，不代表长期事实；"
         "不得仅因本段内容调用记忆写入工具。"
     )

@@ -44,6 +44,19 @@ def _format_memory_hit(hit: Any, *, temporal_grounding: bool) -> str:
     return f"[记录于 {recorded} | 来源 {source}] {text}"
 
 
+def _bounded_int(value: object, *, default: int, lower: int, upper: int) -> int:
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        parsed = default
+    return max(lower, min(parsed, upper))
+
+
+def _clean_required_text(value: str) -> str | None:
+    text = (value or "").strip()
+    return text or None
+
+
 def build_memory_tools(
     controller: MemoryController,
     client_id: str,
@@ -71,20 +84,25 @@ def build_memory_tools(
     @tool(
         name="record_client_fact",
         description=(
-            "【特权写入】仅记录长期有效、未来多次任务都应复用的客户事实"
-            "（公司名、品类、价格带、长期渠道等）。禁止记录玩笑、临时任务、模糊推测、一次性素材；"
+            "【特权写入】仅记录长期有效、未来多次任务都应复用的主体事实"
+            "（组织名、稳定约束、默认流程、长期禁忌等）。禁止记录玩笑、临时任务、模糊推测、一次性素材；"
             "不确定时不要调用。写入 Mem0。"
         ),
     )
     def record_client_fact(fact_text: str) -> str:
+        text = _clean_required_text(fact_text)
+        if text is None:
+            return "rejected: empty_text"
         fact = UserFact(
             lane=MemoryLane.ATTRIBUTE,
             client_id=client_id,
             user_id=user_id,
-            text=fact_text,
+            text=text,
             fact_type="attribute",
         )
         r = controller.ingest_user_fact(fact)
+        if r.policy_rejected:
+            return f"policy_rejected: {r.policy_reason or r.dedup_reason or 'unknown'}"
         if r.dedup_skipped:
             return "duplicate_skip"
         return f"ok: {r.written_to}"
@@ -92,19 +110,24 @@ def build_memory_tools(
     @tool(
         name="record_client_preference",
         description=(
-            "【特权写入】仅记录客户明确表达的稳定偏好、禁忌或审美规则"
+            "【特权写入】仅记录用户或对话方明确表达的稳定偏好、禁忌或判断规则"
             "（默认语气、长期不要做的表达等）。禁止记录“这次先...”等一次性要求；不确定时不要调用。写入 Mem0。"
         ),
     )
     def record_client_preference(preference_text: str) -> str:
+        text = _clean_required_text(preference_text)
+        if text is None:
+            return "rejected: empty_text"
         fact = UserFact(
             lane=MemoryLane.ATTRIBUTE,
             client_id=client_id,
             user_id=user_id,
-            text=preference_text,
+            text=text,
             fact_type="preference",
         )
         r = controller.ingest_user_fact(fact)
+        if r.policy_rejected:
+            return f"policy_rejected: {r.policy_reason or r.dedup_reason or 'unknown'}"
         if r.dedup_skipped:
             return "duplicate_skip"
         return f"ok: {r.written_to}"
@@ -122,24 +145,29 @@ def build_memory_tools(
         deliverable_type: str | None = None,
         impact_on_preference: bool = False,
     ) -> str:
+        text = _clean_required_text(feedback_text)
+        if text is None:
+            return "rejected: empty_text"
         fact = UserFact(
             lane=MemoryLane.TASK_FEEDBACK,
             client_id=client_id,
             user_id=user_id,
             task_id=task_id,
             deliverable_type=deliverable_type,
-            text=feedback_text,
+            text=text,
             fact_type="feedback",
             impact_on_preference=impact_on_preference,
         )
         r = controller.ingest_user_fact(fact)
+        if r.policy_rejected:
+            return f"policy_rejected: {r.policy_reason or r.dedup_reason or 'unknown'}"
         if r.dedup_skipped:
             return "duplicate_skip"
         return f"ok: {r.written_to}"
 
     @tool(
         name="search_client_memory",
-        description="仅检索 Mem0 中的客户画像与事实（第一层）。完整检索请优先用 retrieve_ordered_context。",
+        description="仅检索 Mem0 中的主体画像与事实（第一层）。完整检索请优先用 retrieve_ordered_context。",
     )
     def search_client_memory(query: str) -> str:
         hits = controller.search_profile(query, client_id=client_id, user_id=user_id, limit=8)
@@ -167,7 +195,7 @@ def build_memory_tools(
         name="search_reference_cases",
         description="检索参考案例库（Asset Store，整案 few-shot 语感参考）。运行时仅检索，不做清洗与入库治理。",
     )
-    def search_reference_cases(query: str, limit: int = 3, include_raw: bool = False) -> str:
+    def search_reference_cases(query: str, limit: Any = 3, include_raw: bool = False) -> str:
         if not enable_asset_store or asset_store is None:
             return "（当前未启用案例库 Asset Store）"
         from agent_os.knowledge.asset_store import format_hits_for_agent
@@ -177,7 +205,7 @@ def build_memory_tools(
             client_id=client_id,
             user_id=user_id,
             skill_id=skill_id,
-            limit=max(1, min(int(limit), 6)),
+            limit=_bounded_int(limit, default=3, lower=1, upper=6),
             include_raw=bool(include_raw),
         )
         return format_hits_for_agent(
@@ -206,13 +234,13 @@ def build_memory_tools(
 
     @tool(
         name="retrieve_ordered_context",
-        description="按固定顺序**检索**上下文：① Mem0 客户画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）④ Asset Store 参考案例（若已配置）。多源冲突时如何整合到最终回复，须遵守系统指令中的「宪法·冲突解决序」（与检索顺序不同）。回答策略/方案类问题前应优先调用本工具。",
+        description="按固定顺序**检索**上下文：① Mem0 主体画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）④ Asset Store 参考案例（若已配置）。多源冲突时如何整合到最终回复，须遵守系统指令中的「宪法·冲突解决序」（与检索顺序不同）。回答策略/方案类问题前应优先调用本工具。",
     )
     def retrieve_ordered_context(query: str) -> str:
         blocks: list[str] = []
         mem = controller.search_profile(query, client_id=client_id, user_id=user_id, limit=8)
         blocks.append(
-            "## ① 客户画像 (Mem0)\n"
+            "## ① 主体画像 (Mem0)\n"
             + (
                 "\n---\n".join(
                     _format_memory_hit(h, temporal_grounding=enable_temporal_grounding) for h in mem
@@ -283,7 +311,7 @@ def build_memory_tools(
 
         @tool(
             name="check_delivery_text",
-            description="按 AGENT_OS_GOLDEN_RULES_PATH 加载的正则规则检查交付文案是否命中禁忌表述。",
+            description="按 AGENT_OS_GOLDEN_RULES_PATH 加载的正则规则检查交付文本是否命中禁忌表述。",
         )
         def check_delivery_text(text: str) -> str:
             v = check_violations(text, rules)
@@ -308,7 +336,7 @@ def build_memory_tools(
 
         @tool(
             name="check_skill_compliance_text",
-            description="按 AGENT_OS_SKILL_COMPLIANCE_DIR/<skill_id>.json 校验文案是否违反该 skill 硬规则（与 asset-ingest 入库合规同源）。",
+            description="按 AGENT_OS_SKILL_COMPLIANCE_DIR/<skill_id>.json 校验交付文本是否违反该 skill 硬规则（与 asset-ingest 入库合规同源）。",
         )
         def check_skill_compliance_text(text: str) -> str:
             from agent_os.knowledge.skill_compliance import check_skill_compliance

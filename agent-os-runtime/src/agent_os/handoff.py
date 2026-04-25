@@ -12,7 +12,7 @@ def load_handoff_instruction_lines(manifest_path: Path | None) -> list[str]:
     if manifest_path is None or not manifest_path.is_file():
         return []
     try:
-        raw = manifest_path.read_text(encoding="utf-8")
+        raw = manifest_path.read_text(encoding="utf-8-sig")
         data: Any = json.loads(raw)
     except (OSError, json.JSONDecodeError):
         return ["【制品清单】handbook_handoff.json 无法解析，已忽略。"]
@@ -32,7 +32,7 @@ def load_handoff_instruction_lines(manifest_path: Path | None) -> list[str]:
     n = len(lessons)
 
     parts = [
-        f"【制品清单】handoff_version={ver}，课程条目数={n}，校验通过={valid_n}，未通过={invalid_n}。"
+        f"【制品清单】handoff_version={ver}，条目数={n}，校验通过={valid_n}，未通过={invalid_n}。"
     ]
     if created:
         parts.append(f"清单生成时间（UTC）：{created}。")

@@ -192,7 +192,7 @@ def format_hits_for_agent(
             f"- 摘要：{_safe_short(h.summary, 400)}",
             f"- 风格指纹：{_safe_short(h.style_fingerprint, 500)}",
             f"- 标签：{', '.join(h.tags) if h.tags else '（无）'}",
-            f"- 平台/体裁/时长：{h.platform or '（无）'} / {h.content_type or '（无）'} / {h.duration_bucket or '（无）'}",
+            f"- 场景/类型/长度：{h.platform or '（无）'} / {h.content_type or '（无）'} / {h.duration_bucket or '（无）'}",
             "- 关键片段：\n  - "
             + (
                 "\n  - ".join(_safe_short(x, 220) for x in (h.key_excerpts or [])[:4])

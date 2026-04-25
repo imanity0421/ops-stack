@@ -38,6 +38,8 @@ def test_ingest_mem0_profile_fact(tmp_path: Path) -> None:
     assert "mem0" in r["written_to"] or "local" in str(r).lower()
     data = json.loads((tmp_path / "local.json").read_text(encoding="utf-8"))
     assert "c1" in str(data)
+    meta = data["users"]["c1"]["memories"][0]["metadata"]
+    assert meta["memory_source"] == "ingest_gateway"
 
 
 def test_ingest_hindsight_feedback(tmp_path: Path) -> None:
@@ -53,7 +55,8 @@ def test_ingest_hindsight_feedback(tmp_path: Path) -> None:
         controller=ctrl,
     )
     assert r["status"] == "ok"
-    assert (tmp_path / "h.jsonl").read_text(encoding="utf-8").strip()
+    row = json.loads((tmp_path / "h.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert row["source"] == "ingest_gateway"
 
 
 def test_ingest_hindsight_rejects_when_disabled(tmp_path: Path) -> None:
@@ -69,6 +72,23 @@ def test_ingest_hindsight_rejects_when_disabled(tmp_path: Path) -> None:
             settings=s,
             controller=ctrl,
         )
+
+
+def test_ingest_mem0_policy_rejection_reports_rejected(tmp_path: Path) -> None:
+    ctrl = _ctrl(tmp_path)
+    r = run_ingest_v1(
+        target="mem0_profile",
+        text="哈哈我开玩笑的，暂时随便说说",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        settings=Settings(),
+        controller=ctrl,
+        mem_kind="fact",
+    )
+    assert r["status"] == "rejected"
+    assert r["policy_rejected"] is True
+    assert r["written_to"] == []
 
 
 def test_ingest_asset_store_minimal_with_allow_llm_off(

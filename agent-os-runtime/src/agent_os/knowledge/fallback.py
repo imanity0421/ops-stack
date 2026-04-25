@@ -17,19 +17,27 @@ class KnowledgeJsonlFallback:
     def __init__(self, path: Path | None) -> None:
         self._path = path
         self._lines: list[dict[str, str]] = []
-        if path and path.exists():
-            for line in path.read_text(encoding="utf-8").splitlines():
+        if path and path.is_file():
+            for line in path.read_text(encoding="utf-8-sig").splitlines():
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    self._lines.append(json.loads(line))
+                    row = json.loads(line)
                 except json.JSONDecodeError:
                     logger.warning("跳过无效 JSON 行: %s", line[:80])
+                    continue
+                if not isinstance(row, dict):
+                    logger.warning("跳过非对象 JSON 行: %s", line[:80])
+                    continue
+                if not isinstance(row.get("group_id"), str) or not isinstance(row.get("text"), str):
+                    logger.warning("跳过字段类型不合法的 JSON 行: %s", line[:80])
+                    continue
+                self._lines.append(row)
 
     @property
     def enabled(self) -> bool:
-        return bool(self._path and self._path.exists() and self._lines)
+        return bool(self._path and self._path.is_file() and self._lines)
 
     def search(self, query: str, group_id: str, limit: int = 8) -> str:
         if not self._lines:
@@ -40,6 +48,8 @@ class KnowledgeJsonlFallback:
             if row.get("group_id") != group_id:
                 continue
             text = row.get("text", "")
+            if not isinstance(text, str):
+                continue
             if not text:
                 continue
             tokens = set(text.lower().split())

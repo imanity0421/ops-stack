@@ -1662,7 +1662,7 @@ def _page_debug_html(default_cid: str) -> str:
 
 <fieldset class="demo-panel demo-panel--emerald">
 <legend>系统指令栈（instructions）</legend>
-<p class="hint">下列顺序与 <code>get_agent</code> 注入一致（skill manifest、handoff、golden、Web 附加说明等）。调试时改文案请优先改 <code>AGENT_OS_MANIFEST_DIR</code> 下对应 <code>{{skill_id}}.json</code> 或内置配方。</p>
+<p class="hint">下列顺序与 <code>get_agent</code> 注入一致（skill manifest、handoff、golden、Web 附加说明等）。调试时改提示文本请优先改 <code>AGENT_OS_MANIFEST_DIR</code> 下对应 <code>{{skill_id}}.json</code> 或内置配方。</p>
 <ol id="instrList" class="instr-ol"></ol>
 </fieldset>
 

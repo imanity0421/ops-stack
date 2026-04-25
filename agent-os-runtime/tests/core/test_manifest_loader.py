@@ -32,6 +32,36 @@ def test_load_manifest(tmp_path: Path) -> None:
     assert enabled_tool_name_set(m) == {"retrieve_ordered_context", "fetch_probe_context"}
 
 
+def test_load_manifest_accepts_utf8_bom(tmp_path: Path) -> None:
+    p = tmp_path / "m.json"
+    p.write_text("\ufeff" + json.dumps({"system_prompt": "ok"}), encoding="utf-8")
+
+    assert load_agent_manifest(p) is not None
+
+
+def test_load_manifest_validation_error_returns_none(tmp_path: Path) -> None:
+    p = tmp_path / "bad.json"
+    p.write_text(
+        json.dumps({"enabled_tools": "not-a-list"}),
+        encoding="utf-8",
+    )
+    assert load_agent_manifest(p) is None
+
+
+def test_registry_skips_invalid_overlay_manifest(tmp_path: Path) -> None:
+    (tmp_path / "bad.json").write_text(
+        json.dumps({"enabled_tools": "not-a-list"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "good.json").write_text(
+        json.dumps({"system_prompt": "ok", "enabled_tools": ["fetch_probe_context"]}),
+        encoding="utf-8",
+    )
+    reg = load_skill_manifest_registry(tmp_path)
+    assert "bad" not in reg
+    assert "good" in reg
+
+
 def test_skill_registry_has_builtin_default_agent() -> None:
     reg = load_skill_manifest_registry(None)
     assert "default_agent" in reg

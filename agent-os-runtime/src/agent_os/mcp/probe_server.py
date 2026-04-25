@@ -18,12 +18,6 @@ from agent_os.mcp.fixture_probe import format_probe_for_agent, load_probe_data
 
 
 def main(argv: list[str] | None = None) -> int:
-    try:
-        from mcp.server.fastmcp import FastMCP
-    except ImportError:
-        print('需要安装 MCP SDK：pip install -e ".[mcp]"', file=sys.stderr)
-        return 1
-
     p = argparse.ArgumentParser(description="agent-os-runtime MCP 探针（stdio）")
     p.add_argument(
         "--fixture",
@@ -32,6 +26,12 @@ def main(argv: list[str] | None = None) -> int:
         help="覆盖默认探针 JSON（默认取 AGENT_OS_MCP_PROBE_FIXTURE_PATH 或包内资源）",
     )
     args = p.parse_args(argv)
+
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError:
+        print('需要安装 MCP SDK：pip install -e ".[mcp]"', file=sys.stderr)
+        return 1
 
     settings = Settings.from_env()
     path = args.fixture or settings.mcp_probe_fixture_path

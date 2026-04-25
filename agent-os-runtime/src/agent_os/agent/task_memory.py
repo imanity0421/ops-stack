@@ -33,6 +33,17 @@ def fallback_task_title(message: str, *, max_chars: int = 24) -> str:
     return text[:max_chars]
 
 
+def _decode_invoked_skills(raw: str | None, *, fallback: str) -> list[str]:
+    try:
+        data = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        data = []
+    if not isinstance(data, list):
+        data = []
+    skills = [str(x) for x in data if isinstance(x, str) and x.strip()]
+    return skills or ([fallback] if fallback else [])
+
+
 @dataclass(frozen=True)
 class TaskSegment:
     task_id: str
@@ -231,7 +242,9 @@ class TaskMemoryStore:
             client_id=str(row["client_id"]),
             user_id=row["user_id"],
             primary_skill_id=str(row["primary_skill_id"]),
-            invoked_skills=list(json.loads(row["invoked_skills_json"] or "[]")),
+            invoked_skills=_decode_invoked_skills(
+                row["invoked_skills_json"], fallback=str(row["primary_skill_id"])
+            ),
             task_title=str(row["task_title"]),
             status=row["status"],
             created_at=str(row["created_at"]),
@@ -348,7 +361,9 @@ class TaskMemoryStore:
                     client_id=str(row["client_id"]),
                     user_id=row["user_id"],
                     primary_skill_id=str(row["primary_skill_id"]),
-                    invoked_skills=list(json.loads(row["invoked_skills_json"] or "[]")),
+                    invoked_skills=_decode_invoked_skills(
+                        row["invoked_skills_json"], fallback=str(row["primary_skill_id"])
+                    ),
                     task_title=str(row["task_title"]),
                     status=row["status"],
                     created_at=str(row["created_at"]),
@@ -365,7 +380,7 @@ def build_task_summary_instruction(summary: TaskSummary | None) -> str | None:
         return None
     return (
         "【当前任务前情提要】\n"
-        "用途：仅用于保持本 session 内当前 task 连贯；不代表长期客户事实，"
+        "用途：仅用于保持本 session 内当前 task 连贯；不代表长期事实，"
         "不得自动写入 Mem0/Hindsight/Asset/Graphiti。\n"
         f"- task_id：{summary.task_id}\n"
         f"- 覆盖消息数：{summary.covered_message_count}\n"

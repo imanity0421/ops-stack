@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from agent_os.agent.task_memory import (
@@ -97,3 +98,30 @@ def test_task_prompt_helpers(tmp_path: Path) -> None:
     assert "不得自动写入 Mem0" in summary_inst
     assert index_inst is not None
     assert "本 session 任务目录" in index_inst
+
+
+def test_task_memory_bad_invoked_skills_json_falls_back(tmp_path: Path) -> None:
+    db = tmp_path / "task.db"
+    store = TaskMemoryStore(db)
+    task = store.get_or_create_active_task(
+        session_id="s1",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        seed_message="任务产出优化",
+    )
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute(
+            "UPDATE task_segments SET invoked_skills_json = ? WHERE task_id = ?",
+            ("{not-json", task.task_id),
+        )
+
+    loaded = store.get_or_create_active_task(
+        session_id="s1",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        seed_message="继续",
+    )
+    assert loaded.invoked_skills == ["default_agent"]
+    assert store.task_index(session_id="s1")[0].invoked_skills == ["default_agent"]

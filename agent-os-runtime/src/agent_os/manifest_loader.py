@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,9 @@ def load_agent_manifest(path: Path | None) -> AgentManifestV1 | None:
     if path is None or not path.is_file():
         return None
     try:
-        raw: Any = json.loads(path.read_text(encoding="utf-8"))
+        raw: Any = json.loads(path.read_text(encoding="utf-8-sig"))
         return AgentManifestV1.model_validate(raw)
-    except (json.JSONDecodeError, OSError) as e:
+    except (json.JSONDecodeError, OSError, ValidationError) as e:
         logger.warning("无法加载 manifest 文件 %s: %s", path, e)
         return None
 

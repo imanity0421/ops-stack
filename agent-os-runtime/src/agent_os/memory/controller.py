@@ -35,8 +35,8 @@ class _Backend(Protocol):
     def snapshot_client_profile(self, client_id: str, user_id: str | None) -> None: ...
 
 
-def _fingerprint(client_id: str, lane: MemoryLane, text: str) -> str:
-    raw = f"{client_id}|{lane.value}|{text.strip().lower()}"
+def _fingerprint(client_id: str, user_id: str | None, lane: MemoryLane, text: str) -> str:
+    raw = f"{client_id}|{user_id or ''}|{lane.value}|{text.strip().lower()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
@@ -114,10 +114,9 @@ class MemoryController:
                         policy_reason=decision.reason,
                     )
 
-        fp = _fingerprint(fact.client_id, fact.lane, fact.text)
+        fp = _fingerprint(fact.client_id, fact.user_id, fact.lane, fact.text)
         if fp in self._recent_fingerprints:
             return MemoryWriteResult(dedup_skipped=True, dedup_reason="fingerprint_duplicate")
-        self._recent_fingerprints.add(fp)
 
         written: list[Any] = []
 
@@ -134,7 +133,7 @@ class MemoryController:
             }
             messages = [
                 {"role": "user", "content": fact.text},
-                {"role": "assistant", "content": "已记录客户事实或偏好。"},
+                {"role": "assistant", "content": "已记录长期事实或偏好。"},
             ]
             self._backend.add_messages(
                 messages=messages,
@@ -149,6 +148,8 @@ class MemoryController:
             self._hindsight.append_feedback(fact)
             written.append("hindsight")
 
+        if written:
+            self._recent_fingerprints.add(fp)
         return MemoryWriteResult(written_to=written)
 
     def search_profile(self, query: str, client_id: str, user_id: str | None, limit: int = 8):
@@ -172,5 +173,7 @@ class MemoryController:
         key = f"{client_id}::{user_id or ''}"
         n = self._turn_counters.get(key, 0) + 1
         self._turn_counters[key] = n
+        if self._snapshot_every_n <= 0:
+            return
         if n > 0 and n % self._snapshot_every_n == 0:
             self._backend.snapshot_client_profile(client_id, user_id)

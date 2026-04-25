@@ -58,7 +58,14 @@ class Mem0MemoryBackend:
 
         raw = retry_sync(_search, label="mem0.search")
         hits: List[MemorySearchHit] = []
-        items = raw if isinstance(raw, list) else raw.get("results") or raw.get("memories") or []
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            items = raw.get("results") or raw.get("memories") or []
+        else:
+            items = []
+        if not isinstance(items, list):
+            items = []
         for it in items:
             if isinstance(it, dict):
                 text = it.get("memory") or it.get("text") or it.get("content") or str(it)

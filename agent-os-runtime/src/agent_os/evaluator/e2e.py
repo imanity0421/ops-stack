@@ -64,7 +64,7 @@ def run_e2e_eval_from_dict(case: dict[str, Any]) -> E2EEvalReport:
 
 
 def run_e2e_eval_file(path: Path) -> E2EEvalReport:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict):
         raise ValueError("评测文件顶层须为 JSON 对象")
     return run_e2e_eval_from_dict(data)

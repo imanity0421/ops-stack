@@ -28,9 +28,9 @@ python scripts/backup_data.py --output-dir D:/archives/agent-os-runtime
 Mem0 侧用户记忆**无**本仓库专用「假导出 API」。运维方式：
 
 1. **有官方导出/控制台**：以 [Mem0 官方文档](https://docs.mem0.ai/) 与当前套餐说明为准，在控制台或官方 API 导出/迁移。
-2. **无自动化导出时**：在运营 SOP 中约定**周期性**人工导出或截屏留档，并记录**责任人与周期**；不以本仓库脚本**假装**已对接 Mem0 全量备份。
+2. **无自动化导出时**：在数据治理 SOP 中约定**周期性**人工导出或留档，并记录**责任人与周期**；不以本仓库脚本**假装**已对接 Mem0 全量备份。
 
-若仅使用 **本地 JSON 后端**（未配置 `MEM0_API_KEY`），则客户画像在 `data/local_memory.json`，已由 `backup_data.py` 覆盖。
+若仅使用 **本地 JSON 后端**（未配置 `MEM0_API_KEY`），则主体画像在 `data/local_memory.json`，已由 `backup_data.py` 覆盖。
 
 ## 恢复
 

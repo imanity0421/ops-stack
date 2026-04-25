@@ -40,6 +40,11 @@ def test_plan_structured_v1_roundtrip_five_times() -> None:
         PlanStructuredV1.model_validate_json(raw)
 
 
+def test_plan_structured_v1_coerces_empty_outline() -> None:
+    m = PlanStructuredV1.model_validate({"title": "标题", "outline": None, "body_markdown": "正文"})
+    assert m.outline == ["（未生成提纲）"]
+
+
 def test_resolve_structured_v1_from_manifest() -> None:
     m = AgentManifestV1(
         output_mode="structured_v1",

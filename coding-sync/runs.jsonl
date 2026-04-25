@@ -2,3 +2,24 @@
 {"ts": "2026-04-25T23:24:25+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff check src tests; python -m ruff format --check src tests examples; python -m pytest -q --tb=short", "exit_code": 0}
 {"ts": "2026-04-26T00:23:40+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff format src tests examples; python -m ruff check src tests; python -m ruff format --check src tests examples; python -m pytest -q --tb=short", "exit_code": 0}
 {"ts": "2026-04-26T00:42:00+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack\\agent-os-runtime", "command": "python -m ruff check src tests; python -m ruff format --check src tests; python -m pytest", "exit_code": 0}
+{"ts": "2026-04-26T01:08:00+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack\\agent-os-runtime", "command": "python -m ruff check src tests; python -m ruff format --check src tests; python -m pytest; PYTHONPATH=src python -m agent_os doctor; PYTHONPATH=src python -m agent_os graphiti-ingest docs/examples/graphiti_episodes.example.json --dry-run; PYTHONPATH=src python -m agent_os mcp-probe-server --help; PYTHONPATH=src python -m compileall -q src", "exit_code": 0}
+{"ts": "2026-04-26T01:22:00+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack\\agent-os-runtime", "command": "python -m ruff check src tests; python -m ruff format --check src tests; python -m pytest", "exit_code": 0}
+{"ts": "2026-04-26T01:34:00+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack\\agent-os-runtime", "command": "python -m ruff check src tests; python -m ruff format --check src tests; python -m pytest", "exit_code": 0}
+{"ts": "2026-04-26T01:56:39+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff check src tests", "exit_code": 0}
+{"ts": "2026-04-26T01:56:39+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff format --check src tests", "exit_code": 0}
+{"ts": "2026-04-26T01:56:40+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m pytest", "exit_code": 0}
+{"ts": "2026-04-26T02:03:17+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:03:18+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff format --check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:03:18+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m pytest", "exit_code": 0}
+{"ts": "2026-04-26T02:13:28+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:13:29+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff format --check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:13:29+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m pytest", "exit_code": 0}
+{"ts": "2026-04-26T02:20:16+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:20:16+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff format --check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:20:17+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m pytest", "exit_code": 0}
+{"ts": "2026-04-26T02:25:22+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:25:22+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff format --check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:25:23+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m pytest", "exit_code": 0}
+{"ts": "2026-04-26T02:28:48+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:28:49+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m ruff format --check src tests", "exit_code": 0}
+{"ts": "2026-04-26T02:28:49+08:00", "machine": "LAPTOP-VPIF7FP8", "cwd": "E:\\AI研发\\ops-stack", "command": "python -m pytest", "exit_code": 0}

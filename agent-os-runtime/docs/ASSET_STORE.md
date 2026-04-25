@@ -64,9 +64,9 @@
 
 - 检索相关
   - `tags: list[str]`（可枚举标签）
-  - `platform: str | None`
-  - `content_type: str | None`
-  - `duration_bucket: str | None`
+  - `platform: str | None`（通用含义：交付场景或使用环境）
+  - `content_type: str | None`（通用含义：内容类型）
+  - `duration_bucket: str | None`（通用含义：长度区间）
   - `retrieval_text: str`（用于 embedding）
   - `embedding: vector`（由 store 管理）
 
