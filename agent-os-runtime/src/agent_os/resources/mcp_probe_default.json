@@ -1,0 +1,14 @@
+{
+  "probe_version": "1.0",
+  "generated_utc": "2026-01-01T00:00:00Z",
+  "market_snapshot": {
+    "platform": "示例平台（fixture）",
+    "category": "general / demo",
+    "benchmark_ctr_range": "1.2% - 3.5%",
+    "note": "此为默认 fixture，非真实行情；生产环境请换接实时数据源或 MCP 服务。"
+  },
+  "risk_flags": [
+    "虚构粉丝或收益数据",
+    "绝对化疗效/收益承诺"
+  ]
+}

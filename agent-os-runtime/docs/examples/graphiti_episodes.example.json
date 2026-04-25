@@ -1,0 +1,12 @@
+{
+  "client_id": "demo_client",
+  "default_skill_id": "default_agent",
+  "episodes": [
+    {
+      "name": "lesson_general_intro",
+      "body": "交付方案应明确适用边界、成功条件与风险提示，避免夸大收益承诺。",
+      "source_description": "offline_ingest_fixture",
+      "source": "text"
+    }
+  ]
+}

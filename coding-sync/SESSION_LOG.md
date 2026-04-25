@@ -179,3 +179,39 @@
 - 模块 docstring 顺序；`observability.details` 聚合；`ChatOut` 增加 `reply_content_kind`/`structured`；`pyproject` 的 `dev` extra 增加 `lancedb`；`OPERATIONS` 安装说明。
 
 
+
+---
+
+## 2026-04-25T23:24:24+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：ops-agent P1.5 cognitive stability
+
+Implemented first batch of ops-agent P1.5 cognitive stability work: documented Ephemeral Metadata / Memory Policy / Temporal Grounding / Session Summarizer plan; kept Procedural Memory via Forge as pending_review-only TODO; added runtime_context prompt injection for cli/web/api; added Memory Policy gate and tool descriptions; added recorded_at/source metadata and temporal rendering for Mem0/Hindsight/Asset hits; updated env/docs/tests. Verified: python -m ruff check src tests; python -m ruff format --check src tests examples; python -m pytest -q --tb=short.
+
+
+---
+
+## 2026-04-26T00:23:40+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：ops-agent task-aware working memory
+
+Recorded Task-aware Working Memory design: session-local task_id, conservative boundary detection, candidate/confirmed states, limited retrospective reassignment, audit, debug visibility, and no cross-session task memory. Implemented first batch: ops_agent.agent.task_memory SQLite schema/store, task_id generation, message append, summary upsert/get, task index, prompt helpers; Settings task-memory flags; get_agent injection for current_task_summary and session_task_index; tests for store and prompt injection. Verified full: python -m ruff format src tests examples; python -m ruff check src tests; python -m ruff format --check src tests examples; python -m pytest -q --tb=short.
+
+
+---
+
+## 2026-04-26T00:26:50+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：ops-agent generic wording cleanup
+
+Removed scenario-specific wording from generic task-memory/memory-policy tests and one generic agent hint: replaced short-video /朋友圈/预算 style examples with neutral task/deliverable wording. Left intentional existing skill/domain assets (short_video manifest, skill-specific tests, ops-agent product docs/examples) unchanged. Verified: python -m ruff check src tests; python -m ruff format --check src tests examples; python -m pytest -q --tb=short.
+
+
+---
+
+## 2026-04-26T00:42:00+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime non-conservative cleanup
+
+Renamed runtime directory and package from ops-agent / ops_agent to agent-os-runtime / agent_os; renamed CLI entrypoint and env prefixes to AGENT_OS_*; removed built-in vertical/test manifests and old skill-specific test directories; kept only neutral default_agent and planning_draft manifests. Reworked skill-loader tests to use external manifest + in-memory sample skill package, moved core tests under tests/core, renamed probe tools to fetch_probe_context / get_probe_snapshot, and removed old project/domain wording from core code/tests/docs. Verified: python -m ruff check src tests; python -m ruff format --check src tests; python -m pytest.
+

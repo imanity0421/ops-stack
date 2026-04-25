@@ -1,8 +1,0 @@
-{
-  "manifest_version": "1.0",
-  "handbook_version": "0.0.0-toy",
-  "system_prompt": "你是用于验证 Skill 包加载的占位角色。可调用 ping_toy_skill 自检技能包；回答保持简短。",
-  "model": "gpt-4o-mini",
-  "agent_name": "ToySkillProbe",
-  "enabled_tools": []
-}
