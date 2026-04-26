@@ -63,7 +63,8 @@
 
 ## 6. 文档与链接
 
-- **独立仓库**中 `README.md` 里的 **`../PIPELINE.md`** 可能失效：可改为指向 monorepo 的 **绝对 URL**，或注明「仅 monorepo 内有效」。
+- 文档**阅读顺序**：见仓库根 [**`README.md`**](README.md) 的 **「文档与阅读顺序」**（与 `ops-stack` 关系、未完结项入口亦在该节）。
+- **独立仓库**中 `README.md` 里的 **`../PIPELINE.md`** 会失效：可忽略、改为内部管线 URL，或注明「仅原 monorepo 内存在」。
 - 架构与边界以 **`docs/ENGINEERING.md`** 为准；操作与变量表以 **`docs/OPERATIONS.md`** 为准。
 
 ---

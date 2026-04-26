@@ -162,7 +162,7 @@ def build_memory_tools(
         description=(
             "【特权写入】仅记录明确、可复盘、会影响后续方法的任务反馈或教训。"
             "禁止记录闲聊、情绪噪声、模糊夸奖或一次性改字需求。写入 Hindsight。"
-            "可选 supersedes_event_id：填入既有 Hindsight 行的 event_id 表示本条取代该条（检索时隐藏被取代行）。"
+            "可选 supersedes_event_id：填入既有 Hindsight 行的 event_id 表示本条在语义上取代该条；JSONL 不删旧行，检索时被取代行在排序中降权（见 HindsightRetrievalPolicy）。"
             "可选 weight_count（1–10000，默认 1）：同类合并统计权重。"
         ),
     )

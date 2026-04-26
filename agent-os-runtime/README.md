@@ -8,15 +8,24 @@ Agent OS Runtime：**Agno + Mem0 + Hindsight + Graphiti（只读）+ AsyncReview
 |------|------|
 | [**AGENTS.md**](AGENTS.md) | **跨机器与独立拷贝研发时的约束与自检清单**（勿破坏与 ①② 的契约、勿引入兄弟包 import） |
 
-## 权威文档
+## 文档与阅读顺序（人读 / AI 读）
 
-| 文档 | 内容 |
-|------|------|
-| [docs/ENGINEERING.md](docs/ENGINEERING.md) | **工程方案依据**：边界、架构、目录、契约、阶段规划、设计决策 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构总览与数据流（简图） |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | 安装、环境变量、本地运行与排障 |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本变更 |
-| [../PIPELINE.md](../PIPELINE.md)（`ops-stack` 根） | ①→②→③ 管线与命令摘要 |
+**只要一张表**：从上一行 `AGENTS.md` 看红线后，按优先级读下面文档即可；**不必**在 `docs/` 下再找第二个 README（已合并到本文件，避免与根目录重复）。
+
+| 优先级 | 文档 | 作用 |
+|--------|------|------|
+| 1 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 数据流、读写路径、检索顺序（短） |
+| 2 | [docs/ENGINEERING.md](docs/ENGINEERING.md) | **主权威**：模块边界、目录、契约、环境变量、ADR |
+| 3 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 环境变量**全表**、排障、`doctor` |
+| 4 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本与行为变化 |
+| 5 | [docs/MEMORY_SYSTEM_V2.md](docs/MEMORY_SYSTEM_V2.md) | 四层记忆（**已精简约读版**；未完结的 P3/P4 在文末） |
+| 可选 | [docs/AGENT_OS_ROADMAP.md](docs/AGENT_OS_ROADMAP.md) | Sprint/DoD 级规划（**与实现可能部分不同步，以代码为准**） |
+| 按需 | [docs/ASSET_STORE.md](docs/ASSET_STORE.md)、[docs/DATA_BACKUP.md](docs/DATA_BACKUP.md)、[docs/examples/](docs/examples/) | 案例库、备份、ingest/合宪样例 |
+| 外仓无 | [../PIPELINE.md](../PIPELINE.md) | **仅**本目录在 `ops-stack` 内时存在：①→②→③ 总管线；独立检出忽略 |
+
+**独立成仓时**：`src` **不** import 父仓库。①② `video-raw-ingest` / `ops-knowledge` 为**可选上游**，经 env/文件对接，**非**运行时硬依赖。
+
+**给助手的 3 行**：`get_agent` / `get_reasoning_agent` + `Settings.from_env`；`MemoryController` 为推荐写入口；Graphiti 在 Agent 路径**只读**；Hindsight = JSONL **append-only**，治理在**召回**（`HindsightRetrievalPolicy`，`supersedes` = 对旧行**降权**）。
 
 ## 快速开始
 

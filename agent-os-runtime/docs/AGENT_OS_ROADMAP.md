@@ -1,5 +1,7 @@
 # Agent OS 路线图（定版）— 实现流程与设计图
 
+**索引**：阅读顺序见仓库 [README.md](../README.md) §**文档与阅读顺序**。本文与代码落地进度**可能部分已完成、部分仍为规划**，以 [CHANGELOG.md](CHANGELOG.md) 与代码为准。若**嫌表太长**：可只读 [ENGINEERING.md](ENGINEERING.md) 与最近 CHANGELOG，本文件作 Sprint/DoD 备查即可。
+
 本文档是 **agent-os-runtime** 在「CLI + 最终 Web/API 对外、持续新增 Skill、通用任务型交付」目标下的**定版**实施蓝图，与 [ENGINEERING.md](ENGINEERING.md) 中的运行时边界一致，**不**覆盖账户/计费/多租户控制台等完整商业化（见 ENGINEERING §1.2）。
 
 ---

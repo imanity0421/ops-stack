@@ -1,5 +1,7 @@
 # Asset Store / 案例库（CaseLibrary）设计稿
 
+**索引**：阅读顺序见仓库 [README.md](../README.md) §文档与阅读顺序。
+
 本文档定义 agent-os-runtime 在「全局层按 user 存储参考案例库」需求下的最终落地方案：**整存整取**、用于 **Dynamic Few-Shot（语感参考）**，与 Mem0/Hindsight/Graphiti 并列为第四类存储能力。
 
 > 设计约束（来自产品/架构要求）

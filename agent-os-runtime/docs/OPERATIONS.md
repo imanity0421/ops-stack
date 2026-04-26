@@ -49,7 +49,7 @@ pre-commit run --all-files
 | `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | 可选；设置后启用 Graphiti 只读检索（需 `[graphiti]`） |
 | `AGENT_OS_KNOWLEDGE_FALLBACK_PATH` | 可选；JSONL 降级，格式见 `docs/examples/knowledge_fallback.example.jsonl` |
 | `AGENT_OS_HISTORICAL_PATH` | 可选；Hindsight JSONL 路径，默认 `data/hindsight.jsonl`（兼容 `AGENT_OS_HISTORICAL_STUB_PATH`） |
-| `AGENT_OS_HISTORICAL_ENABLE_FREQ_MERGE` | 默认 `1`；`0`/`false`/`no` 时关闭 Hindsight **同类合并与频次加分**（仍保留 **supersedes_event_id** 过滤）；见 [MEMORY_SYSTEM_V2.md](MEMORY_SYSTEM_V2.md) §Hindsight |
+| `AGENT_OS_HISTORICAL_ENABLE_FREQ_MERGE` | 默认 `1`；`0`/`false`/`no` 时关闭 Hindsight **同类合并与频次加分**（**仍**对 `supersedes_event_id` 命中行做**召回降权**）；见 [MEMORY_SYSTEM_V2.md](MEMORY_SYSTEM_V2.md) §Hindsight |
 | `AGENT_OS_ENABLE_HINDSIGHT` | 默认 `1`；设为 `0` 可完全关闭 Hindsight（不创建 store，不挂载相关工具） |
 | `AGENT_OS_ASYNC_REVIEW_ON_EXIT` | 默认 `1`；设为 `0` 关闭退出时复盘 |
 | `AGENT_OS_HANDOFF_MANIFEST_PATH` | 可选；`ops-knowledge manifest` 生成的 `handbook_handoff.json`；**运行时**会摘要注入 `get_agent` 指令 |

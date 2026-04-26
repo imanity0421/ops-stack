@@ -65,4 +65,4 @@ flowchart LR
 - 运行时主键为 **`skill_id`**（与 `AGENT_OS_DEFAULT_SKILL_ID`、各 manifest 文件名一致）。
 - **Graphiti / JSONL 领域知识**使用 **`graphiti_group_id(client_id, skill_id)`** 作为 `group_id`，与 **`agent-os-runtime graphiti-ingest`** 默认推导一致；**存量仅含旧 `sanitize_group_id(client_id)` 的数据需重新入库或迁移**。
 
-详细契约见 [ENGINEERING.md](ENGINEERING.md)。
+详细契约见 [ENGINEERING.md](ENGINEERING.md)。**从哪开始读**：[../README.md](../README.md) §文档与阅读顺序。

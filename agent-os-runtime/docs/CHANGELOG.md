@@ -4,12 +4,17 @@
 
 ## [Unreleased]
 
+### 文档
+
+- **文档入口合并**：原 `docs/README.md` 已撤并至仓库 [README.md](../README.md) §**文档与阅读顺序**（避免根目录与 `docs/` 双 README）；[AGENTS.md](../AGENTS.md) 与相关交叉链接已更新。
+- 统一 **Hindsight `supersedes_event_id`** 表述：**append-only 存储，召回层降权**（与 `HindsightRetrievalPolicy` 一致），修正 [ENGINEERING.md](ENGINEERING.md)、[OPERATIONS.md](OPERATIONS.md)、[MEMORY_SYSTEM_V2.md](MEMORY_SYSTEM_V2.md)、[examples/ingest_post_samples.md](examples/ingest_post_samples.md) 中旧版「从召回剔除/隐藏」等措辞。
+
 ### 改进
 
 - **Memory V2 编排**：`retrieve_ordered_context` 四层 Markdown 组装收敛至 `MemoryController.retrieve_ordered_context` + `agent_os.memory.ordered_context`；Mem0/Hindsight/Asset 块格式化提取到 `agent_os.memory.context_formatters`。
 - **Memory V2 验收测试**：补齐四层完整召回、Agent 工具入口、Graphiti legacy 开关、Hindsight 租户隔离、Asset scope 可见性与 Mem0 V2 metadata 落盘的最小验收覆盖。
 - **Mem0 检索治理**：`search_profile` 跨桶合并时对**相同正文**保留 `recorded_at`/`created_at` 更晚的命中；`ENGINEERING.md` 同步 Graphiti 系统分区 + legacy 只读、`AGENT_OS_GRAPHITI_*` 索引。
-- **Hindsight 频次 / 合并 / supersedes**：JSONL 支持 `supersedes_event_id`、`weight_count`；`search_lessons` 剔除被取代事件、按规范化正文合并桶并展示「同类×n，总权重×w」、对数频次加分；`AGENT_OS_HISTORICAL_ENABLE_FREQ_MERGE` 可关合并（仍保留 supersedes 过滤）；`UserFact` 增加对应字段。
+- **Hindsight 频次 / 合并 / supersedes**：JSONL 支持 `supersedes_event_id`、`weight_count`；`search_lessons` 对被 supersedes 的事件在排序中**降权**（append-only，不删行）、按规范化正文合并桶并展示「同类×n，总权重×w」、对数频次加分；`AGENT_OS_HISTORICAL_ENABLE_FREQ_MERGE` 可关合并（仍保留 supersedes **降权**计分）；`UserFact` 增加对应字段。
 - **摄入 / 工具透传**：`run_ingest_v1` 与 Web `POST /ingest`（`IngestV1In`）在 `target=hindsight` 时支持 `supersedes_event_id`、`weight_count`；工具 **`record_task_feedback`** 同步可选参数。
 - **Graphiti 权限持久化**：新增 `data/graphiti_entitlements.json` 语义与 `GraphitiEntitlements` 解析器；`search_domain_knowledge` 改为“文件优先、env 兜底”；CLI 新增 `graphiti-entitlements`（show/set/remove）。
 - **Graphiti 运维补强**：新增 `docs/examples/graphiti_entitlements.example.json`；`doctor` 增加权限文件结构与字段类型校验；Web 增加可选内网管理接口 `/api/admin/graphiti-entitlements*`（默认关闭，且限制本机访问）。
