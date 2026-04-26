@@ -6,6 +6,22 @@
 
 ### 改进
 
+- **Memory V2 编排**：`retrieve_ordered_context` 四层 Markdown 组装收敛至 `MemoryController.retrieve_ordered_context` + `agent_os.memory.ordered_context`；Mem0/Hindsight/Asset 块格式化提取到 `agent_os.memory.context_formatters`。
+- **Memory V2 验收测试**：补齐四层完整召回、Agent 工具入口、Graphiti legacy 开关、Hindsight 租户隔离、Asset scope 可见性与 Mem0 V2 metadata 落盘的最小验收覆盖。
+- **Mem0 检索治理**：`search_profile` 跨桶合并时对**相同正文**保留 `recorded_at`/`created_at` 更晚的命中；`ENGINEERING.md` 同步 Graphiti 系统分区 + legacy 只读、`AGENT_OS_GRAPHITI_*` 索引。
+- **Hindsight 频次 / 合并 / supersedes**：JSONL 支持 `supersedes_event_id`、`weight_count`；`search_lessons` 剔除被取代事件、按规范化正文合并桶并展示「同类×n，总权重×w」、对数频次加分；`AGENT_OS_HISTORICAL_ENABLE_FREQ_MERGE` 可关合并（仍保留 supersedes 过滤）；`UserFact` 增加对应字段。
+- **摄入 / 工具透传**：`run_ingest_v1` 与 Web `POST /ingest`（`IngestV1In`）在 `target=hindsight` 时支持 `supersedes_event_id`、`weight_count`；工具 **`record_task_feedback`** 同步可选参数。
+- **Graphiti 权限持久化**：新增 `data/graphiti_entitlements.json` 语义与 `GraphitiEntitlements` 解析器；`search_domain_knowledge` 改为“文件优先、env 兜底”；CLI 新增 `graphiti-entitlements`（show/set/remove）。
+- **Graphiti 运维补强**：新增 `docs/examples/graphiti_entitlements.example.json`；`doctor` 增加权限文件结构与字段类型校验；Web 增加可选内网管理接口 `/api/admin/graphiti-entitlements*`（默认关闭，且限制本机访问）。
+- **Graphiti 管理安全与审计**：Web 管理接口增加 token 鉴权（`AGENT_OS_WEB_ADMIN_API_TOKEN(S)` + `x-admin-token`/Bearer），CLI 与 Web 的 entitlements 变更统一写入审计 JSONL（`AGENT_OS_GRAPHITI_ENTITLEMENTS_AUDIT_PATH`）。
+- **Graphiti 权限热加载**：新增 `GraphitiEntitlementsProvider`，支持缓存 TTL（`AGENT_OS_GRAPHITI_ENTITLEMENTS_CACHE_TTL_SEC`）并在权限文件 mtime / env 变化时自动失效重载；`GraphitiReadService` 可手动 `invalidate_entitlements_cache()`。
+- **Graphiti 并发写保护**：权限文件写入改为锁文件互斥 + 原子替换（`os.replace`），审计日志 append 加锁；新增 `AGENT_OS_GRAPHITI_FILE_LOCK_TIMEOUT_SEC` 与并发测试覆盖。
+- **Graphiti 乐观并发控制**：权限文档新增 `revision`；CLI `graphiti-entitlements` 与 Web 管理写接口支持 `expected_revision` 冲突检测（CLI 冲突返回码 `2`，Web 返回 `409`），防止“最后写入覆盖”。
+- **冲突提示改进**：权限写冲突时返回 `expected/actual revision` 与重试提示（CLI stderr 与 Web 409 detail 结构化字段）。
+- **审计日志运维策略**：Graphiti 权限审计支持滚动切分与保留期（`AGENT_OS_GRAPHITI_ENTITLEMENTS_AUDIT_MAX_BYTES` / `..._MAX_FILES` / `..._RETENTION_DAYS`）。
+- **Web 管理接口测试**：新增 `tests/core/test_web_admin_api.py` 覆盖鉴权成功/失败、revision 冲突、审计落库链路。
+- **Web 管理接口幂等键**：支持 `Idempotency-Key`（同键同请求体返回缓存结果、不同请求体复用同键返回 `409`），减少网络重试导致的重复写与重复审计。
+- **Graphiti 权限后端收缩**：回退 `sqlite` / `postgres` entitlements 后端，当前阶段仅保留文件权限模型，避免 Memory V2 被权限平台化工作牵引。
 - **工程卫生**：模块 docstring 置于文件首（符合 PEP 236 + Ruff E402）；`observability` 在顶层 token 为 0 时聚合 ``RunMetrics.details``；Web ``/chat`` 增加 ``reply_content_kind`` / ``structured`` 以支持 ``planning_draft`` 等结构化输出；**可选依赖** ``dev`` 含 ``lancedb`` 便于全量测试。
 - **工程卫生（继续）**：``pyproject.toml`` 增加 ``[tool.ruff]``；CI 增加 ``ruff format --check``；全仓已 ``ruff format`` 对齐；Asset 入库单测改为显式 ``import lancedb``（缺依赖时失败而非 skip，与 ``.[dev]`` 一致）；``docs/OPERATIONS.md`` 默认安装改为 ``.[dev]`` 以匹配 CI。
 - **Pre-commit**：仓库根 ``.pre-commit-config.yaml``（``ruff-check`` + ``ruff-format``）；``.[dev]`` 含 ``pre-commit``；见 ``docs/OPERATIONS.md`` 启用 ``pre-commit install``。
@@ -26,6 +42,7 @@
 
 ### 文档
 
+- **Memory V2 运维**：`docs/OPERATIONS.md` 增补「Memory V2 运维」（环境变量、Graphiti legacy、`migrate_memory_v2`）；`MEMORY_SYSTEM_V2.md` 增补运维与迁移交叉说明。
 - **Agent OS 定版路线图**：新增 [docs/AGENT_OS_ROADMAP.md](AGENT_OS_ROADMAP.md)（Sprint 1–4、DoD、Mermaid 设计图与实现落点）；`ENGINEERING.md` §7.1 引用。
 
 ### 新增

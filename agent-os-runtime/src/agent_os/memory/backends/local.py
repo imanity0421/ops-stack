@@ -24,7 +24,7 @@ class LocalMemoryBackend:
             return self._data
         try:
             data = json.loads(self._path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
             logger.warning("本地记忆文件无法解析，使用空内存视图: %s", e)
             data = {}
         if not isinstance(data, dict):

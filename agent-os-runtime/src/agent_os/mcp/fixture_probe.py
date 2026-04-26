@@ -15,7 +15,7 @@ def _read_json_or_none(path: Path) -> dict[str, Any] | None:
     try:
         raw = path.read_text(encoding="utf-8-sig")
         data = json.loads(raw)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -42,7 +42,14 @@ def load_probe_data(fixture_path: Path | None) -> dict[str, Any]:
         data = json.loads(txt)
         if isinstance(data, dict):
             return data
-    except (FileNotFoundError, ModuleNotFoundError, OSError, KeyError, json.JSONDecodeError):
+    except (
+        FileNotFoundError,
+        ModuleNotFoundError,
+        OSError,
+        UnicodeDecodeError,
+        KeyError,
+        json.JSONDecodeError,
+    ):
         p = _builtin_probe_path()
         if p.is_file():
             data = _read_json_or_none(p)

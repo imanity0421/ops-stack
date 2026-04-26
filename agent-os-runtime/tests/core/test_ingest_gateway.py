@@ -38,8 +38,30 @@ def test_ingest_mem0_profile_fact(tmp_path: Path) -> None:
     assert "mem0" in r["written_to"] or "local" in str(r).lower()
     data = json.loads((tmp_path / "local.json").read_text(encoding="utf-8"))
     assert "c1" in str(data)
-    meta = data["users"]["c1"]["memories"][0]["metadata"]
+    meta = data["users"]["c1::__client_shared__"]["memories"][0]["metadata"]
+    assert meta["scope"] == "client_shared"
     assert meta["memory_source"] == "ingest_gateway"
+
+
+def test_ingest_mem0_profile_fact_with_user_id_stays_client_shared(tmp_path: Path) -> None:
+    ctrl = _ctrl(tmp_path)
+    r = run_ingest_v1(
+        target="mem0_profile",
+        text="客户固定沟通规则是所有交付先给结论再给依据。",
+        client_id="c1",
+        user_id="u1",
+        skill_id="default_agent",
+        settings=Settings(),
+        controller=ctrl,
+        mem_kind="fact",
+    )
+
+    assert r["status"] == "ok"
+    data = json.loads((tmp_path / "local.json").read_text(encoding="utf-8"))
+    assert "c1::__client_shared__" in data["users"]
+    assert "c1::u1" not in data["users"]
+    meta = data["users"]["c1::__client_shared__"]["memories"][0]["metadata"]
+    assert meta["scope"] == "client_shared"
 
 
 def test_ingest_hindsight_feedback(tmp_path: Path) -> None:
@@ -57,6 +79,57 @@ def test_ingest_hindsight_feedback(tmp_path: Path) -> None:
     assert r["status"] == "ok"
     row = json.loads((tmp_path / "h.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert row["source"] == "ingest_gateway"
+
+
+def test_ingest_hindsight_supersedes_and_weight(tmp_path: Path) -> None:
+    ctrl = _ctrl(tmp_path, hindsight=True)
+    s = Settings()
+    r0 = run_ingest_v1(
+        target="hindsight",
+        text="复盘结论：交付前必须二次核对关键数字与口径。",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        settings=s,
+        controller=ctrl,
+    )
+    assert r0["status"] == "ok"
+    prev = json.loads((tmp_path / "h.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    eid = prev["event_id"]
+    r1 = run_ingest_v1(
+        target="hindsight",
+        text="复盘结论：交付前必须二次核对关键数字与口径（已补充检查清单）。",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        settings=s,
+        controller=ctrl,
+        supersedes_event_id=eid,
+        weight_count=4,
+    )
+    assert r1["status"] == "ok"
+    lines = (tmp_path / "h.jsonl").read_text(encoding="utf-8").splitlines()
+    row1 = json.loads(lines[1])
+    assert row1.get("supersedes_event_id") == eid
+    assert row1.get("weight_count") == 4
+
+
+def test_ingest_hindsight_invalid_weight_count_falls_back_to_one(tmp_path: Path) -> None:
+    ctrl = _ctrl(tmp_path, hindsight=True)
+    r = run_ingest_v1(
+        target="hindsight",
+        text="复盘结论：遇到无效权重参数时应继续记录反馈，并按默认权重处理。",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        settings=Settings(),
+        controller=ctrl,
+        weight_count="bad",  # type: ignore[arg-type]
+    )
+
+    assert r["status"] == "ok"
+    row = json.loads((tmp_path / "h.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert "weight_count" not in row
 
 
 def test_ingest_hindsight_rejects_when_disabled(tmp_path: Path) -> None:

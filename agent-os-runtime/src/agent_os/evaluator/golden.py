@@ -6,6 +6,25 @@ from pathlib import Path
 from typing import Any
 
 
+def normalize_golden_rules(raw: Any) -> list[dict[str, Any]]:
+    """Return only rules that can actually be evaluated."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict) or "pattern" not in item or "message" not in item:
+            continue
+        pat = item.get("pattern")
+        if not isinstance(pat, str) or not pat:
+            continue
+        try:
+            re.compile(pat)
+        except re.error:
+            continue
+        out.append(item)
+    return out
+
+
 def load_golden_rules(path: Path | None) -> list[dict[str, Any]]:
     """从 JSON 数组加载规则；路径无效或格式错误则返回空列表。"""
     if path is None or not path.is_file():
@@ -13,15 +32,9 @@ def load_golden_rules(path: Path | None) -> list[dict[str, Any]]:
     try:
         raw = path.read_text(encoding="utf-8-sig")
         data = json.loads(raw)
-    except (OSError, json.JSONDecodeError, TypeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
         return []
-    if not isinstance(data, list):
-        return []
-    out: list[dict[str, Any]] = []
-    for item in data:
-        if isinstance(item, dict) and "pattern" in item and "message" in item:
-            out.append(item)
-    return out
+    return normalize_golden_rules(data)
 
 
 def check_violations(text: str, rules: list[dict[str, Any]]) -> list[str]:

@@ -34,6 +34,11 @@ X-Request-ID: demo-hs-1
 }
 ```
 
+可选字段（仅 `target=hindsight`）：
+
+- **`supersedes_event_id`**：字符串，指向本租户 Hindsight JSONL 中已有行的 **`event_id`**，表示本条取代该条（检索时隐藏被取代行）。
+- **`weight_count`**：整数 1–10000，写入统计权重（默认 1）；与检索侧「同类×n / 总权重」展示一致，见 `MEMORY_SYSTEM_V2.md`。
+
 ## 3. `target=asset_store`（参考案例库 / LanceDB）
 
 需 **`AGENT_OS_ENABLE_ASSET_STORE=1`**，且正文满足入库管线最小长度（默认约 200 字，见 `asset_ingest`）。无 **`lancedb`** 时接口会 500。

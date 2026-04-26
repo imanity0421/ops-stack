@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 AssetStatus = Literal["accepted", "quarantined", "rejected"]
+AssetScope = Literal["system", "client_shared", "user_private"]
+AssetType = Literal["style_reference", "source_material"]
+SYSTEM_GLOBAL_CLIENT_ID = "system_global"
 
 
 def normalize_raw_for_hash(raw: str) -> str:
@@ -29,10 +32,18 @@ def compute_content_hash(raw: str) -> str:
     return hashlib.sha256(normalize_raw_for_hash(raw).encode("utf-8")).hexdigest()
 
 
-def compute_dedup_key(client_id: str, skill_id: str, user_id: str | None, content_hash: str) -> str:
-    """租户 + skill + 用户作用域 + 正文指纹，唯一键（64 hex）。"""
+def compute_dedup_key(
+    client_id: str,
+    skill_id: str,
+    user_id: str | None,
+    content_hash: str,
+    *,
+    scope: str = "client_shared",
+    asset_type: str = "style_reference",
+) -> str:
+    """租户 + scope + asset_type + skill hint + 用户作用域 + 正文指纹，唯一键（64 hex）。"""
     u = user_id or ""
-    s = f"{client_id}\x00{skill_id}\x00{u}\x00{content_hash}"
+    s = f"{client_id}\x00{scope}\x00{asset_type}\x00{skill_id}\x00{u}\x00{content_hash}"
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
@@ -43,17 +54,28 @@ class AssetCase(BaseModel):
     """
 
     case_id: str = Field(..., min_length=6)
+    memory_version: str = "2.0"
+    scope: AssetScope = "client_shared"
+    asset_type: AssetType = "style_reference"
     client_id: str = Field(..., min_length=1)
     user_id: str | None = None
+    owner_user_id: str | None = None
+    #: 兼容字段：不再作为硬分区；仅表示主要 skill hint。
     skill_id: str = Field(..., min_length=1)
+    primary_skill_hint: str = "global"
+    applicable_skill_ids: list[str] = Field(default_factory=list)
+    skill_confidence: float | None = Field(None, ge=0.0, le=1.0)
     source: str | None = None
 
     raw_content: str = Field(..., min_length=1)
     summary: str = Field(..., min_length=1)
+    feature_summary: str | None = None
     style_fingerprint: str = Field(..., min_length=1)
     key_excerpts: list[str] = Field(default_factory=list)
 
     tags: list[str] = Field(default_factory=list)
+    style_tags: list[str] = Field(default_factory=list)
+    content_tags: list[str] = Field(default_factory=list)
     platform: str | None = None
     content_type: str | None = None
     duration_bucket: str | None = None
@@ -75,11 +97,18 @@ class AssetCase(BaseModel):
 class AssetSearchHit(BaseModel):
     case_id: str
     score: float | None = None
+    scope: AssetScope = "client_shared"
+    asset_type: AssetType = "style_reference"
     summary: str
+    feature_summary: str | None = None
     style_fingerprint: str
     key_excerpts: list[str] = Field(default_factory=list)
     raw_content: str | None = None
     tags: list[str] = Field(default_factory=list)
+    style_tags: list[str] = Field(default_factory=list)
+    content_tags: list[str] = Field(default_factory=list)
+    primary_skill_hint: str | None = None
+    applicable_skill_ids: list[str] = Field(default_factory=list)
     platform: str | None = None
     content_type: str | None = None
     duration_bucket: str | None = None
@@ -96,6 +125,7 @@ class AssetStore(Protocol):
         skill_id: str,
         limit: int = 4,
         include_raw: bool = False,
+        asset_type: AssetType | None = None,
     ) -> list[AssetSearchHit]: ...
 
     def upsert_many(self, cases: Sequence[AssetCase]) -> dict[str, Any]: ...
@@ -110,6 +140,7 @@ class AssetStore(Protocol):
         user_id: str | None,
         skill_id: str,
         l2_max: float,
+        asset_type: AssetType | None = None,
     ) -> str | None: ...
 
     def delete_by_case_id(self, case_id: str) -> dict[str, Any]: ...
@@ -135,17 +166,48 @@ def _row_in_scope(
     client_id: str,
     user_id: str | None,
     skill_id: str,
+    asset_type: AssetType | None = None,
     only_accepted: bool = True,
 ) -> bool:
-    if row.get("client_id") != client_id or row.get("skill_id") != skill_id:
-        return False
     if only_accepted and row.get("status") != "accepted":
+        return False
+    if asset_type is not None and (row.get("asset_type") or "style_reference") != asset_type:
+        return False
+    scope = row.get("scope")
+    if scope == "system" or row.get("client_id") == SYSTEM_GLOBAL_CLIENT_ID:
+        return True
+    if row.get("client_id") != client_id:
+        return False
+    if scope == "user_private":
+        return bool(user_id) and (row.get("owner_user_id") or row.get("user_id")) == user_id
+    if scope == "client_shared":
+        return True
+    # Legacy rows: skill_id was a hard partition and user_id encoded visibility.
+    if row.get("skill_id") != skill_id:
         return False
     ru = row.get("user_id")
     if user_id is not None:
         return ru == user_id
     # 未带 user 时：只检索「租户共享」案例（user_id 空），避免同租户多终端用户间串案
     return ru is None or ru == ""
+
+
+def _scope_rank(row: dict[str, Any], *, client_id: str, user_id: str | None) -> int:
+    scope = row.get("scope")
+    if (
+        scope == "user_private"
+        and user_id
+        and (row.get("owner_user_id") or row.get("user_id")) == user_id
+    ):
+        return 0
+    if scope == "client_shared" and row.get("client_id") == client_id:
+        return 1
+    if scope == "system" or row.get("client_id") == SYSTEM_GLOBAL_CLIENT_ID:
+        return 2
+    # Legacy tenant rows are closest to client_shared semantics.
+    if row.get("client_id") == client_id:
+        return 1
+    return 9
 
 
 def _row_to_hit(row: dict[str, Any], *, include_raw: bool) -> AssetSearchHit | None:
@@ -157,18 +219,49 @@ def _row_to_hit(row: dict[str, Any], *, include_raw: bool) -> AssetSearchHit | N
         tags = json.loads(row.get("tags") or "[]")
     except Exception:
         tags = []
+    try:
+        style_tags = json.loads(row.get("style_tags") or "[]")
+    except Exception:
+        style_tags = []
+    try:
+        content_tags = json.loads(row.get("content_tags") or "[]")
+    except Exception:
+        content_tags = []
+    try:
+        applicable_skill_ids = json.loads(row.get("applicable_skill_ids") or "[]")
+    except Exception:
+        applicable_skill_ids = []
     case_id = str(row.get("case_id") or "")
     summary = str(row.get("summary") or "")
     if not case_id or not summary:
         return None
+    scope = (
+        row.get("scope")
+        if row.get("scope") in ("system", "client_shared", "user_private")
+        else "client_shared"
+    )
+    atype = (
+        row.get("asset_type")
+        if row.get("asset_type") in ("style_reference", "source_material")
+        else "style_reference"
+    )
     return AssetSearchHit(
         case_id=case_id,
         score=float(row.get("_distance")) if row.get("_distance") is not None else None,
+        scope=scope,
+        asset_type=atype,
         summary=summary,
+        feature_summary=row.get("feature_summary"),
         style_fingerprint=str(row.get("style_fingerprint") or ""),
         key_excerpts=list(key_excerpts) if isinstance(key_excerpts, list) else [],
         raw_content=str(row.get("raw_content") or "") if include_raw else None,
         tags=list(tags) if isinstance(tags, list) else [],
+        style_tags=list(style_tags) if isinstance(style_tags, list) else [],
+        content_tags=list(content_tags) if isinstance(content_tags, list) else [],
+        primary_skill_hint=row.get("primary_skill_hint") or row.get("skill_id"),
+        applicable_skill_ids=list(applicable_skill_ids)
+        if isinstance(applicable_skill_ids, list)
+        else [],
         platform=row.get("platform"),
         content_type=row.get("content_type"),
         duration_bucket=row.get("duration_bucket"),
@@ -189,9 +282,14 @@ def format_hits_for_agent(
         lines = [
             f"### Case {i} | id={h.case_id}"
             + (f" | score={h.score:.4f}" if h.score is not None else ""),
+            f"- 资产类型/范围：{h.asset_type} / {h.scope}",
             f"- 摘要：{_safe_short(h.summary, 400)}",
+            f"- 检索特征：{_safe_short(h.feature_summary or '', 300) if h.feature_summary else '（无）'}",
             f"- 风格指纹：{_safe_short(h.style_fingerprint, 500)}",
             f"- 标签：{', '.join(h.tags) if h.tags else '（无）'}",
+            f"- 风格标签：{', '.join(h.style_tags) if h.style_tags else '（无）'}",
+            f"- 内容标签：{', '.join(h.content_tags) if h.content_tags else '（无）'}",
+            f"- Skill hint：{h.primary_skill_hint or '（无）'}",
             f"- 场景/类型/长度：{h.platform or '（无）'} / {h.content_type or '（无）'} / {h.duration_bucket or '（无）'}",
             "- 关键片段：\n  - "
             + (
@@ -218,8 +316,9 @@ class NullAssetStore:
         skill_id: str,
         limit: int = 4,
         include_raw: bool = False,
+        asset_type: AssetType | None = None,
     ) -> list[AssetSearchHit]:
-        _ = (query, client_id, user_id, skill_id, limit, include_raw)
+        _ = (query, client_id, user_id, skill_id, limit, include_raw, asset_type)
         return []
 
     def upsert_many(self, cases: Sequence[AssetCase]) -> dict[str, Any]:
@@ -237,8 +336,9 @@ class NullAssetStore:
         user_id: str | None,
         skill_id: str,
         l2_max: float,
+        asset_type: AssetType | None = None,
     ) -> str | None:
-        _ = (retrieval_text, client_id, user_id, skill_id, l2_max)
+        _ = (retrieval_text, client_id, user_id, skill_id, l2_max, asset_type)
         return None
 
     def delete_by_case_id(self, case_id: str) -> dict[str, Any]:
@@ -317,15 +417,25 @@ class LanceDbAssetStore:
             rows.append(
                 {
                     "case_id": c.case_id,
+                    "memory_version": c.memory_version,
+                    "scope": c.scope,
+                    "asset_type": c.asset_type,
                     "client_id": c.client_id,
                     "user_id": c.user_id,
+                    "owner_user_id": c.owner_user_id,
                     "skill_id": c.skill_id,
+                    "primary_skill_hint": c.primary_skill_hint,
+                    "applicable_skill_ids": json.dumps(c.applicable_skill_ids, ensure_ascii=False),
+                    "skill_confidence": c.skill_confidence,
                     "source": c.source,
                     "raw_content": c.raw_content,
                     "summary": c.summary,
+                    "feature_summary": c.feature_summary,
                     "style_fingerprint": c.style_fingerprint,
                     "key_excerpts": json.dumps(c.key_excerpts, ensure_ascii=False),
                     "tags": json.dumps(c.tags, ensure_ascii=False),
+                    "style_tags": json.dumps(c.style_tags, ensure_ascii=False),
+                    "content_tags": json.dumps(c.content_tags, ensure_ascii=False),
                     "platform": c.platform,
                     "content_type": c.content_type,
                     "duration_bucket": c.duration_bucket,
@@ -383,6 +493,7 @@ class LanceDbAssetStore:
         user_id: str | None,
         skill_id: str,
         l2_max: float,
+        asset_type: AssetType | None = None,
     ) -> str | None:
         """对 retrieval_text 做向量近邻，在租户作用域内若 L2 距离小于阈值则视为近似重复。"""
         if not self._open_table():
@@ -394,7 +505,12 @@ class LanceDbAssetStore:
             if not isinstance(row, dict):
                 continue
             if not _row_in_scope(
-                row, client_id=client_id, user_id=user_id, skill_id=skill_id, only_accepted=True
+                row,
+                client_id=client_id,
+                user_id=user_id,
+                skill_id=skill_id,
+                asset_type=asset_type,
+                only_accepted=True,
             ):
                 continue
             d = row.get("_distance")
@@ -444,10 +560,15 @@ class LanceDbAssetStore:
         skill_id: str,
         limit: int = 4,
         include_raw: bool = False,
+        asset_type: AssetType | None = None,
     ) -> list[AssetSearchHit]:
         if not self._open_table():
             return []
-        qv = _embed_text_openai(query, cfg=self._embedding)
+        try:
+            qv = _embed_text_openai(query, cfg=self._embedding)
+        except Exception as e:
+            logger.warning("AssetStore query embedding failed, returning empty results: %s", e)
+            return []
         # 多取后仅在内存中按租户/用户过滤，避免无过滤回退导致串租户；不依赖 .where 方言
         over = max(limit * 30, 50)
         raw_list: list[dict[str, Any]] = []
@@ -457,14 +578,33 @@ class LanceDbAssetStore:
             logger.error("AssetStore vector search failed: %s", e)
             return []
 
-        hits: list[AssetSearchHit] = []
+        scoped_rows: list[dict[str, Any]] = []
         for row in raw_list:
             if not isinstance(row, dict):
                 continue
             if not _row_in_scope(
-                row, client_id=client_id, user_id=user_id, skill_id=skill_id, only_accepted=True
+                row,
+                client_id=client_id,
+                user_id=user_id,
+                skill_id=skill_id,
+                asset_type=asset_type,
+                only_accepted=True,
             ):
                 continue
+            scoped_rows.append(row)
+
+        scoped_rows.sort(
+            key=lambda r: (
+                _scope_rank(r, client_id=client_id, user_id=user_id),
+                0
+                if (r.get("skill_id") == skill_id or r.get("primary_skill_hint") == skill_id)
+                else 1,
+                float(r.get("_distance")) if r.get("_distance") is not None else 999999.0,
+            )
+        )
+
+        hits: list[AssetSearchHit] = []
+        for row in scoped_rows:
             hit = _row_to_hit(row, include_raw=include_raw)
             if hit is not None:
                 hits.append(hit)

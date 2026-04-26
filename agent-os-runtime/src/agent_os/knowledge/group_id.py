@@ -32,3 +32,12 @@ def graphiti_group_id(client_id: str, skill_id: str) -> str:
     a = sanitize_group_id(client_id)
     b = sanitize_group_id(skill_id)
     return f"{a}{_COMPOSITE_SEP}{b}"
+
+
+def system_graphiti_group_id(skill_id: str) -> str:
+    """
+    系统级干净知识图谱分区：仅按 skill/domain 分区。
+
+    ``client_id`` 不再表达客户自有图谱；调用方应在检索前做权限过滤。
+    """
+    return sanitize_group_id(skill_id)

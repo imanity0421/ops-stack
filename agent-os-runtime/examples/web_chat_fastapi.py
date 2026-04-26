@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """
 浏览器中试用 agent-os-runtime：FastAPI + 多轮 chat、手动记忆写入、结束对话与可选 Hindsight 复盘。
 
@@ -29,6 +30,9 @@ import json
 import logging
 import os
 import time
+import hmac
+import hashlib
+import threading
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -46,6 +50,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from agent_os.agent.factory import get_agent, new_session_id
 from agent_os.config import Settings
 from agent_os.ingest_gateway import run_ingest_v1
+from agent_os.knowledge.graphiti_entitlements import (
+    EntitlementsRevisionConflictError,
+    append_entitlements_audit,
+    load_entitlements_file,
+    update_entitlements_file,
+)
 from agent_os.manifest_loader import load_skill_manifest_registry, resolve_effective_skill_id
 from agent_os.observability import log_agent_run_obs
 from agent_os.knowledge.graphiti_reader import GraphitiReadService
@@ -69,6 +79,9 @@ _WEB_EXTRA_INSTRUCTIONS = [
 _bundles: dict[tuple[str, str, bool, str], tuple[Settings, MemoryController, Any]] = {}
 _no_knowledge = os.getenv("AGENT_OS_WEB_NO_KNOWLEDGE", "1").strip() in ("1", "true", "yes")
 _web_skill = os.getenv("AGENT_OS_WEB_SKILL_ID") or None
+
+_idempotency_cache_lock = threading.Lock()
+_idempotency_cache: dict[str, tuple[float, str, dict[str, Any]]] = {}
 
 
 def _env_slow() -> bool:
@@ -160,11 +173,165 @@ def _mem_uid(client_id: str, user_id: str | None) -> str:
     return f"{client_id}::{user_id}" if user_id else client_id
 
 
+def _load_local_memory_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"users": {}}
+    if not isinstance(data, dict):
+        return {"users": {}}
+    if not isinstance(data.get("users"), dict):
+        data["users"] = {}
+    return data
+
+
 def _resolve_under_agent_os(p: Path) -> Path:
     """Settings 里相对路径相对 agent-os-runtime 根目录。"""
     if p.is_absolute():
         return p
     return (_ROOT / p).resolve()
+
+
+def _graphiti_entitlements_path() -> Path:
+    raw = os.getenv(
+        "AGENT_OS_GRAPHITI_ENTITLEMENTS_PATH", "data/graphiti_entitlements.json"
+    ).strip()
+    return _resolve_under_agent_os(Path(raw))
+
+
+def _web_admin_enabled() -> bool:
+    return os.getenv("AGENT_OS_WEB_ENABLE_ADMIN_API", "0").strip().lower() in ("1", "true", "yes")
+
+
+def _web_admin_allowed_hosts() -> set[str]:
+    raw = os.getenv("AGENT_OS_WEB_ADMIN_ALLOWED_HOSTS", "127.0.0.1,::1,localhost")
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+
+def _web_admin_tokens() -> set[str]:
+    raw = os.getenv("AGENT_OS_WEB_ADMIN_API_TOKENS", os.getenv("AGENT_OS_WEB_ADMIN_API_TOKEN", ""))
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+
+def _web_admin_idempotency_enabled() -> bool:
+    return os.getenv("AGENT_OS_WEB_ADMIN_IDEMPOTENCY_ENABLED", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _web_admin_idempotency_ttl_sec() -> float:
+    raw = (os.getenv("AGENT_OS_WEB_ADMIN_IDEMPOTENCY_TTL_SEC") or "").strip()
+    if not raw:
+        return 600.0
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return 600.0
+
+
+def _assert_admin_request_allowed(request: Request) -> None:
+    if not _web_admin_enabled():
+        raise HTTPException(403, detail="未启用管理接口（AGENT_OS_WEB_ENABLE_ADMIN_API=0）")
+    host = (getattr(request.client, "host", None) or "").strip()
+    if host not in _web_admin_allowed_hosts():
+        raise HTTPException(403, detail="仅允许本机访问该管理接口")
+    tokens = _web_admin_tokens()
+    if not tokens:
+        raise HTTPException(403, detail="未配置管理接口 token（AGENT_OS_WEB_ADMIN_API_TOKEN(S)）")
+
+    raw = (request.headers.get("x-admin-token") or "").strip() or (
+        request.headers.get("X-Admin-Token") or ""
+    ).strip()
+    auth = (request.headers.get("authorization") or "").strip()
+    if not raw and auth.lower().startswith("bearer "):
+        raw = auth[7:].strip()
+    if not raw:
+        raise HTTPException(
+            401, detail="缺少管理接口 token（x-admin-token 或 Authorization: Bearer）"
+        )
+
+    if not any(hmac.compare_digest(raw, expected) for expected in tokens):
+        raise HTTPException(403, detail="管理接口 token 无效")
+
+
+def _idempotency_key_from_request(request: Request) -> str | None:
+    raw = (request.headers.get("idempotency-key") or "").strip() or (
+        request.headers.get("Idempotency-Key") or ""
+    ).strip()
+    return raw or None
+
+
+def _idempotency_request_hash(payload: dict[str, Any]) -> str:
+    s = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def _idempotency_cache_scope(request: Request, key: str) -> str:
+    return f"{request.method}:{request.url.path}:{key}"
+
+
+def _idempotency_cache_check(
+    request: Request,
+    *,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not _web_admin_idempotency_enabled():
+        return None
+    key = _idempotency_key_from_request(request)
+    if not key:
+        return None
+    scope = _idempotency_cache_scope(request, key)
+    req_hash = _idempotency_request_hash(payload)
+    now = time.time()
+    with _idempotency_cache_lock:
+        expired = [k for k, (exp, _h, _r) in _idempotency_cache.items() if exp <= now]
+        for k in expired:
+            _idempotency_cache.pop(k, None)
+        hit = _idempotency_cache.get(scope)
+        if hit is None:
+            return None
+        exp, prev_hash, resp = hit
+        if exp <= now:
+            _idempotency_cache.pop(scope, None)
+            return None
+        if prev_hash != req_hash:
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "idempotency_key_reused",
+                    "message": "同一 Idempotency-Key 不可复用于不同请求体",
+                },
+            )
+        return resp
+
+
+def _idempotency_cache_store(
+    request: Request,
+    *,
+    payload: dict[str, Any],
+    response_payload: dict[str, Any],
+) -> None:
+    if not _web_admin_idempotency_enabled():
+        return
+    key = _idempotency_key_from_request(request)
+    if not key:
+        return
+    ttl = _web_admin_idempotency_ttl_sec()
+    scope = _idempotency_cache_scope(request, key)
+    req_hash = _idempotency_request_hash(payload)
+    copied = json.loads(json.dumps(response_payload, ensure_ascii=False))
+    with _idempotency_cache_lock:
+        _idempotency_cache[scope] = (time.time() + ttl, req_hash, copied)
+
+
+def _admin_actor(request: Request) -> str:
+    return (
+        (request.headers.get("x-admin-actor") or "").strip()
+        or (request.headers.get("X-Admin-Actor") or "").strip()
+        or "web_admin"
+    )
 
 
 def _tool_display_name(fn: Any) -> str:
@@ -420,9 +587,38 @@ class IngestV1In(BaseModel):
     task_id: str | None = Field(
         default=None, description="仅 target=hindsight：与反馈关联的任务 id"
     )
+    supersedes_event_id: str | None = Field(
+        default=None,
+        description="仅 target=hindsight：被取代的 Hindsight event_id（须为本租户既有行）",
+    )
+    weight_count: int | None = Field(
+        default=None,
+        ge=1,
+        le=10000,
+        description="仅 target=hindsight：写入权重，默认 1",
+    )
     use_slow_reasoning: bool | None = Field(
         default=None,
         description="与 ``/api/memory/ingest`` 一致，用于复用同一 MemoryController bundle",
+    )
+
+
+class GraphitiEntitlementsUpsertIn(BaseModel):
+    client_id: str = Field(..., min_length=1)
+    skills: list[str] = Field(default_factory=list, description="可访问 skill 列表；可包含 *")
+    expected_revision: int | None = Field(
+        default=None,
+        ge=0,
+        description="乐观并发控制：仅当当前 revision 匹配时才写入",
+    )
+
+
+class GraphitiEntitlementsGlobalIn(BaseModel):
+    skills: list[str] = Field(default_factory=list, description="全局可访问 skill 列表；可包含 *")
+    expected_revision: int | None = Field(
+        default=None,
+        ge=0,
+        description="乐观并发控制：仅当当前 revision 匹配时才写入",
     )
 
 
@@ -1813,6 +2009,156 @@ def api_agent_inspect(
     return _agent_inspect_payload(cid, uid, use_slow, skill_id=skill_id)
 
 
+@app.get("/api/admin/graphiti-entitlements")
+def api_graphiti_entitlements_get(request: Request):
+    _assert_admin_request_allowed(request)
+    p = _graphiti_entitlements_path()
+    return {"path": str(p), "data": load_entitlements_file(p)}
+
+
+@app.post("/api/admin/graphiti-entitlements/global")
+def api_graphiti_entitlements_set_global(inp: GraphitiEntitlementsGlobalIn, request: Request):
+    _assert_admin_request_allowed(request)
+    payload = inp.model_dump()
+    cached = _idempotency_cache_check(request, payload=payload)
+    if cached is not None:
+        return cached
+    p = _graphiti_entitlements_path()
+    try:
+        before, doc = update_entitlements_file(
+            p,
+            expected_revision=inp.expected_revision,
+            mutator=lambda cur: cur.__setitem__(
+                "global_allowed_skill_ids",
+                sorted({str(x).strip() for x in inp.skills if str(x).strip()}),
+            ),
+        )
+    except EntitlementsRevisionConflictError as e:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "revision_conflict",
+                "message": str(e),
+                "expected_revision": e.expected,
+                "actual_revision": e.actual,
+                "hint": f"请刷新后使用 expected_revision={e.actual} 重试",
+            },
+        ) from e
+    append_entitlements_audit(
+        action="set_global",
+        actor=_admin_actor(request),
+        source="web.admin.graphiti-entitlements.global",
+        entitlements_path=p,
+        before=before,
+        after=doc,
+        metadata={
+            "request_id": getattr(request.state, "request_id", "-"),
+            "client_host": getattr(request.client, "host", None),
+            "expected_revision": inp.expected_revision,
+        },
+    )
+    resp = {"status": "ok", "path": str(p), "data": doc}
+    _idempotency_cache_store(request, payload=payload, response_payload=resp)
+    return resp
+
+
+@app.post("/api/admin/graphiti-entitlements/client")
+def api_graphiti_entitlements_set_client(inp: GraphitiEntitlementsUpsertIn, request: Request):
+    _assert_admin_request_allowed(request)
+    payload = inp.model_dump()
+    cached = _idempotency_cache_check(request, payload=payload)
+    if cached is not None:
+        return cached
+    p = _graphiti_entitlements_path()
+    try:
+        before, doc = update_entitlements_file(
+            p,
+            expected_revision=inp.expected_revision,
+            mutator=lambda cur: cur.setdefault("client_entitlements", {}).__setitem__(
+                inp.client_id, sorted({str(x).strip() for x in inp.skills if str(x).strip()})
+            ),
+        )
+    except EntitlementsRevisionConflictError as e:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "revision_conflict",
+                "message": str(e),
+                "expected_revision": e.expected,
+                "actual_revision": e.actual,
+                "hint": f"请刷新后使用 expected_revision={e.actual} 重试",
+            },
+        ) from e
+    append_entitlements_audit(
+        action="set_client",
+        actor=_admin_actor(request),
+        source="web.admin.graphiti-entitlements.client",
+        entitlements_path=p,
+        before=before,
+        after=doc,
+        metadata={
+            "request_id": getattr(request.state, "request_id", "-"),
+            "client_host": getattr(request.client, "host", None),
+            "client_id": inp.client_id,
+            "expected_revision": inp.expected_revision,
+        },
+    )
+    resp = {"status": "ok", "path": str(p), "data": doc}
+    _idempotency_cache_store(request, payload=payload, response_payload=resp)
+    return resp
+
+
+@app.delete("/api/admin/graphiti-entitlements/client/{client_id}")
+def api_graphiti_entitlements_delete_client(
+    client_id: str,
+    request: Request,
+    expected_revision: int | None = Query(None, ge=0),
+):
+    _assert_admin_request_allowed(request)
+    cid = (client_id or "").strip()
+    if not cid:
+        raise HTTPException(400, detail="client_id 不能为空")
+    payload = {"client_id": cid, "expected_revision": expected_revision}
+    cached = _idempotency_cache_check(request, payload=payload)
+    if cached is not None:
+        return cached
+    p = _graphiti_entitlements_path()
+    try:
+        before, doc = update_entitlements_file(
+            p,
+            expected_revision=expected_revision,
+            mutator=lambda cur: cur.setdefault("client_entitlements", {}).pop(cid, None),
+        )
+    except EntitlementsRevisionConflictError as e:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "revision_conflict",
+                "message": str(e),
+                "expected_revision": e.expected,
+                "actual_revision": e.actual,
+                "hint": f"请刷新后使用 expected_revision={e.actual} 重试",
+            },
+        ) from e
+    append_entitlements_audit(
+        action="remove_client",
+        actor=_admin_actor(request),
+        source="web.admin.graphiti-entitlements.client",
+        entitlements_path=p,
+        before=before,
+        after=doc,
+        metadata={
+            "request_id": getattr(request.state, "request_id", "-"),
+            "client_host": getattr(request.client, "host", None),
+            "client_id": cid,
+            "expected_revision": expected_revision,
+        },
+    )
+    resp = {"status": "ok", "path": str(p), "data": doc}
+    _idempotency_cache_store(request, payload=payload, response_payload=resp)
+    return resp
+
+
 @app.get("/api/session/messages")
 def api_session_messages(
     session_id: str = Query(
@@ -1916,7 +2262,10 @@ def http_ingest_v1(inp: IngestV1In, request: Request):
     _, ctrl, _ = _get_bundle_for(inp.client_id, inp.user_id, slow_applied, skill_id=inp.skill_id)
     rid = getattr(request.state, "request_id", "-")
     _web_log.info(
-        "AGENT_OS_OBS route=/ingest request_id=%s target=%s client_id=%s", rid, inp.target, inp.client_id
+        "AGENT_OS_OBS route=/ingest request_id=%s target=%s client_id=%s",
+        rid,
+        inp.target,
+        inp.client_id,
     )
     try:
         return run_ingest_v1(
@@ -1929,6 +2278,8 @@ def http_ingest_v1(inp: IngestV1In, request: Request):
             controller=ctrl,
             mem_kind=inp.mem_kind,
             task_id=inp.task_id,
+            supersedes_event_id=inp.supersedes_event_id,
+            weight_count=inp.weight_count,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -1959,11 +2310,15 @@ def memory_profile_list(
     path = _resolve_under_agent_os(settings.local_memory_path)
     if not path.exists():
         return {"backend": "local", "user_key": uid, "items": [], "path": str(path)}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    bucket = data.get("users", {}).get(uid, {}).get("memories", [])
+    data = _load_local_memory_json(path)
+    raw_bucket = data.get("users", {}).get(uid, {})
+    bucket = raw_bucket.get("memories", []) if isinstance(raw_bucket, dict) else []
+    if not isinstance(bucket, list):
+        bucket = []
     items = [
         {"index": i, "text": m.get("text", ""), "metadata": m.get("metadata") or {}}
         for i, m in enumerate(bucket)
+        if isinstance(m, dict)
     ]
     return {"backend": "local", "user_key": uid, "items": items, "path": str(path)}
 
@@ -1979,10 +2334,14 @@ def memory_profile_delete_local(inp: ProfileDeleteLocalIn):
     path = _resolve_under_agent_os(settings.local_memory_path)
     if not path.exists():
         raise HTTPException(404, detail="本地记忆文件不存在")
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _load_local_memory_json(path)
     users = data.setdefault("users", {})
     bucket = users.setdefault(uid, {"memories": []})
-    mems = bucket.get("memories", [])
+    mems = bucket.get("memories", []) if isinstance(bucket, dict) else []
+    if not isinstance(mems, list):
+        mems = []
+        if isinstance(bucket, dict):
+            bucket["memories"] = mems
     if inp.index < 0 or inp.index >= len(mems):
         raise HTTPException(400, detail="index 越界")
     mems.pop(inp.index)
@@ -2000,13 +2359,19 @@ def memory_hindsight_list(
     path = _resolve_under_agent_os(settings.hindsight_path)
     items: list[dict[str, Any]] = []
     if path.exists():
-        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        try:
+            lines = path.read_text(encoding="utf-8-sig").splitlines()
+        except (OSError, UnicodeDecodeError):
+            lines = []
+        for i, line in enumerate(lines, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
                 continue
             if row.get("client_id") != client_id:
                 continue
@@ -2022,7 +2387,10 @@ def memory_hindsight_delete(inp: HindsightDeleteIn):
     path = _resolve_under_agent_os(settings.hindsight_path)
     if not path.exists():
         raise HTTPException(404, detail="hindsight 文件不存在")
-    lines = path.read_text(encoding="utf-8").splitlines()
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError) as e:
+        raise HTTPException(400, detail=f"hindsight 文件无法读取: {e}") from e
     if inp.file_line < 1 or inp.file_line > len(lines):
         raise HTTPException(400, detail="file_line 越界")
     raw = lines[inp.file_line - 1].strip()
@@ -2030,6 +2398,8 @@ def memory_hindsight_delete(inp: HindsightDeleteIn):
         row = json.loads(raw)
     except json.JSONDecodeError as e:
         raise HTTPException(400, detail=f"该行不是合法 JSON: {e}") from e
+    if not isinstance(row, dict):
+        raise HTTPException(400, detail="该行不是 JSON 对象")
     if row.get("client_id") != inp.client_id:
         raise HTTPException(403, detail="该行的 client_id 与请求不一致，禁止删除")
     del lines[inp.file_line - 1]
@@ -2109,9 +2479,18 @@ def session_end(inp: SessionEndIn):
     )
 
 
+def _web_port_from_env() -> int:
+    raw = (os.getenv("AGENT_OS_WEB_PORT") or "8765").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        _web_log.warning("AGENT_OS_WEB_PORT=%r 无法解析，回退为 8765", raw)
+        return 8765
+
+
 if __name__ == "__main__":
     import uvicorn
 
     host = os.getenv("AGENT_OS_WEB_HOST", "127.0.0.1")
-    port = int(os.getenv("AGENT_OS_WEB_PORT", "8765"))
+    port = _web_port_from_env()
     uvicorn.run(app, host=host, port=port)

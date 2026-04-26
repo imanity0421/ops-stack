@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "global_allowed_skill_ids": [
+    "default_agent",
+    "short_video"
+  ],
+  "client_entitlements": {
+    "acme": [
+      "short_video",
+      "xiaohongshu_post"
+    ],
+    "beta_corp": [
+      "default_agent"
+    ]
+  }
+}

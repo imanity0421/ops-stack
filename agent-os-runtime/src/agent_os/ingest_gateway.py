@@ -36,10 +36,14 @@ def run_ingest_v1(
     mem_kind: str | None = None,
     task_id: str | None = None,
     source: str | None = "ingest_gateway",
+    supersedes_event_id: str | None = None,
+    weight_count: int | None = None,
 ) -> dict[str, Any]:
     """
     :param target: ``mem0_profile`` | ``hindsight`` | ``asset_store``
     :param mem_kind: 仅 ``mem0_profile``：``fact`` | ``preference``（默认 ``fact``）
+    :param supersedes_event_id: 仅 ``hindsight``：可选，取代既有 ``event_id``（见 Hindsight JSONL）。
+    :param weight_count: 仅 ``hindsight``：可选统计权重，默认 1，最大 10000。
     """
     t = target.strip().lower()
     if t not in _VALID:
@@ -57,15 +61,19 @@ def run_ingest_v1(
         if k == "fact":
             lane = MemoryLane.ATTRIBUTE
             fact_type: Any = "attribute"
+            scope = "client_shared"
         elif k == "preference":
             lane = MemoryLane.ATTRIBUTE
             fact_type = "preference"
+            scope = "client_shared" if user_id is None else "user_private"
         else:
             raise ValueError("mem0_profile 时 mem_kind 须为 fact | preference")
         fact = UserFact(
             lane=lane,
             client_id=cid,
             user_id=user_id,
+            scope=scope,
+            skill_id=sk,
             text=raw,
             fact_type=fact_type,
             source=source or "ingest_gateway",
@@ -84,14 +92,24 @@ def run_ingest_v1(
     if t == "hindsight":
         if controller.hindsight_store is None:
             raise ValueError("Hindsight 未启用（AGENT_OS_ENABLE_HINDSIGHT=0 或存储未初始化）")
+        sid = (supersedes_event_id or "").strip() or None
+        try:
+            wc_raw = 1 if weight_count is None else int(weight_count)
+        except (TypeError, ValueError):
+            wc_raw = 1
+        wc = max(1, min(wc_raw, 10000))
         fact = UserFact(
             lane=MemoryLane.TASK_FEEDBACK,
             client_id=cid,
             user_id=user_id,
+            scope="task_scoped",
+            skill_id=sk,
             text=raw,
             fact_type="feedback",
             task_id=task_id,
             source=source or "ingest_gateway",
+            supersedes_event_id=sid,
+            weight_count=wc,
         )
         r = controller.ingest_user_fact(fact)
         return {

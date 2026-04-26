@@ -48,6 +48,13 @@ def test_load_manifest_validation_error_returns_none(tmp_path: Path) -> None:
     assert load_agent_manifest(p) is None
 
 
+def test_load_manifest_bad_utf8_returns_none(tmp_path: Path) -> None:
+    p = tmp_path / "bad.json"
+    p.write_bytes(b"\xff\xfe\x00")
+
+    assert load_agent_manifest(p) is None
+
+
 def test_registry_skips_invalid_overlay_manifest(tmp_path: Path) -> None:
     (tmp_path / "bad.json").write_text(
         json.dumps({"enabled_tools": "not-a-list"}),

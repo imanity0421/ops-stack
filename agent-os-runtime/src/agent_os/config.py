@@ -49,6 +49,12 @@ class Settings:
     enable_mem0_learning: bool = True
     #: 是否启用参考案例库（Asset Store / LanceDB），默认关闭（未配置时仍可裸跑）
     enable_asset_store: bool = False
+    #: 是否启用 Asset Store 候选池的 LLM 加工摘要（默认关闭，避免隐式成本）
+    enable_asset_synthesis: bool = False
+    #: Asset Store 加工层使用的模型；为空时沿用 AGENT_OS_MODEL / 默认模型
+    asset_synthesis_model: str | None = None
+    #: 送入 Asset Store LLM 加工层的最大候选数
+    asset_synthesis_max_candidates: int = 12
     #: Asset Store 本地路径（LanceDB 目录）
     asset_store_path: Path = Path("data/asset_store.lancedb")
     knowledge_fallback_path: Path | None = None
@@ -83,6 +89,12 @@ class Settings:
     memory_policy_mode: str = "reject"
     #: 是否在记忆检索渲染中带时间戳
     enable_temporal_grounding: bool = True
+    #: 是否启用 Hindsight 候选池的 LLM 加工摘要（默认关闭，避免隐式成本）
+    enable_hindsight_synthesis: bool = False
+    #: Hindsight 加工层使用的模型；为空时沿用 AGENT_OS_MODEL / 默认模型
+    hindsight_synthesis_model: str | None = None
+    #: 送入 Hindsight LLM 加工层的最大候选数
+    hindsight_synthesis_max_candidates: int = 20
     #: 是否启用同一 session 内的 Task-aware Working Memory（首批为 store/prompt 注入）
     enable_task_memory: bool = False
     #: Task-aware Working Memory 本地 SQLite 路径
@@ -147,6 +159,13 @@ class Settings:
             not in ("0", "false", "no"),
             enable_asset_store=os.getenv("AGENT_OS_ENABLE_ASSET_STORE", "0").lower()
             in ("1", "true", "yes"),
+            enable_asset_synthesis=os.getenv("AGENT_OS_ENABLE_ASSET_SYNTHESIS", "0").lower()
+            in ("1", "true", "yes"),
+            asset_synthesis_model=(os.getenv("AGENT_OS_ASSET_SYNTHESIS_MODEL") or "").strip()
+            or None,
+            asset_synthesis_max_candidates=_env_int(
+                "AGENT_OS_ASSET_SYNTHESIS_MAX_CANDIDATES", 12, min_value=1
+            ),
             asset_store_path=Path(
                 os.getenv("AGENT_OS_ASSET_STORE_PATH", "data/asset_store.lancedb")
             ),
@@ -172,6 +191,15 @@ class Settings:
             memory_policy_mode=policy_mode,
             enable_temporal_grounding=os.getenv("AGENT_OS_ENABLE_TEMPORAL_GROUNDING", "1").lower()
             not in ("0", "false", "no"),
+            enable_hindsight_synthesis=os.getenv("AGENT_OS_ENABLE_HINDSIGHT_SYNTHESIS", "0").lower()
+            in ("1", "true", "yes"),
+            hindsight_synthesis_model=(
+                os.getenv("AGENT_OS_HINDSIGHT_SYNTHESIS_MODEL") or ""
+            ).strip()
+            or None,
+            hindsight_synthesis_max_candidates=_env_int(
+                "AGENT_OS_HINDSIGHT_SYNTHESIS_MAX_CANDIDATES", 20, min_value=1
+            ),
             enable_task_memory=os.getenv("AGENT_OS_ENABLE_TASK_MEMORY", "0").lower()
             in ("1", "true", "yes"),
             task_memory_sqlite_path=Path(

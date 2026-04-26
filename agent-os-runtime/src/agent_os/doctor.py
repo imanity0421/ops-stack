@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import os
 import sys
+import importlib.util
 from pathlib import Path
 from typing import Any
 
 from agent_os.config import Settings
+from agent_os.knowledge.graphiti_entitlements import validate_entitlements_document
 from agent_os.manifest_loader import load_skill_manifest_registry
 
 
@@ -27,7 +29,11 @@ def run_doctor(*, strict: bool = False) -> int:
     环境自检。strict=True 时：缺少 OPENAI_API_KEY 返回非零。
     """
     exit_code = 0
-    s = Settings.from_env()
+    try:
+        s = Settings.from_env()
+    except ValueError as e:
+        _fail(f"配置环境变量无效: {e}")
+        return 1
 
     if sys.version_info < (3, 10):
         _fail("需要 Python 3.10+")
@@ -61,6 +67,25 @@ def run_doctor(*, strict: bool = False) -> int:
     else:
         _warn("未配置 Neo4j，Graphiti 检索将走 JSONL 或提示未配置")
 
+    ent_path = Path(
+        os.getenv("AGENT_OS_GRAPHITI_ENTITLEMENTS_PATH", "data/graphiti_entitlements.json")
+    )
+    ent_store = (os.getenv("AGENT_OS_GRAPHITI_ENTITLEMENTS_STORE") or "file").strip().lower()
+    if ent_store != "file":
+        _warn(f"AGENT_OS_GRAPHITI_ENTITLEMENTS_STORE={ent_store!r} 已降级；当前仅支持 file 后端")
+    if ent_path.is_file():
+        try:
+            ent_obj: Any = json.loads(ent_path.read_text(encoding="utf-8-sig"))
+            errs = validate_entitlements_document(ent_obj)
+            if errs:
+                _warn("Graphiti 权限文件结构不合法: " + "; ".join(errs) + f"（path={ent_path}）")
+            else:
+                _ok(f"Graphiti 权限文件结构合法: {ent_path}")
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+            _warn(f"Graphiti 权限文件 JSON 无效: {ent_path} ({e})")
+    else:
+        _warn(f"Graphiti 权限文件不存在（将回退 env 授权）: {ent_path}")
+
     if s.knowledge_fallback_path:
         if s.knowledge_fallback_path.is_file():
             _ok(f"AGENT_OS_KNOWLEDGE_FALLBACK_PATH 存在: {s.knowledge_fallback_path}")
@@ -76,7 +101,7 @@ def run_doctor(*, strict: bool = False) -> int:
                 lessons = data.get("lessons") if isinstance(data, dict) else None
                 n = len(lessons) if isinstance(lessons, list) else "?"
                 _ok(f"AGENT_OS_HANDOFF_MANIFEST_PATH 可读: {p} (lessons≈{n})")
-            except json.JSONDecodeError as e:
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
                 _warn(f"handoff 清单 JSON 无效: {e}")
         else:
             _warn(f"AGENT_OS_HANDOFF_MANIFEST_PATH 不存在: {p}")
@@ -100,6 +125,26 @@ def run_doctor(*, strict: bool = False) -> int:
             _ok(f"AGENT_OS_MCP_PROBE_FIXTURE_PATH 存在: {pp}")
         else:
             _warn(f"AGENT_OS_MCP_PROBE_FIXTURE_PATH 指向的文件不存在: {pp}")
+
+    if s.enable_asset_store:
+        if importlib.util.find_spec("lancedb") is None:
+            _warn('已启用 Asset Store，但未安装 lancedb；请 pip install -e ".[asset_store]"')
+            if strict:
+                exit_code = 1
+        else:
+            _ok("lancedb 已安装（Asset Store 可用）")
+
+    web_admin_on = os.getenv("AGENT_OS_WEB_ENABLE_ADMIN_API", "0").lower() in ("1", "true", "yes")
+    if web_admin_on:
+        tok = (
+            os.getenv("AGENT_OS_WEB_ADMIN_API_TOKENS")
+            or os.getenv("AGENT_OS_WEB_ADMIN_API_TOKEN")
+            or ""
+        ).strip()
+        if tok:
+            _ok("Web 管理接口 token 已配置（AGENT_OS_WEB_ADMIN_API_TOKEN(S)）")
+        else:
+            _warn("已启用 AGENT_OS_WEB_ENABLE_ADMIN_API，但未配置 AGENT_OS_WEB_ADMIN_API_TOKEN(S)")
 
     gr = os.getenv("AGENT_OS_GOLDEN_RULES_PATH")
     if gr:

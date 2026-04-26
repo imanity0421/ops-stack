@@ -1,6 +1,7 @@
 """MemoryController 与本地后端单元测试（不依赖 Mem0 云端）。"""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -229,6 +230,21 @@ def test_local_memory_bad_json_starts_with_empty_view(tmp_path: Path) -> None:
     assert ctrl.search_profile("", client_id="c1", user_id=None) == []
 
 
+def test_local_memory_bad_utf8_starts_with_empty_view(tmp_path: Path) -> None:
+    local = tmp_path / "local.json"
+    hind = tmp_path / "hindsight.jsonl"
+    local.write_bytes(b"\xff\xfe\x00")
+
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=local,
+        hindsight_path=hind,
+    )
+
+    assert ctrl.search_profile("", client_id="c1", user_id=None) == []
+
+
 def test_local_memory_accepts_utf8_bom(tmp_path: Path) -> None:
     local = tmp_path / "local.json"
     hind = tmp_path / "hindsight.jsonl"
@@ -340,12 +356,90 @@ def test_memory_policy_allows_stable_preference_and_records_metadata(
     data = json.loads(local.read_text(encoding="utf-8"))
     mem = data["users"]["c1::u1"]["memories"][0]
     meta = mem["metadata"]
+    assert meta["memory_version"] == "2.0"
+    assert meta["scope"] == "user_private"
+    assert meta["client_id"] == "c1"
+    assert meta["user_id"] == "u1"
     assert meta["recorded_at"]
     assert meta["memory_source"] == "manual"
     assert meta["confidence"] == 0.9
 
     hits = ctrl.search_profile("交付物", client_id="c1", user_id="u1")
     assert hits[0].metadata["recorded_at"]
+
+
+def test_profile_search_reads_client_shared_and_user_private(tmp_paths: tuple[Path, Path]) -> None:
+    local, hind = tmp_paths
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=local,
+        hindsight_path=hind,
+    )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.ATTRIBUTE,
+            client_id="c1",
+            user_id="u1",
+            scope="client_shared",
+            text="公司品牌色是蓝色",
+            fact_type="attribute",
+        )
+    )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.ATTRIBUTE,
+            client_id="c1",
+            user_id="u1",
+            scope="user_private",
+            text="以后默认使用简短回答",
+            fact_type="preference",
+        )
+    )
+
+    hits = ctrl.search_profile("", client_id="c1", user_id="u1")
+    text = "\n".join(h.text for h in hits)
+    assert "公司品牌色是蓝色" in text
+    assert "以后默认使用简短回答" in text
+
+
+def test_profile_search_does_not_starve_user_private_when_shared_hits_fill_limit(
+    tmp_paths: tuple[Path, Path],
+) -> None:
+    local, hind = tmp_paths
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=local,
+        hindsight_path=hind,
+        enable_memory_policy=False,
+    )
+    for i in range(3):
+        ctrl.ingest_user_fact(
+            UserFact(
+                lane=MemoryLane.ATTRIBUTE,
+                client_id="c1",
+                user_id="u1",
+                scope="client_shared",
+                text=f"shared rule {i}: include audit keyword in the response",
+                fact_type="attribute",
+            )
+        )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.ATTRIBUTE,
+            client_id="c1",
+            user_id="u1",
+            scope="user_private",
+            text="private rule: include audit keyword but keep answer short",
+            fact_type="preference",
+        )
+    )
+
+    hits = ctrl.search_profile("audit keyword", client_id="c1", user_id="u1", limit=3)
+    text = "\n".join(h.text for h in hits)
+
+    assert "private rule" in text
 
 
 def test_hindsight_records_and_renders_recorded_at(tmp_paths: tuple[Path, Path]) -> None:
@@ -373,6 +467,54 @@ def test_hindsight_records_and_renders_recorded_at(tmp_paths: tuple[Path, Path])
     assert rendered
     assert rendered[0].startswith("[记录于 ")
     assert "下次先确认关键约束" in rendered[0]
+
+
+def test_hindsight_records_v2_fields_and_ranks_same_user(tmp_paths: tuple[Path, Path]) -> None:
+    local, hind = tmp_paths
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=local,
+        hindsight_path=hind,
+    )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.TASK_FEEDBACK,
+            client_id="c1",
+            user_id="u2",
+            skill_id="default_agent",
+            text="用户认为同类方案需要更多案例，下次补充证据",
+            fact_type="feedback",
+            confidence=0.4,
+        )
+    )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.TASK_FEEDBACK,
+            client_id="c1",
+            user_id="u1",
+            skill_id="default_agent",
+            text="用户认为同类方案需要更多案例，下次补充判断标准",
+            fact_type="feedback",
+            confidence=0.9,
+            outcome="failure",
+            outcome_score=0.2,
+            tags=["案例不足"],
+        )
+    )
+    row = json.loads(hind.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["memory_version"] == "2.0"
+    assert row["skill_id"] == "default_agent"
+    assert row["tags"] == ["案例不足"]
+
+    rendered = ctrl.search_hindsight(
+        "同类方案 案例",
+        client_id="c1",
+        user_id="u1",
+        skill_id="default_agent",
+    )
+    assert rendered
+    assert "来源" in rendered[0]
 
 
 def test_hindsight_skips_malformed_rows(tmp_paths: tuple[Path, Path]) -> None:
@@ -424,3 +566,43 @@ def test_hindsight_accepts_utf8_bom(tmp_paths: tuple[Path, Path]) -> None:
     assert ctrl.search_hindsight("bom", client_id="c1") == [
         "[记录于 记录时间未知 | 来源 unknown] valid bom"
     ]
+
+
+def test_search_profile_same_text_across_buckets_prefers_newer_recorded_at(
+    tmp_paths: tuple[Path, Path],
+) -> None:
+    local, hind = tmp_paths
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=local,
+        hindsight_path=hind,
+    )
+    t_old = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    t_new = datetime(2025, 6, 1, tzinfo=timezone.utc)
+    stable = "以后所有交付物默认不要使用夸张表述"
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.ATTRIBUTE,
+            client_id="c1",
+            user_id="u1",
+            scope="client_shared",
+            text=stable,
+            fact_type="attribute",
+            recorded_at=t_old,
+        )
+    )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.ATTRIBUTE,
+            client_id="c1",
+            user_id="u1",
+            scope="user_private",
+            text=stable,
+            fact_type="preference",
+            recorded_at=t_new,
+        )
+    )
+    hits = ctrl.search_profile("交付物", client_id="c1", user_id="u1")
+    assert len(hits) == 1
+    assert hits[0].metadata.get("recorded_at", "").startswith("2025-06-01")

@@ -11,7 +11,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
-from agent_os.backup_data_core import backup_main
+from agent_os.backup_data_core import backup_main  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(backup_main())

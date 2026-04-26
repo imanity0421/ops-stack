@@ -7,8 +7,12 @@ import os
 from pathlib import Path
 from typing import Any
 
+from agent_os.knowledge.graphiti_entitlements import (
+    GraphitiEntitlements,
+    GraphitiEntitlementsProvider,
+)
 from agent_os.knowledge.fallback import KnowledgeJsonlFallback
-from agent_os.knowledge.group_id import graphiti_group_id
+from agent_os.knowledge.group_id import graphiti_group_id, system_graphiti_group_id
 from agent_os.util.retry import retry_sync
 
 logger = logging.getLogger(__name__)
@@ -48,6 +52,14 @@ def _run_async(coro: Any) -> Any:
     """在同步工具内安全运行协程（避免与已有事件循环冲突）。"""
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(lambda: asyncio.run(coro)).result()
+
+
+def _legacy_client_groups_enabled() -> bool:
+    return os.getenv("AGENT_OS_GRAPHITI_ENABLE_LEGACY_CLIENT_GROUPS", "1").lower() not in (
+        "0",
+        "false",
+        "no",
+    )
 
 
 def _build_search_config(limit: int, bfs_max_depth: int) -> Any:
@@ -122,6 +134,8 @@ class GraphitiReadService:
         max_results: int,
         bfs_max_depth: int,
         fallback: KnowledgeJsonlFallback,
+        entitlements: GraphitiEntitlements | None = None,
+        entitlements_provider: GraphitiEntitlementsProvider | None = None,
     ) -> None:
         self._neo4j_uri = neo4j_uri
         self._neo4j_user = neo4j_user
@@ -130,6 +144,16 @@ class GraphitiReadService:
         self._max_results = max_results
         self._bfs_max_depth = bfs_max_depth
         self._fallback = fallback
+        self._entitlements_static = entitlements
+        self._entitlements_provider = (
+            entitlements_provider
+            if entitlements_provider is not None
+            else GraphitiEntitlementsProvider(
+                cache_ttl_sec=_env_float(
+                    "AGENT_OS_GRAPHITI_ENTITLEMENTS_CACHE_TTL_SEC", 2.0, min_value=0.0
+                )
+            )
+        )
         self._graphiti: Any = None
 
     @classmethod
@@ -142,7 +166,16 @@ class GraphitiReadService:
             max_results=_env_int("AGENT_OS_GRAPHITI_MAX_RESULTS", 12, min_value=1),
             bfs_max_depth=_env_int("AGENT_OS_GRAPHITI_BFS_MAX_DEPTH", 2, min_value=0),
             fallback=KnowledgeJsonlFallback(fallback_path),
+            entitlements_provider=GraphitiEntitlementsProvider(
+                cache_ttl_sec=_env_float(
+                    "AGENT_OS_GRAPHITI_ENTITLEMENTS_CACHE_TTL_SEC", 2.0, min_value=0.0
+                )
+            ),
         )
+
+    def invalidate_entitlements_cache(self) -> None:
+        if self._entitlements_provider is not None:
+            self._entitlements_provider.invalidate()
 
     def is_graphiti_configured(self) -> bool:
         return bool(self._neo4j_uri and self._neo4j_password)
@@ -173,9 +206,14 @@ class GraphitiReadService:
 
     def search_domain_knowledge(self, query: str, client_id: str, skill_id: str) -> str:
         """
-        同步入口：按 ``graphiti_group_id(client_id, skill_id)`` 查 Graphiti；失败或超时则走 JSONL fallback。
+        同步入口：按系统级 ``system_graphiti_group_id(skill_id)`` 查 Graphiti；
+        ``client_id`` 仅用于权限过滤；失败或超时则走 JSONL fallback。
         """
-        gid = graphiti_group_id(client_id, skill_id)
+        ent = self._entitlements_static or self._entitlements_provider.get()
+        if not ent.allows(client_id, skill_id):
+            return f"（当前 client_id={client_id} 无权访问 skill/domain={skill_id} 的系统知识）"
+        gid = system_graphiti_group_id(skill_id)
+        legacy_gid = graphiti_group_id(client_id, skill_id)
         notes: list[str] = []
 
         if self.is_graphiti_configured():
@@ -188,6 +226,18 @@ class GraphitiReadService:
                 if text.strip():
                     return text
                 notes.append("Graphiti 返回空结果。")
+                if _legacy_client_groups_enabled() and legacy_gid != gid:
+
+                    def _legacy_graph_search() -> str:
+                        return _run_async(self._search_graphiti(query, legacy_gid))
+
+                    legacy_text = retry_sync(
+                        _legacy_graph_search,
+                        attempts=2,
+                        label="graphiti.search_.legacy_client_group",
+                    )
+                    if legacy_text.strip():
+                        return "[legacy client-skill group]\n" + legacy_text
             except Exception as e:
                 logger.warning("Graphiti 检索失败，将尝试 fallback: %s", e)
                 notes.append(f"Graphiti 不可用: {type(e).__name__}")
@@ -199,6 +249,13 @@ class GraphitiReadService:
                 if notes:
                     header = "[降级] " + " ".join(notes) + "\n\n"
                 return header + fb
+            if _legacy_client_groups_enabled() and legacy_gid != gid:
+                legacy_fb = self._fallback.search(query, legacy_gid, limit=self._max_results)
+                if legacy_fb.strip():
+                    header = "[legacy client-skill group]\n"
+                    if notes:
+                        header = "[降级] " + " ".join(notes) + "\n\n" + header
+                    return header + legacy_fb
 
         if notes:
             return "（领域知识无可用结果） " + " ".join(notes)

@@ -87,7 +87,7 @@ def get_agent(
     """
     工厂：创建 Agent。thought_mode 为 'slow' 时启用 Agno 内置 reasoning（若模型不支持会降级）。
 
-    ``skill_id`` 主键决定 manifest 与 Graphiti 分区 ``graphiti_group_id(client_id, skill_id)``；
+    ``skill_id`` 主键决定 manifest 与系统级 Graphiti 分区 ``system_graphiti_group_id(skill_id)``；
     未传时使用 ``Settings.default_skill_id``（环境 ``AGENT_OS_DEFAULT_SKILL_ID``）。
     """
     s = settings or Settings.from_env()
@@ -115,6 +115,12 @@ def get_agent(
         enable_hindsight=s.enable_hindsight,
         enable_asset_store=s.enable_asset_store,
         enable_temporal_grounding=s.enable_temporal_grounding,
+        enable_hindsight_synthesis=s.enable_hindsight_synthesis,
+        hindsight_synthesis_model=s.hindsight_synthesis_model,
+        hindsight_synthesis_max_candidates=s.hindsight_synthesis_max_candidates,
+        enable_asset_synthesis=s.enable_asset_synthesis,
+        asset_synthesis_model=s.asset_synthesis_model,
+        asset_synthesis_max_candidates=s.asset_synthesis_max_candidates,
         skill_compliance_dir=s.skill_compliance_dir,
     )
 

@@ -14,8 +14,8 @@ def load_handoff_instruction_lines(manifest_path: Path | None) -> list[str]:
     try:
         raw = manifest_path.read_text(encoding="utf-8-sig")
         data: Any = json.loads(raw)
-    except (OSError, json.JSONDecodeError):
-        return ["【制品清单】handbook_handoff.json 无法解析，已忽略。"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
 
     if not isinstance(data, dict):
         return []

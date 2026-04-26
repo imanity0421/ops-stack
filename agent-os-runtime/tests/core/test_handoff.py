@@ -10,6 +10,13 @@ def test_handoff_missing_returns_empty(tmp_path: Path) -> None:
     assert load_handoff_instruction_lines(tmp_path / "nope.json") == []
 
 
+def test_handoff_invalid_json_returns_empty(tmp_path: Path) -> None:
+    p = tmp_path / "handbook_handoff.json"
+    p.write_text("{bad", encoding="utf-8")
+
+    assert load_handoff_instruction_lines(p) == []
+
+
 def test_handoff_valid_summary(tmp_path: Path) -> None:
     p = tmp_path / "handbook_handoff.json"
     p.write_text(

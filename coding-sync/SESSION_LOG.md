@@ -287,3 +287,30 @@ Ran a third bug-only scan (architecture gaps excluded) and a non-test neutrality
 
 按明确代码/运行 bug 口径完成第九次扫描。基础验证全绿：ruff check src tests 通过；ruff format --check src tests 通过；pytest 全量 114 passed。人工复核重点检查第三方 API 返回形态、路径/JSON/SQLite/工具参数边界；独立只读扫描结论为：在正常可预期使用路径下没有发现需列为明确 bug 的项。异常第三方空 choices/data 等可作为后续韧性增强，不纳入本轮 bug。
 
+
+---
+
+## 2026-04-26T15:46:34+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime version0.x audit
+
+Completed full agent-os-runtime bug and boundary audit. Ran expanded ruff checks over src/tests/examples/scripts, full pytest, diff whitespace check, and negative edge probes. Fixed confirmed issues: Graphiti entitlement non-string skill parsing, Web local memory bad JSON/BOM handling, handoff invalid JSON behavior, blank knowledge JSONL rows, and Graphiti dry-run invalid JSON handling.
+
+
+---
+
+## 2026-04-26T15:54:57+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime second full audit
+
+Completed second full agent-os-runtime scan for version0.x readiness. Re-ran expanded ruff, format check, full pytest, diff whitespace check, and negative edge probes. Fixed second-round confirmed bugs: UnicodeDecodeError handling across local memory/web/handoff/manifest/golden/MCP/migration/Graphiti ingest, doctor invalid Settings env handling and Asset Store dependency warning, CLI missing input file handling, Web invalid port fallback, and Web Hindsight utf-8-sig consistency. Final pytest: 187 passed.
+
+
+---
+
+## 2026-04-26T16:07:38+08:00 | LAPTOP-VPIF7FP8
+
+**标题**：agent-os-runtime third full audit
+
+Completed third full agent-os-runtime scan focused on code audit and test-suite gaps for version0.x readiness. Re-ran expanded ruff, format check, full pytest, diff whitespace check, and edge probes. Added/fixed: e2e eval bad file handling, asset ingest bad UTF-8 handling, manifest/golden/MCP bad UTF-8 tests, and Graphiti entitlements CLI stale snapshot overwrite bug. Final pytest: 196 passed.
+

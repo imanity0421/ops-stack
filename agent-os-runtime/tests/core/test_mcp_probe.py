@@ -31,3 +31,12 @@ def test_invalid_probe_fixture_returns_error(tmp_path: Path) -> None:
     data = load_probe_data(p)
 
     assert data["error"] == "invalid_probe_fixture"
+
+
+def test_bad_utf8_probe_fixture_returns_error(tmp_path: Path) -> None:
+    p = tmp_path / "bad.json"
+    p.write_bytes(b"\xff\xfe\x00")
+
+    data = load_probe_data(p)
+
+    assert data["error"] == "invalid_probe_fixture"

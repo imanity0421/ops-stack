@@ -11,14 +11,19 @@ class KnowledgeJsonlFallback:
     """
     无 Neo4j / 超时 / Graphiti 异常时的文本降级检索。
     每行 JSON：`{"group_id": "...", "text": "..."}`，group_id 须与
-    ``agent_os.knowledge.group_id.graphiti_group_id(client_id, skill_id)`` 一致。
+    ``agent_os.knowledge.group_id.system_graphiti_group_id(skill_id)`` 一致。
     """
 
     def __init__(self, path: Path | None) -> None:
         self._path = path
         self._lines: list[dict[str, str]] = []
         if path and path.is_file():
-            for line in path.read_text(encoding="utf-8-sig").splitlines():
+            try:
+                lines = path.read_text(encoding="utf-8-sig").splitlines()
+            except (OSError, UnicodeDecodeError) as e:
+                logger.warning("知识降级 JSONL 无法读取，禁用 fallback: %s (%s)", path, e)
+                lines = []
+            for line in lines:
                 line = line.strip()
                 if not line:
                     continue

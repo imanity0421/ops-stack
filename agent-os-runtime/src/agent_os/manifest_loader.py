@@ -46,7 +46,7 @@ def load_agent_manifest(path: Path | None) -> AgentManifestV1 | None:
     try:
         raw: Any = json.loads(path.read_text(encoding="utf-8-sig"))
         return AgentManifestV1.model_validate(raw)
-    except (json.JSONDecodeError, OSError, ValidationError) as e:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValidationError) as e:
         logger.warning("无法加载 manifest 文件 %s: %s", path, e)
         return None
 

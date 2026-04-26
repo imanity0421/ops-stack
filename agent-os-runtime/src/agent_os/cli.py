@@ -10,6 +10,12 @@ from pathlib import Path
 from agent_os.agent.factory import get_agent, new_session_id
 from agent_os.agent.task_memory import TaskMemoryStore
 from agent_os.config import Settings
+from agent_os.knowledge.graphiti_entitlements import (
+    EntitlementsRevisionConflictError,
+    append_entitlements_audit,
+    load_entitlements_file,
+    update_entitlements_file,
+)
 from agent_os.knowledge.asset_store import asset_store_from_settings
 from agent_os.knowledge.graphiti_reader import GraphitiReadService
 from agent_os.manifest_loader import load_skill_manifest_registry, resolve_effective_skill_id
@@ -71,7 +77,7 @@ def _knowledge_append_main(argv: list[str]) -> int:
     p.add_argument(
         "--skill",
         default="default_agent",
-        help="skill_id，与运行时 AGENT_OS_DEFAULT_SKILL_ID 一致；写入 graphiti_group_id(client, skill)",
+        help="skill_id，与运行时 AGENT_OS_DEFAULT_SKILL_ID 一致；写入系统级 Graphiti group_id(skill)",
     )
     p.add_argument("--text", action="append", required=True, help="一条或多条文本（可重复）")
     args = p.parse_args(argv)
@@ -96,10 +102,17 @@ def _graphiti_ingest_main(argv: list[str]) -> int:
         help="仅校验 JSON 结构，不连接数据库",
     )
     args = p.parse_args(argv)
+    if not args.episodes_json.is_file():
+        print(f"输入文件不存在: {args.episodes_json}", file=sys.stderr)
+        return 1
     if args.dry_run:
         import json as _json
 
-        raw = _json.loads(args.episodes_json.read_text(encoding="utf-8-sig"))
+        try:
+            raw = _json.loads(args.episodes_json.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeDecodeError, _json.JSONDecodeError) as e:
+            print(f"无法读取或解析 JSON: {e}", file=sys.stderr)
+            return 1
         if isinstance(raw, list):
             _ = raw
         elif isinstance(raw, dict) and isinstance(raw.get("episodes"), list):
@@ -132,6 +145,18 @@ def _asset_ingest_main(argv: list[str]) -> int:
     p.add_argument("--client-id", required=True, help="租户 ID")
     p.add_argument("--user-id", default=None, help="终端用户 ID（可选；为空表示租户共享）")
     p.add_argument("--skill", default="default_agent", help="skill_id（默认 default_agent）")
+    p.add_argument(
+        "--scope",
+        choices=["system", "client_shared", "user_private"],
+        default=None,
+        help="资产作用域；默认按 client/user 推导，system 可配合 client-id=system_global 导入金牌案例",
+    )
+    p.add_argument(
+        "--asset-type",
+        choices=["style_reference", "source_material"],
+        default=None,
+        help="资产类型；未指定时由 LLM 分类，--no-llm 时默认 style_reference",
+    )
     p.add_argument("--source", default=None, help="来源标识（文件名/URL/备注）")
     p.add_argument(
         "--model",
@@ -142,6 +167,9 @@ def _asset_ingest_main(argv: list[str]) -> int:
         "--no-llm", action="store_true", help="不调用 LLM（仅做规则校验 + 最小字段入库）"
     )
     args = p.parse_args(argv)
+    if not args.input.is_file():
+        print(f"输入文件不存在: {args.input}", file=sys.stderr)
+        return 1
 
     settings = Settings.from_env()
     store = asset_store_from_settings(enable=True, path=settings.asset_store_path)
@@ -149,6 +177,8 @@ def _asset_ingest_main(argv: list[str]) -> int:
         client_id=args.client_id,
         user_id=args.user_id,
         skill_id=args.skill,
+        scope=args.scope,
+        asset_type=args.asset_type,
         source=args.source,
         model=args.model,
         allow_llm=not args.no_llm,
@@ -157,11 +187,22 @@ def _asset_ingest_main(argv: list[str]) -> int:
     if args.input.suffix.lower() == ".jsonl":
         r = ingest_jsonl(args.input, store=store, opt=opt)
         print(json.dumps(r, ensure_ascii=False, indent=2))
+        successful_rows = (
+            int(r.get("accepted", 0) or 0)
+            + int(r.get("quarantined", 0) or 0)
+            + int(r.get("duplicate_skipped", 0) or 0)
+        )
+        if r.get("status") == "error" or successful_rows == 0:
+            return 1
         return 0
-    raw = args.input.read_text(encoding="utf-8-sig")
+    try:
+        raw = args.input.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"无法读取输入文件: {e}", file=sys.stderr)
+        return 1
     r = ingest_text(raw, store=store, opt=opt)
     print(json.dumps(r, ensure_ascii=False, indent=2))
-    return 0
+    return 1 if r.get("status") in ("error", "rejected") else 0
 
 
 def _asset_rm_main(argv: list[str]) -> int:
@@ -203,6 +244,116 @@ def _mcp_probe_server_main(argv: list[str]) -> int:
     from agent_os.mcp.probe_server import main as mcp_main
 
     return mcp_main(argv)
+
+
+def _graphiti_entitlements_main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="agent-os-runtime graphiti-entitlements",
+        description="管理 Graphiti 权限持久化文件（默认 data/graphiti_entitlements.json）",
+    )
+    p.add_argument(
+        "--path",
+        type=Path,
+        default=Path(
+            os.getenv("AGENT_OS_GRAPHITI_ENTITLEMENTS_PATH", "data/graphiti_entitlements.json")
+        ),
+        help="权限文件路径；未指定时优先取 AGENT_OS_GRAPHITI_ENTITLEMENTS_PATH",
+    )
+    p.add_argument("--show", action="store_true", help="打印当前权限文件（默认动作）")
+    p.add_argument(
+        "--set-global", default=None, help="设置全局允许 skill 列表（逗号分隔，* 代表全开）"
+    )
+    p.add_argument("--client-id", default=None, help="设置/删除某 client 权限时需要")
+    p.add_argument("--set-client", default=None, help="设置 client 允许 skill 列表（逗号分隔）")
+    p.add_argument(
+        "--remove-client", action="store_true", help="删除某 client 权限项（需 --client-id）"
+    )
+    p.add_argument(
+        "--expected-revision",
+        type=int,
+        default=None,
+        help="乐观并发控制：仅当当前 revision 匹配时才写入；不传则按最新 revision 写入",
+    )
+    args = p.parse_args(argv)
+
+    doc = load_entitlements_file(args.path)
+    actions: list[str] = []
+    set_global_vals: list[str] | None = None
+    set_client_vals: list[str] | None = None
+
+    if args.set_global is not None:
+        vals = sorted({x.strip() for x in args.set_global.split(",") if x.strip()})
+        set_global_vals = vals
+        doc["global_allowed_skill_ids"] = vals
+        actions.append("set_global")
+
+    if args.set_client is not None:
+        if not args.client_id:
+            print("--set-client 需要同时提供 --client-id", file=sys.stderr)
+            return 1
+        vals = sorted({x.strip() for x in args.set_client.split(",") if x.strip()})
+        set_client_vals = vals
+        doc["client_entitlements"][args.client_id] = vals
+        actions.append("set_client")
+
+    if args.remove_client:
+        if not args.client_id:
+            print("--remove-client 需要同时提供 --client-id", file=sys.stderr)
+            return 1
+        doc["client_entitlements"].pop(args.client_id, None)
+        actions.append("remove_client")
+
+    changed = args.set_global is not None or args.set_client is not None or args.remove_client
+    if changed:
+
+        def _mutate(cur: dict[str, object]) -> None:
+            if set_global_vals is not None:
+                cur["global_allowed_skill_ids"] = list(set_global_vals)
+            raw_map = cur.get("client_entitlements")
+            client_map = raw_map if isinstance(raw_map, dict) else {}
+            if set_client_vals is not None and args.client_id:
+                client_map[args.client_id] = list(set_client_vals)
+            if args.remove_client and args.client_id:
+                client_map.pop(args.client_id, None)
+            cur["client_entitlements"] = client_map
+
+        try:
+            before, doc = update_entitlements_file(
+                args.path,
+                expected_revision=args.expected_revision,
+                mutator=_mutate,
+            )
+        except EntitlementsRevisionConflictError as e:
+            print(
+                f"{e}；请先执行 `graphiti-entitlements --show` 获取最新 revision，再重试 --expected-revision {e.actual}",
+                file=sys.stderr,
+            )
+            return 2
+        actor = (
+            os.getenv("AGENT_OS_ACTOR")
+            or os.getenv("USERNAME")
+            or os.getenv("USER")
+            or "cli_unknown"
+        )
+        append_entitlements_audit(
+            action="+".join(actions) if actions else "update",
+            actor=actor,
+            source="cli.graphiti-entitlements",
+            entitlements_path=args.path,
+            before=before,
+            after=doc,
+            metadata={
+                "client_id": args.client_id,
+                "show": bool(args.show),
+                "expected_revision": args.expected_revision,
+            },
+        )
+
+    if args.show or not changed:
+        print(json.dumps({"path": str(args.path), "data": doc}, ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps({"status": "ok", "path": str(args.path)}, ensure_ascii=False, indent=2))
+    return 0
 
 
 def _chat_main(argv: list[str]) -> int:
@@ -362,6 +513,8 @@ def main(argv: list[str] | None = None) -> int:
         return _asset_rm_main(argv[1:])
     if argv and argv[0] == "mcp-probe-server":
         return _mcp_probe_server_main(argv[1:])
+    if argv and argv[0] == "graphiti-entitlements":
+        return _graphiti_entitlements_main(argv[1:])
     return _chat_main(argv)
 
 

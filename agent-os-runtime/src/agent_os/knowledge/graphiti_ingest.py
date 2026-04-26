@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from agent_os.knowledge.group_id import graphiti_group_id
+from agent_os.knowledge.group_id import system_graphiti_group_id
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,10 @@ async def ingest_episodes_file(
 
     JSON 格式示例见 `docs/examples/graphiti_episodes.example.json`。
     """
-    raw = json.loads(episodes_json.read_text(encoding="utf-8-sig"))
+    try:
+        raw = json.loads(episodes_json.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise ValueError(f"无法读取或解析 Graphiti episodes JSON: {e}") from e
     default_client = "demo_client"
     default_skill = "default_agent"
     items: list[dict[str, Any]]
@@ -64,7 +67,8 @@ async def ingest_episodes_file(
         desc = str(ep.get("source_description", "offline_ingest"))
         cid = str(ep.get("client_id") or default_client)
         sid = str(ep.get("skill_id") or ep.get("skill") or default_skill)
-        group_id = ep.get("group_id") or graphiti_group_id(cid, sid)
+        _ = cid
+        group_id = ep.get("group_id") or system_graphiti_group_id(sid)
         reference_time = _parse_reference_time(ep.get("reference_time_utc"))
         src_raw = ep.get("source", "text")
         src = (

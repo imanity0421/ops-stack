@@ -8,9 +8,15 @@ from agno.tools import tool
 
 from agent_os.evaluator.golden import check_violations
 from agent_os.memory.classify import suggest_memory_lane
-from agent_os.mcp.fixture_probe import format_probe_for_agent, load_probe_data
+from agent_os.memory.context_formatters import (
+    format_asset_hits_for_context,
+    format_hindsight_lines_for_context,
+    format_memory_hit_for_context,
+)
 from agent_os.memory.controller import MemoryController
 from agent_os.memory.models import MemoryLane, UserFact
+from agent_os.memory.ordered_context import RetrieveOrderedContextOptions
+from agent_os.mcp.fixture_probe import format_probe_for_agent, load_probe_data
 
 if TYPE_CHECKING:
     from agent_os.knowledge.graphiti_reader import GraphitiReadService
@@ -32,16 +38,6 @@ def filter_tools_by_manifest(tools: list[Callable], enabled: set[str] | None) ->
         logger.warning("enabled_tools 与当前工具无交集，回退为全部工具")
         return tools
     return out
-
-
-def _format_memory_hit(hit: Any, *, temporal_grounding: bool) -> str:
-    text = str(getattr(hit, "text", hit))
-    if not temporal_grounding:
-        return text
-    meta = getattr(hit, "metadata", {}) or {}
-    recorded = meta.get("recorded_at") or meta.get("created_at") or "记录时间未知"
-    source = meta.get("memory_source") or meta.get("source") or "unknown"
-    return f"[记录于 {recorded} | 来源 {source}] {text}"
 
 
 def _bounded_int(value: object, *, default: int, lower: int, upper: int) -> int:
@@ -74,12 +70,35 @@ def build_memory_tools(
     enable_hindsight: bool = True,
     enable_asset_store: bool = False,
     enable_temporal_grounding: bool = True,
+    enable_hindsight_synthesis: bool = False,
+    hindsight_synthesis_model: str | None = None,
+    hindsight_synthesis_max_candidates: int = 20,
+    enable_asset_synthesis: bool = False,
+    asset_synthesis_model: str | None = None,
+    asset_synthesis_max_candidates: int = 12,
     skill_compliance_dir: Path | None = None,
 ) -> list[Callable]:
     """绑定租户上下文后的记忆工具，供 Agno Agent 使用。
 
     exclude_tool_names：在 Manifest 白名单之后再剔除的工具 id（例如 Web 演示仅允许手动写入记忆）。
     """
+
+    _retrieve_ordered_opts = RetrieveOrderedContextOptions(
+        client_id=client_id,
+        user_id=user_id,
+        skill_id=skill_id,
+        enable_hindsight=enable_hindsight,
+        enable_temporal_grounding=enable_temporal_grounding,
+        knowledge=knowledge,
+        enable_asset_store=enable_asset_store,
+        asset_store=asset_store,
+        enable_hindsight_synthesis=enable_hindsight_synthesis,
+        hindsight_synthesis_model=hindsight_synthesis_model,
+        hindsight_synthesis_max_candidates=hindsight_synthesis_max_candidates,
+        enable_asset_synthesis=enable_asset_synthesis,
+        asset_synthesis_model=asset_synthesis_model,
+        asset_synthesis_max_candidates=asset_synthesis_max_candidates,
+    )
 
     @tool(
         name="record_client_fact",
@@ -97,6 +116,8 @@ def build_memory_tools(
             lane=MemoryLane.ATTRIBUTE,
             client_id=client_id,
             user_id=user_id,
+            scope="client_shared",
+            skill_id=skill_id,
             text=text,
             fact_type="attribute",
         )
@@ -122,6 +143,8 @@ def build_memory_tools(
             lane=MemoryLane.ATTRIBUTE,
             client_id=client_id,
             user_id=user_id,
+            scope="user_private" if user_id else "client_shared",
+            skill_id=skill_id,
             text=text,
             fact_type="preference",
         )
@@ -137,6 +160,8 @@ def build_memory_tools(
         description=(
             "【特权写入】仅记录明确、可复盘、会影响后续方法的任务反馈或教训。"
             "禁止记录闲聊、情绪噪声、模糊夸奖或一次性改字需求。写入 Hindsight。"
+            "可选 supersedes_event_id：填入既有 Hindsight 行的 event_id 表示本条取代该条（检索时隐藏被取代行）。"
+            "可选 weight_count（1–10000，默认 1）：同类合并统计权重。"
         ),
     )
     def record_task_feedback(
@@ -144,19 +169,27 @@ def build_memory_tools(
         task_id: str | None = None,
         deliverable_type: str | None = None,
         impact_on_preference: bool = False,
+        supersedes_event_id: str | None = None,
+        weight_count: Any = 1,
     ) -> str:
         text = _clean_required_text(feedback_text)
         if text is None:
             return "rejected: empty_text"
+        sid = (supersedes_event_id or "").strip() or None
+        wc = _bounded_int(weight_count, default=1, lower=1, upper=10000)
         fact = UserFact(
             lane=MemoryLane.TASK_FEEDBACK,
             client_id=client_id,
             user_id=user_id,
+            scope="task_scoped",
+            skill_id=skill_id,
             task_id=task_id,
             deliverable_type=deliverable_type,
             text=text,
             fact_type="feedback",
             impact_on_preference=impact_on_preference,
+            supersedes_event_id=sid,
+            weight_count=wc,
         )
         r = controller.ingest_user_fact(fact)
         if r.policy_rejected:
@@ -173,7 +206,10 @@ def build_memory_tools(
         hits = controller.search_profile(query, client_id=client_id, user_id=user_id, limit=8)
         if not hits:
             return "无匹配记忆。"
-        lines = [_format_memory_hit(h, temporal_grounding=enable_temporal_grounding) for h in hits]
+        lines = [
+            format_memory_hit_for_context(h, temporal_grounding=enable_temporal_grounding)
+            for h in hits
+        ]
         return "\n---\n".join(lines)
 
     @tool(
@@ -185,21 +221,37 @@ def build_memory_tools(
             query,
             client_id=client_id,
             limit=8,
+            user_id=user_id,
+            skill_id=skill_id,
             temporal_grounding=enable_temporal_grounding,
         )
         if not lines:
             return "无匹配历史教训或反馈。"
-        return "\n---\n".join(lines)
+        return format_hindsight_lines_for_context(
+            query,
+            lines,
+            enable_synthesis=enable_hindsight_synthesis,
+            synthesis_model=hindsight_synthesis_model,
+            max_candidates=hindsight_synthesis_max_candidates,
+        )
 
     @tool(
         name="search_reference_cases",
-        description="检索参考案例库（Asset Store，整案 few-shot 语感参考）。运行时仅检索，不做清洗与入库治理。",
+        description=(
+            "检索资产库（Asset Store）。asset_type 可传 style_reference（风格/Few-shot）"
+            "或 source_material（背景素材/故事资料）；运行时仅检索，不做清洗与入库治理。"
+        ),
     )
-    def search_reference_cases(query: str, limit: Any = 3, include_raw: bool = False) -> str:
+    def search_reference_cases(
+        query: str,
+        limit: Any = 3,
+        include_raw: bool = False,
+        asset_type: str | None = None,
+    ) -> str:
         if not enable_asset_store or asset_store is None:
             return "（当前未启用案例库 Asset Store）"
-        from agent_os.knowledge.asset_store import format_hits_for_agent
 
+        at = asset_type if asset_type in ("style_reference", "source_material") else None
         hits = asset_store.search(
             query,
             client_id=client_id,
@@ -207,11 +259,17 @@ def build_memory_tools(
             skill_id=skill_id,
             limit=_bounded_int(limit, default=3, lower=1, upper=6),
             include_raw=bool(include_raw),
+            asset_type=at,
         )
-        return format_hits_for_agent(
+        return format_asset_hits_for_context(
+            query,
             hits,
             include_raw=bool(include_raw),
+            asset_type=at,
             temporal_grounding=enable_temporal_grounding,
+            enable_synthesis=enable_asset_synthesis,
+            synthesis_model=asset_synthesis_model,
+            max_candidates=asset_synthesis_max_candidates,
         )
 
     @tool(
@@ -237,58 +295,7 @@ def build_memory_tools(
         description="按固定顺序**检索**上下文：① Mem0 主体画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）④ Asset Store 参考案例（若已配置）。多源冲突时如何整合到最终回复，须遵守系统指令中的「宪法·冲突解决序」（与检索顺序不同）。回答策略/方案类问题前应优先调用本工具。",
     )
     def retrieve_ordered_context(query: str) -> str:
-        blocks: list[str] = []
-        mem = controller.search_profile(query, client_id=client_id, user_id=user_id, limit=8)
-        blocks.append(
-            "## ① 主体画像 (Mem0)\n"
-            + (
-                "\n---\n".join(
-                    _format_memory_hit(h, temporal_grounding=enable_temporal_grounding) for h in mem
-                )
-                if mem
-                else "（无）"
-            )
-        )
-        if enable_hindsight:
-            hs = controller.search_hindsight(
-                query,
-                client_id=client_id,
-                limit=8,
-                temporal_grounding=enable_temporal_grounding,
-            )
-            blocks.append(
-                "## ② 历史教训与反馈 (Hindsight)\n" + ("\n---\n".join(hs) if hs else "（无）")
-            )
-        else:
-            blocks.append("## ② 历史教训与反馈 (Hindsight)\n（当前未启用）")
-        if knowledge is not None:
-            dom = knowledge.search_domain_knowledge(query, client_id=client_id, skill_id=skill_id)
-            blocks.append("## ③ 领域知识 (Graphiti / 降级)\n" + dom)
-        else:
-            blocks.append("## ③ 领域知识 (Graphiti)\n（当前未挂载 Graphiti，依赖模型常识）")
-
-        if enable_asset_store and asset_store is not None:
-            from agent_os.knowledge.asset_store import format_hits_for_agent
-
-            hits = asset_store.search(
-                query,
-                client_id=client_id,
-                user_id=user_id,
-                skill_id=skill_id,
-                limit=3,
-                include_raw=False,
-            )
-            blocks.append(
-                "## ④ 参考案例 (Asset Store)\n"
-                + format_hits_for_agent(
-                    hits,
-                    include_raw=False,
-                    temporal_grounding=enable_temporal_grounding,
-                )
-            )
-        else:
-            blocks.append("## ④ 参考案例 (Asset Store)\n（当前未启用）")
-        return "\n\n".join(blocks)
+        return controller.retrieve_ordered_context(query, _retrieve_ordered_opts)
 
     tools: list[Callable] = [
         suggest_memory_lane_tool,
