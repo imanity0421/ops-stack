@@ -9,6 +9,8 @@ from typing import Any
 
 from agent_os import cli
 from agent_os.knowledge import asset_ingest as asset_ingest_mod
+from agent_os.memory.hindsight_store import HindsightStore
+from agent_os.memory.models import MemoryLane, UserFact
 
 
 def test_cli_task_memory_records_turn_and_injects_index(
@@ -47,6 +49,107 @@ def test_cli_task_memory_records_turn_and_injects_index(
             "SELECT role, content FROM session_messages ORDER BY sequence_no"
         ).fetchall()
     assert rows == [("user", "帮我做一个通用方案"), ("assistant", "ok")]
+
+
+def test_cli_hindsight_index_status_rebuild_invalidate(tmp_path: Path, capsys) -> None:
+    hindsight = tmp_path / "hindsight.jsonl"
+    store = HindsightStore(hindsight)
+    store.append_feedback(
+        UserFact(
+            lane=MemoryLane.TASK_FEEDBACK,
+            client_id="c1",
+            text="运维教训：交付前必须确认关键约束。",
+            fact_type="feedback",
+        )
+    )
+
+    assert cli.main(["hindsight-index", "rebuild", "--path", str(hindsight)]) == 0
+    rebuilt = json.loads(capsys.readouterr().out)
+    assert rebuilt["status"] == "ok"
+    assert rebuilt["row_count"] == 1
+
+    assert cli.main(["hindsight-index", "status", "--path", str(hindsight)]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["fresh"] is True
+
+    assert cli.main(["hindsight-index", "invalidate", "--path", str(hindsight)]) == 0
+    removed = json.loads(capsys.readouterr().out)
+    assert removed == {"status": "ok", "removed": True}
+
+
+def test_cli_hindsight_vector_index_ops(tmp_path: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "agent_os.memory.hindsight_vector._embed_text_openai",
+        lambda text, *, cfg: [1.0, 0.0],
+    )
+    hindsight = tmp_path / "hindsight.jsonl"
+    vector_path = tmp_path / "hindsight_vector.lancedb"
+    HindsightStore(hindsight).append_feedback(
+        UserFact(
+            lane=MemoryLane.TASK_FEEDBACK,
+            client_id="c1",
+            text="运维教训：发布前必须先跑回归测试。",
+            fact_type="feedback",
+        )
+    )
+
+    assert (
+        cli.main(
+            [
+                "hindsight-index",
+                "vector-rebuild",
+                "--path",
+                str(hindsight),
+                "--vector-path",
+                str(vector_path),
+            ]
+        )
+        == 0
+    )
+    rebuilt = json.loads(capsys.readouterr().out)
+    assert rebuilt["status"] == "ok"
+    assert rebuilt["row_count"] == 1
+
+    assert (
+        cli.main(
+            [
+                "hindsight-index",
+                "vector-status",
+                "--path",
+                str(hindsight),
+                "--vector-path",
+                str(vector_path),
+            ]
+        )
+        == 0
+    )
+    status = json.loads(capsys.readouterr().out)
+    assert status["enabled"] is True
+    assert status["fresh"] is True
+
+
+def test_cli_hindsight_vector_rebuild_error_returns_nonzero(monkeypatch, tmp_path: Path, capsys) -> None:
+    class _Store:
+        def __init__(self, *args, **kwargs):
+            _ = (args, kwargs)
+
+        def rebuild_vector_index(self):
+            return {"status": "error", "reason": "delete_before_rebuild_failed"}
+
+    monkeypatch.setattr(cli, "HindsightStore", _Store)
+
+    rc = cli.main(
+        [
+            "hindsight-index",
+            "vector-rebuild",
+            "--path",
+            str(tmp_path / "hindsight.jsonl"),
+        ]
+    )
+
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert out["status"] == "error"
 
 
 def test_cli_task_memory_records_effective_skill_for_unknown_request(

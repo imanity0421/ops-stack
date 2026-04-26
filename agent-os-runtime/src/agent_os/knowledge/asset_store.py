@@ -1,3 +1,10 @@
+"""离线资产库：保存几千字级长文案例、素材和风格参考。
+
+Asset Store 是独立的离线资产治理域，不走高频 ``MemoryController`` 写入路径。
+它面向低频导入、清洗、特征抽取、去重与人工复核；运行时只做受 scope 约束的
+检索与少量注入，避免把大体量案例混入 Mem0/Hindsight 的在线记忆治理闭环。
+"""
+
 from __future__ import annotations
 
 import hashlib

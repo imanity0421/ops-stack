@@ -199,6 +199,96 @@ def test_hindsight_synthesis_runs_only_when_enabled(tmp_path: Path, monkeypatch)
     assert called["n"] == 1
 
 
+def test_search_past_lessons_exposes_debug_scores_and_skips_synthesis(
+    tmp_path: Path, monkeypatch
+) -> None:
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.TASK_FEEDBACK,
+            client_id="c1",
+            user_id="u1",
+            skill_id="default_agent",
+            text="复盘结论：交付前必须确认关键约束。",
+            fact_type="feedback",
+        )
+    )
+    called = {"n": 0}
+
+    def fake_synth(**kwargs):
+        called["n"] += 1
+        return "SYNTHESIZED"
+
+    monkeypatch.setattr(
+        "agent_os.memory.hindsight_synthesizer.synthesize_hindsight_context",
+        fake_synth,
+    )
+    tools = build_memory_tools(
+        ctrl,
+        "c1",
+        "u1",
+        skill_id="default_agent",
+        enable_hindsight_synthesis=True,
+        enable_hindsight_debug_tools=True,
+    )
+
+    out = _tool_by_name(tools, "search_past_lessons").entrypoint(
+        "关键约束",
+        debug_scores=True,
+    )
+
+    assert "score=" in out
+    assert "reasons=" in out
+    assert called["n"] == 0
+
+
+def test_retrieve_ordered_context_exposes_hindsight_debug_scores(tmp_path: Path) -> None:
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.TASK_FEEDBACK,
+            client_id="c1",
+            user_id="u1",
+            skill_id="default_agent",
+            text="复盘结论：交付前必须确认关键约束。",
+            fact_type="feedback",
+        )
+    )
+    tools = build_memory_tools(ctrl, "c1", "u1", skill_id="default_agent")
+
+    out = _tool_by_name(tools, "retrieve_ordered_context").entrypoint(
+        "关键约束",
+        debug_scores=True,
+    )
+
+    assert out.startswith("debug_scores_disabled:")
+
+    enabled_tools = build_memory_tools(
+        ctrl,
+        "c1",
+        "u1",
+        skill_id="default_agent",
+        enable_hindsight_debug_tools=True,
+    )
+    out = _tool_by_name(enabled_tools, "retrieve_ordered_context").entrypoint(
+        "关键约束",
+        debug_scores=True,
+    )
+    assert "## ② 历史教训与反馈 (Hindsight)" in out
+    assert "score=" in out
+    assert "reasons=" in out
+
+
 class _HitAssetStore(NullAssetStore):
     def search(self, *args, **kwargs):
         return [

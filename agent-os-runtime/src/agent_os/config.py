@@ -32,6 +32,21 @@ def _env_int(name: str, default: int, *, min_value: int | None = None) -> int:
     return value
 
 
+def _env_float(name: str, default: float, *, min_value: float | None = None) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        logger.warning("%s=%r 不是合法浮点数，使用默认值 %s", name, raw, default)
+        return default
+    if min_value is not None and value < min_value:
+        logger.warning("%s=%r 小于最小值 %s，使用默认值 %s", name, raw, min_value, default)
+        return default
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     """从环境变量读取配置；未设置项使用安全默认值。"""
@@ -43,6 +58,8 @@ class Settings:
     snapshot_every_n_turns: int = 5
     local_memory_path: Path = Path("data/local_memory.json")
     hindsight_path: Path = Path("data/hindsight.jsonl")
+    #: MemoryController 写入账本，用于跨进程幂等去重与基础审计
+    memory_ledger_path: Path = Path("data/memory_ledger.sqlite")
     #: 是否启用 Hindsight 存储与相关工具（默认开启）
     enable_hindsight: bool = True
     #: 是否允许 Agent 写入 Mem0（record_client_*），默认开启；关闭后仍可读取画像（search_client_memory）
@@ -85,7 +102,7 @@ class Settings:
     runtime_timezone: str = "Asia/Shanghai"
     #: 是否启用 Memory Policy 服务端 gate，防止脏记忆写入
     enable_memory_policy: bool = True
-    #: Memory Policy 模式：reject 拒写；warn 仅记录日志后放行
+    #: Memory Policy 模式：reject 拒写；warn/audit 记录审计后放行
     memory_policy_mode: str = "reject"
     #: 是否在记忆检索渲染中带时间戳
     enable_temporal_grounding: bool = True
@@ -95,12 +112,28 @@ class Settings:
     hindsight_synthesis_model: str | None = None
     #: 送入 Hindsight LLM 加工层的最大候选数
     hindsight_synthesis_max_candidates: int = 20
+    #: 是否允许 Agent 工具显式输出 Hindsight debug score（默认关闭）
+    enable_hindsight_debug_tools: bool = False
+    #: 是否启用 Hindsight LanceDB 派生向量候选召回（P3-1 正式 Hybrid Recall，默认关闭）
+    enable_hindsight_vector_recall: bool = False
+    #: Hindsight LanceDB 派生索引路径；为空时使用 hindsight 文件旁的默认目录
+    hindsight_vector_index_path: Path | None = None
+    #: Hindsight 向量命中进入最终排序的分数权重
+    hindsight_vector_score_weight: float = 6.0
+    #: Hindsight 向量召回阶段最多取回的候选行数
+    hindsight_vector_candidate_limit: int = 160
     #: 是否启用同一 session 内的 Task-aware Working Memory（首批为 store/prompt 注入）
     enable_task_memory: bool = False
     #: Task-aware Working Memory 本地 SQLite 路径
     task_memory_sqlite_path: Path = Path("data/task_memory.db")
     #: 当前 task summary 的最大建议长度（生成器使用；store 不强截断）
     task_summary_max_chars: int = 800
+    #: 当前 task 消息数至少达到该值才生成首个 summary
+    task_summary_min_messages: int = 8
+    #: 距离上次 summary 新增至少 N 条消息才滚动更新
+    task_summary_every_n_messages: int = 6
+    #: Task summary 生成模型；为空时沿用 AGENT_OS_MODEL，缺 key 时使用确定性 fallback
+    task_summary_model: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -135,8 +168,10 @@ class Settings:
             "no",
         )
         policy_mode = os.getenv("AGENT_OS_MEMORY_POLICY_MODE", "reject").strip().lower()
+        if policy_mode == "audit":
+            policy_mode = "warn"
         if policy_mode not in ("reject", "warn"):
-            raise ValueError("AGENT_OS_MEMORY_POLICY_MODE 须为 reject 或 warn")
+            raise ValueError("AGENT_OS_MEMORY_POLICY_MODE 须为 reject、warn 或 audit")
 
         return cls(
             openai_api_key=os.getenv("OPENAI_API_KEY"),
@@ -152,6 +187,9 @@ class Settings:
                     "AGENT_OS_HISTORICAL_PATH",
                     os.getenv("AGENT_OS_HISTORICAL_STUB_PATH", "data/hindsight.jsonl"),
                 )
+            ),
+            memory_ledger_path=Path(
+                os.getenv("AGENT_OS_MEMORY_LEDGER_PATH", "data/memory_ledger.sqlite")
             ),
             enable_hindsight=os.getenv("AGENT_OS_ENABLE_HINDSIGHT", "1").lower()
             not in ("0", "false", "no"),
@@ -200,12 +238,36 @@ class Settings:
             hindsight_synthesis_max_candidates=_env_int(
                 "AGENT_OS_HINDSIGHT_SYNTHESIS_MAX_CANDIDATES", 20, min_value=1
             ),
+            enable_hindsight_debug_tools=(
+                os.getenv("AGENT_OS_ENABLE_HINDSIGHT_DEBUG_TOOLS", "0").lower()
+                in ("1", "true", "yes")
+            ),
+            enable_hindsight_vector_recall=(
+                os.getenv("AGENT_OS_ENABLE_HINDSIGHT_VECTOR_RECALL", "0").lower()
+                in ("1", "true", "yes")
+            ),
+            hindsight_vector_index_path=Path(hv)
+            if (hv := (os.getenv("AGENT_OS_HINDSIGHT_VECTOR_INDEX_PATH") or "").strip())
+            else None,
+            hindsight_vector_score_weight=_env_float(
+                "AGENT_OS_HINDSIGHT_VECTOR_SCORE_WEIGHT", 6.0, min_value=0.0
+            ),
+            hindsight_vector_candidate_limit=_env_int(
+                "AGENT_OS_HINDSIGHT_VECTOR_CANDIDATE_LIMIT", 160, min_value=1
+            ),
             enable_task_memory=os.getenv("AGENT_OS_ENABLE_TASK_MEMORY", "0").lower()
             in ("1", "true", "yes"),
             task_memory_sqlite_path=Path(
                 os.getenv("AGENT_OS_TASK_MEMORY_DB_PATH", "data/task_memory.db")
             ),
             task_summary_max_chars=_env_int("AGENT_OS_TASK_SUMMARY_MAX_CHARS", 800, min_value=1),
+            task_summary_min_messages=_env_int(
+                "AGENT_OS_TASK_SUMMARY_MIN_MESSAGES", 8, min_value=1
+            ),
+            task_summary_every_n_messages=_env_int(
+                "AGENT_OS_TASK_SUMMARY_EVERY_N_MESSAGES", 6, min_value=1
+            ),
+            task_summary_model=(os.getenv("AGENT_OS_TASK_SUMMARY_MODEL") or "").strip() or None,
         )
 
 

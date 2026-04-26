@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -77,6 +78,7 @@ def build_memory_tools(
     asset_synthesis_model: str | None = None,
     asset_synthesis_max_candidates: int = 12,
     skill_compliance_dir: Path | None = None,
+    enable_hindsight_debug_tools: bool = False,
 ) -> list[Callable]:
     """绑定租户上下文后的记忆工具，供 Agno Agent 使用。
 
@@ -214,9 +216,14 @@ def build_memory_tools(
 
     @tool(
         name="search_past_lessons",
-        description="仅检索 Hindsight 中的历史反馈与复盘教训（第二层）。完整检索请优先用 retrieve_ordered_context。",
+        description=(
+            "仅检索 Hindsight 中的历史反馈与复盘教训（第二层）。完整检索请优先用 retrieve_ordered_context。"
+            "debug_scores 默认 false；仅排查召回污染/排序问题时才设为 true。"
+        ),
     )
-    def search_past_lessons(query: str) -> str:
+    def search_past_lessons(query: str, debug_scores: bool = False) -> str:
+        if debug_scores and not enable_hindsight_debug_tools:
+            return "debug_scores_disabled: 需要显式启用 Hindsight 调试工具模式。"
         lines = controller.search_hindsight(
             query,
             client_id=client_id,
@@ -224,13 +231,14 @@ def build_memory_tools(
             user_id=user_id,
             skill_id=skill_id,
             temporal_grounding=enable_temporal_grounding,
+            debug_scores=bool(debug_scores),
         )
         if not lines:
             return "无匹配历史教训或反馈。"
         return format_hindsight_lines_for_context(
             query,
             lines,
-            enable_synthesis=enable_hindsight_synthesis,
+            enable_synthesis=enable_hindsight_synthesis and not bool(debug_scores),
             synthesis_model=hindsight_synthesis_model,
             max_candidates=hindsight_synthesis_max_candidates,
         )
@@ -292,10 +300,21 @@ def build_memory_tools(
 
     @tool(
         name="retrieve_ordered_context",
-        description="按固定顺序**检索**上下文：① Mem0 主体画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）④ Asset Store 参考案例（若已配置）。多源冲突时如何整合到最终回复，须遵守系统指令中的「宪法·冲突解决序」（与检索顺序不同）。回答策略/方案类问题前应优先调用本工具。",
+        description=(
+            "按固定顺序**检索**上下文：① Mem0 主体画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）④ Asset Store 参考案例（若已配置）。"
+            "多源冲突时如何整合到最终回复，须遵守系统指令中的「宪法·冲突解决序」（与检索顺序不同）。"
+            "回答策略/方案类问题前应优先调用本工具。debug_scores 默认 false；仅排查 Hindsight 召回污染/排序问题时才设为 true。"
+        ),
     )
-    def retrieve_ordered_context(query: str) -> str:
-        return controller.retrieve_ordered_context(query, _retrieve_ordered_opts)
+    def retrieve_ordered_context(query: str, debug_scores: bool = False) -> str:
+        if debug_scores and not enable_hindsight_debug_tools:
+            return "debug_scores_disabled: 需要显式启用 Hindsight 调试工具模式。"
+        opts = (
+            replace(_retrieve_ordered_opts, hindsight_debug_scores=True)
+            if bool(debug_scores)
+            else _retrieve_ordered_opts
+        )
+        return controller.retrieve_ordered_context(query, opts)
 
     tools: list[Callable] = [
         suggest_memory_lane_tool,

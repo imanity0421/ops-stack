@@ -358,3 +358,278 @@ PYTHONPATH=src:. pytest
 - **已完成**：围绕 `retrieve_ordered_context` 增加端到端质量样例，验证四层记忆在典型任务中的注入顺序、去重与冲突处理。
 - **已完成**：补充 Memory V2 的最小验收清单，明确哪些行为属于当前阶段完成，哪些属于后续平台化工程。
 
+## Memory V2.1 在线治理增强
+
+Memory V2 核心闭环已经完成。V2.1 不扩展 Graphiti 权限平台、MCP 世界感知或离线炼金能力，而是补齐在线记忆底座的四个治理缺口：
+
+1. `AsyncReviewService` 不能绕过 `MemoryController` 与 `MemoryPolicy`。
+2. Dedup 不能只存在于进程内存；重启后同一条记忆不得重复写入。
+3. `TaskMemory` 不能只保留 schema；需要形成自动滚动 summary 闭环。
+4. `Hindsight` 需要补齐双时态，区分真实事件时间与系统记录时间。
+
+### 1. 统一写入入口
+
+所有在线写入必须统一进入：
+
+```text
+业务/工具/AsyncReview/Ingest
+  -> MemoryController.ingest_user_fact(UserFact)
+  -> MemoryPolicy
+  -> MemoryLedger / Dedup
+  -> Mem0 或 Hindsight
+```
+
+`HindsightStore` 是低层 append-only 存储适配器，不再作为业务层推荐写入口。`AsyncReviewService` 只能生成候选 `UserFact`，再交给 `MemoryController` 写入；这样 policy、dedup、scope、metadata、双时态和审计语义都不会被绕开。
+
+### 2. 持久化 Dedup Ledger
+
+V2.1 引入轻量 SQLite `MemoryLedger`，用于持久化写入账本和幂等去重。目标不是做权限平台，而是解决单机/轻量部署下的重复写入、审计与失败恢复。
+
+推荐字段：
+
+```sql
+memory_write_ledger (
+  ledger_id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  user_id TEXT,
+  scope TEXT NOT NULL,
+  lane TEXT NOT NULL,
+  target TEXT NOT NULL,
+  canonical_hash TEXT NOT NULL,
+  idempotency_key TEXT,
+  text_norm TEXT NOT NULL,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL,
+  policy_reason TEXT,
+  storage_ref TEXT,
+  recorded_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(client_id, user_id, scope, lane, canonical_hash)
+)
+```
+
+写入状态建议只保留少量可解释状态：
+
+- `pending`：已登记，底层存储尚未提交。
+- `committed`：底层存储写入成功；后续相同 canonical hash 直接跳过。
+- `duplicate`：本次请求命中已提交记录。
+- `rejected`：被 policy 拒绝。
+- `failed`：底层写入失败，可按状态和时间决定是否重试。
+
+最小 canonical 规则：trim、折叠空白、casefold。不要过度清洗中文标点，避免把不同规则误合并。
+
+### 3. TaskMemory 自动滚动 Summary
+
+`TaskMemoryStore` 继续限定为同 session 的 working memory，不承载跨 session 长期事实。V2.1 增加 `TaskSummaryService`，在当前 task 的未总结消息超过阈值时自动生成或合并 summary，并写回 `task_summaries`。
+
+触发条件：
+
+- 当前 task 消息数达到 `AGENT_OS_TASK_SUMMARY_MIN_MESSAGES`。
+- 距离上次 summary 新增消息数达到 `AGENT_OS_TASK_SUMMARY_EVERY_N_MESSAGES`。
+- CLI/API 当前轮 assistant 输出后触发一次轻量更新。
+
+Summary 使用结构化格式，目标是恢复工作现场，而不是复述聊天：
+
+```text
+- 当前任务目标：
+- 用户已确认的约束：
+- 已做出的关键决定：
+- 当前交付物状态：
+- 待办/未决问题：
+- 不要重复尝试的方向：
+- 最近一次用户反馈：
+```
+
+注入顺序建议：
+
+```text
+当前 task summary
+  -> 本 session 任务短索引
+  -> Agno 最近 N 条消息
+  -> retrieve_ordered_context
+```
+
+Summary 指令必须继续声明：只用于当前 session/task 连贯性，不代表长期事实，不得自动写入 Mem0/Hindsight/Asset/Graphiti。
+
+### 4. Hindsight 双时态
+
+Hindsight 至少补齐 `event_at` 与既有 `recorded_at`：
+
+- `event_at`：经验对应的真实事件发生时间，可为空。
+- `recorded_at`：系统写入该记忆的事务时间，必须存在。
+
+后续可继续扩展 `observed_at`、`effective_at`、`expires_at`，但 V2.1 不强制所有旧数据迁移。legacy JSONL 缺少 `event_at` 时应继续可读，并在 temporal grounding 中显示“发生时间未知”。
+
+推荐渲染：
+
+```text
+[发生于 2026-04-25T15:20:00Z | 记录于 2026-04-26T09:03:12Z | 来源 async_review] ...
+```
+
+排序时，相关性仍优先；`event_at` 用于判断现实新旧，`recorded_at` 用于判断系统记录新旧。两者冲突时不隐藏信息，由 temporal grounding 暴露给模型。
+
+### V2.1 最小验收清单
+
+- `AsyncReviewService` 不再直接调用 `HindsightStore.append_lesson`。
+- 同一条 Mem0/Hindsight 记忆在进程重启后不会重复写入。
+- 写入账本能追踪 `pending`、`committed`、`duplicate`、`rejected`、`failed`。
+- Hindsight 新写入同时具备 `event_at` 语义与 `recorded_at` 事务时间。
+- 长对话超过阈值后能自动生成或更新当前 task summary。
+- 下一轮 agent 构建时会注入最新当前 task summary。
+- 旧 JSONL、本地 Mem0 和旧 task summary 数据继续可读，缺字段不崩溃。
+
+## Memory V2.2 执行清单：Append-only 经验治理
+
+V2 与 V2.1 的核心闭环已经完成。V2.2 不改变四层架构，也不把 Asset Store 纳入高频在线写入 Controller；主线是修正已发现的实现缺陷，并把 Hindsight 从“能写能查”升级为 append-only 经验日志 + 评分型召回治理。
+
+### 0. 边界确认
+
+- **Policy 防火墙优化**：属于独立非耦合事项，可以并行列入工作计划；它只决定候选记忆是否允许写入，不承担 Hindsight 召回演化。
+- **Hindsight**：继续坚持 append-only，只增不减。历史行不因取代、总结或压缩而删除；防遗忘与记忆爆炸治理通过时序、评分、聚类、预算和派生 summary/index 在召回层完成。
+- **Asset Store**：定位为离线长文资产治理域，主要保存几千字级案例、素材和风格参考。它不走高频 `MemoryController` 写入路径，而由离线导入、清洗、特征抽取、去重、人工复核和 scope 可见性治理。
+- **Graphiti**：仍作为系统级静态知识图谱，不接受普通用户在线写入；双时态不强制覆盖此层。
+
+### P0：实现缺陷修复
+
+1. **FastAPI 复盘传参错误**
+   - 修复 `examples/web_chat_fastapi.py` 中 `AsyncReviewService.from_env(ctrl.hindsight_store)`，应传入 `MemoryController`。
+   - 增加或补充验证，避免业务入口把低层 store 当成 controller 传入。
+
+2. **Dedup 指纹统一**
+   - `MemoryController._fingerprint` 必须复用 `MemoryLedger` 的 canonical 规范化规则（trim、折叠空白、casefold）。
+   - 目标：进程内去重与持久化 ledger 去重对同一文本给出一致判断，避免重启前后或空白差异导致行为分裂。
+
+3. **Hindsight 双时态排序修正**
+   - `event_at` 用于判断物理现实中的新旧；`recorded_at` 用于判断系统记录的新旧。
+   - 排序时不得继续使用 `event_at or recorded_at` 混合字段。
+   - 缺少 `event_at` 的 legacy 行继续可读，但在现实新鲜度上不冒充新事件；可由 `recorded_at` 提供轻量系统记录新鲜度。
+
+4. **审计语义补强（后续 P0/P1 交界）**
+   - `MemoryLedger.idempotency_key` 已有字段，后续应接入 `MemoryController.ingest_user_fact`。
+   - ledger 命中 duplicate 时，API 语义和持久审计语义需保持一致；是否新增 duplicate attempt 行可单独评估。
+   - 业务层不推荐直接调用 `HindsightStore.append_lesson`，它保留为低层/测试/迁移适配器。
+
+### P1：极简验收范围（已完成）
+
+P1 只保留 Hindsight append-only 经验治理的最小闭环，不承接全部新增发现：
+
+1. **召回策略模块化**：抽出 `HindsightRetrievalPolicy`，把 Hindsight 召回从存储读写中拆出来，便于测试与解释。
+2. **Append-only 语义修正**：`supersedes_event_id` 不删除、不隐藏旧行，只作为旧行召回降权信号。
+3. **双时态排序修正**：`event_at` 表示现实事件时间，`recorded_at` 表示系统记录时间，评分时不再混用。
+4. **基础 query/预算/解释**：补轻量中文 query 特征、基础 cluster/category 预算与 `debug_scores` 解释输出，避免明显过度召回。
+5. **经验质量字段入链**：Hindsight 新写入和召回评分支持 `validity_score`、`specificity_score`、`recurrence_count`、`negative_evidence_count`、`last_reinforced_at`。
+6. **AsyncReview 结构化候选**：复盘输出优先使用结构化 JSON lesson，并兼容旧文本格式；写入仍经过 MemoryPolicy 与 MemoryController。
+
+P1 结论：**已完成并冻结**。后续发现不再自动并入 P1，按真实优先级进入 P2/P3。
+
+### P2：继续执行清单（治理、审计、运维）
+
+P2 是“让现有 Memory V2 更可治理、更可调试、更可接入真实反馈”的工程层，不改变四层记忆架构。后续执行只允许从本节取任务；P3/P4 只记录，不实现。
+
+1. **Policy 防火墙独立增强**：已完成。
+   - 已完成：规则 gate 输出结构化分类、规则 id、严重度与命中信号，可区分敏感信息、临时/不确定内容、稳定偏好、长期事实、任务反馈、可执行 lesson、低信号内容。
+   - 已完成：补充 secret-like 内容拦截，避免明显 API key / token / password 类文本进入记忆。
+   - 已完成：`AGENT_OS_MEMORY_POLICY_MODE=warn|audit` 可作为 dry-run/audit 模式，策略拒绝项会放行但标记 `policy_warning`，并在配置 ledger 时把 `policy_warning:*` 写入 `policy_reason`。
+   - 已完成：补充轻量固定评估集与 `evaluate_policy_cases()` report，用于观察规则 gate 的误杀/漏写；不做 LLM gate。
+   - P2 风险：warn/audit 的持久审计依赖 `memory_ledger_path`；未配置 ledger 时只能日志告警，无法形成可查询的审计账本。
+
+2. **MemoryLedger 审计语义补强**：已完成。
+   - 已完成：`MemoryController.ingest_user_fact` 会把 `UserFact.source_message_id` 接入 `MemoryLedger.idempotency_key`。
+   - 已完成：同一 client/user/scope/lane 下重复使用同一个 idempotency key，会按同一次上游写入处理；即使文本有细微变化，也会返回 `ledger_idempotency_*_duplicate`，避免重试导致重复记忆。
+   - 已完成：Policy reject 写入账本时也会记录 `idempotency_key`，便于把被拒绝写入与上游消息关联。
+   - 已完成：duplicate attempt 采用轻量 `memory_write_attempts` 行记录，仅记录幂等/哈希重复尝试的最小审计信息；不做完整审计平台。
+   - P2 风险：当前幂等键来源是 `source_message_id`；若上游工具/API 不传该字段，仍只能退回 canonical hash 去重，无法表达“同一次请求但文本被重试改写”的幂等语义。
+
+3. **Hindsight 调试入口治理**：已完成。
+   - 已完成：Agent 工具 `search_past_lessons(..., debug_scores=True)` 与 `retrieve_ordered_context(..., debug_scores=True)` 可临时输出评分原因；默认关闭。
+   - 已完成：Web 示例新增 `/api/memory/hindsight/search`，默认不返回评分，`debug_scores=true` 时必须通过 admin token/host 校验。
+   - 已完成：Agent 工具侧新增显式调试运行开关，默认禁止 `debug_scores=True` 输出评分明细；仅 `AGENT_OS_ENABLE_HINDSIGHT_DEBUG_TOOLS=1` 或等价设置启用。
+
+4. **Hindsight sidecar index 运维治理**：已完成。
+   - 已完成：首次检索可构建 sidecar index；文件签名匹配时复用；append 时可增量更新。
+   - 已完成：`HindsightStore.invalidate_index()` 可删除派生索引；Web 删除 Hindsight JSONL 行后会同步清理 `.index.json`。
+   - 已完成：`HindsightStore` 提供 `index_status()` / `rebuild_index()` / `invalidate_index()`，CLI 提供 `agent-os-runtime hindsight-index status|rebuild|invalidate --path <hindsight.jsonl>`；不做 watcher。
+   - P2 风险：若引入加密、脱敏或保留期策略，sidecar 必须与 JSONL 同步处理；该平台化安全治理归 P4。
+
+5. **真实 outcome 接口约定**：已完成。
+   - 已完成：`AsyncReviewService` 结构化候选可携带 `outcome` / `outcome_score` / `is_success`。
+   - 已完成：调用方可通过 `submit` / `submit_and_wait` 传入真实 outcome，并优先覆盖模型候选值。
+   - 已完成：接口约定明确为只有已经观测到真实验收结果的上游（如 Web session 结束、人工验收、外部调度器显式回填）可传入真实 outcome；模型复盘 outcome 只作为弱信号；已补最小测试。不接 CI/业务平台。
+   - P2 风险：模型复盘产出的 outcome 只能作为弱信号，不能替代真实结果。
+
+6. **经验强化生产者治理**：已完成。
+   - 已完成：`AsyncReviewService` 写入前可用轻量历史候选匹配推导 `recurrence_count`、继承已有 `negative_evidence_count`，并设置 `last_reinforced_at` 为系统观测时间。
+   - 已完成：字段语义固定为 `event_at` 表示真实反馈/经验事件发生时间，`recorded_at` 表示系统写入观察时间，`last_reinforced_at` 表示系统最近一次观测到相似强化证据的时间；已补最小测试。不接真实业务反馈源。
+   - P2 风险：当前生产者仍是文本相似匹配，不能证明经验真实有效或无效；真实复用结果接入归 P3。
+
+7. **当前 task 防遗忘治理**：已完成。
+   - 已完成：当前 session/task 由 `TaskMemoryStore` 与 `TaskSummaryService` 负责。
+   - 已完成：Task summary 指令明确仅用于当前 session/task 连贯性，不代表长期事实，不得自动写入 Mem0、Hindsight、Asset、Graphiti；已补最小验收测试。
+
+P2 审核结论：**7 项均已完成，当前计划已 close**。P3/P4 后续必须独立启动、独立验收；发现的新问题必须按真实优先级归档。
+
+### P3：语义质量增强
+
+P3 是质量上限层，必须在不破坏 Hindsight append-only、不污染 Mem0/Asset/Graphiti 的前提下独立推进。
+
+1. **Embedding / rerank 语义召回**：Hindsight Hybrid Recall 工程闭环已完成。
+   - 已完成：正式路径为 Hindsight LanceDB 派生向量索引；原始 Hindsight 仍以 JSONL append-only 为准，向量索引只作为可重建 sidecar 候选池。
+   - 已完成：启用 `AGENT_OS_ENABLE_HINDSIGHT_VECTOR_RECALL=1` 后，检索流程为 query embedding + metadata 过滤（client/user/task/skill/deliverable）取候选；向量候选会与确定性候选取并集，再回到现有 Hindsight scoring/budget/debug 管线排序。
+   - 已完成：向量命中的 `_distance` 会以 `vector_distance` / `vector_bonus` 进入 debug reason 与最终排序，可用 `AGENT_OS_HINDSIGHT_VECTOR_SCORE_WEIGHT` 调整权重。
+   - 已完成：向量 sidecar 行记录 `schema_version`、`embedding_model`、source size/mtime，`vector-status` 可判断索引是否 stale。
+   - 已完成：增量 append 对同一 `source_path + event_id` 做逻辑 upsert，避免重放造成重复向量行。
+   - 已完成：Web 手工删除 Hindsight 行会同步清理 JSON sidecar 与 vector sidecar，避免幽灵向量。
+   - 已完成：Hindsight JSONL append 增加跨进程文件锁；Ledger SQLite 增加 busy timeout / WAL / NORMAL synchronous，降低并发写风险。
+   - 已完成：CLI 通过 `agent-os-runtime hindsight-index vector-status|vector-rebuild|vector-invalidate` 维护 LanceDB sidecar。
+   - 已裁剪：本地轻量 `semantic_recall` fallback 已移除，避免与 LanceDB Hybrid Recall 形成双轨语义排序。
+   - 边界：Mem0 不接 LanceDB sidecar，避免与 Mem0 自身后端搜索形成两套长期画像索引；Asset Store 继续使用既有 LanceDB 能力。
+   - 后续平台化空间：真正原子 rebuild、批量 embedding/限流/成本报表、LanceDB where 下推优化可归入 P4 运维平台化；当前失败时回退 JSONL 确定性检索，不影响原始记忆可用性。
+
+### 本轮代码审查记录（P0-P3-1）
+
+- 已修复：P3-1 向量候选与确定性候选原为二选一，已改为并集后统一 rerank，避免向量索引缺行导致新 JSONL 经验漏召回。
+- 已修复：Web 删除 Hindsight 行后只清理 JSON sidecar，已补 vector sidecar invalidation。
+- 已修复：Hindsight JSONL append 无跨进程锁，已补轻量文件锁。
+- 已修复：Ledger SQLite 默认连接策略偏弱，已补 busy timeout / WAL / NORMAL synchronous。
+- 已修复：vector rebuild 删除旧同源行失败后继续 add 的重复风险，已改为返回 error。
+- 已裁剪：本地 semantic fallback 属于 LanceDB Hybrid Recall 成熟后的非必要双轨优化，已删除相关 runtime 配置、代码和测试。
+- 保留风险：Web 示例普通 memory ingest/list/delete 仍是 demo/BFF 后置形态；外网生产暴露前必须加网关鉴权。原子 rebuild、批量 embedding、LanceDB where 下推、完整 repair queue 归 P4 平台化。
+
+### 第二轮代码审查记录（P0-P3-1）
+
+- 已确认：本地轻量 `semantic_recall` fallback 已裁剪干净，runtime/config/tests 中无残留，仅文档保留裁剪记录。
+- 已修复：Web Hindsight 按行删除改为调用 `HindsightStore.delete_line()`，与 append 共用文件锁，并同步清理 JSON sidecar 与 vector sidecar。
+- 已修复：`agent-os-runtime hindsight-index vector-rebuild` 等运维命令在返回 `status=error` 时会以非 0 退出码结束，避免自动化误判。
+- 已修复：`AsyncReviewService.submit_and_wait()` 返回结构化状态；Web session end 不再固定报告 `completed`，而是透传 `ok/skipped/timeout/error` 等状态。
+- 已修复：TaskMemory SQLite 连接策略已与 Ledger 对齐，补充 busy timeout / WAL / NORMAL synchronous，降低多 worker 下锁冲突概率。
+- 已修复：`AGENT_OS_HINDSIGHT_VECTOR_CANDIDATE_LIMIT` 显式控制向量召回候选池大小，避免隐藏在构造函数默认值里。
+- 保留风险：向量检索仍是 over-fetch 后内存 metadata 过滤，严格过滤/大库场景可能候选不足；LanceDB where 下推归后续平台化/性能治理。
+
+2. **真实评测闭环平台**：未执行。
+   - 把 CI、golden tests、人工验收、业务指标接入 outcome/negative evidence/recurrence。
+   - 建立经验是否提升执行正确率的离线评估集。
+
+3. **长期 summary/index 体系增强**：未执行。
+   - 按 client/user/task/skill/deliverable 建立稳定派生 summary/index。
+   - Summary 仍只作为检索辅助，不自动覆盖原始 Hindsight，不进入 Mem0。
+
+### P4：平台化与安全生命周期（只记录，不执行）
+
+P4 是平台治理层，当前阶段不执行。
+
+1. **统一文件治理 / watcher**：未执行。
+   - 为 Hindsight JSONL、sidecar index、ledger 等文件提供统一清理、重建、校验命令。
+   - 可选 watcher 监听外部改写并自动清理 stale sidecar。
+
+2. **安全与数据生命周期平台化**：未执行。
+   - 对 JSONL、sidecar、ledger、Asset Store 等统一做权限、脱敏、加密、保留期和删除证明。
+
+3. **完整审计平台**：未执行。
+   - duplicate attempt、policy audit、admin 操作、外部反馈回写统一进入可查询审计平台。
+
+### 已写代码归属与回退结论
+
+- 保留：Policy/ledger 审计、AsyncReview 结构化 outcome 与质量信号、Hindsight sidecar index、受控 debug 入口、轻量近似簇、两阶段预算。这些均服务 P1/P2 的最小治理能力。
+- 不回退：当前没有发现“只服务 P3/P4、没有 P1/P2 价值、且保留会带来明显治理或安全成本”的代码。
+- 降级归档：真实 CI/业务指标反馈、watcher、统一文件治理、安全生命周期平台、完整审计平台只记录到 P3/P4，不继续编码。
+

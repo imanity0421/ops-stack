@@ -122,6 +122,7 @@ def get_agent(
         asset_synthesis_model=s.asset_synthesis_model,
         asset_synthesis_max_candidates=s.asset_synthesis_max_candidates,
         skill_compliance_dir=s.skill_compliance_dir,
+        enable_hindsight_debug_tools=s.enable_hindsight_debug_tools,
     )
 
     instructions: list[str] = []

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +11,7 @@ if TYPE_CHECKING:
 from agent_os.memory.backends.local import LocalMemoryBackend
 from agent_os.memory.backends.mem0 import Mem0MemoryBackend
 from agent_os.memory.hindsight_store import HindsightStore
+from agent_os.memory.ledger import MemoryLedger, canonical_memory_hash
 from agent_os.memory.models import (
     CLIENT_SHARED_USER_ID,
     MemoryLane,
@@ -49,12 +49,18 @@ class _Backend(Protocol):
 def _fingerprint(
     client_id: str,
     user_id: str | None,
-    scope: MemoryScope | None,
+    scope: MemoryScope,
     lane: MemoryLane,
     text: str,
 ) -> str:
-    raw = f"{client_id}|{user_id or ''}|{scope or ''}|{lane.value}|{text.strip().lower()}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    canonical_hash, _ = canonical_memory_hash(
+        client_id=client_id,
+        user_id=user_id,
+        scope=scope,
+        lane=lane,
+        text=text,
+    )
+    return canonical_hash[:32]
 
 
 def _infer_scope(fact: UserFact) -> MemoryScope:
@@ -115,12 +121,14 @@ class MemoryController:
         backend: _Backend,
         *,
         hindsight: HindsightStore | None,
+        ledger: MemoryLedger | None = None,
         snapshot_every_n_turns: int = 5,
         enable_memory_policy: bool = True,
         memory_policy_mode: str = "reject",
     ) -> None:
         self._backend = backend
         self._hindsight = hindsight
+        self._ledger = ledger
         self._snapshot_every_n = snapshot_every_n_turns
         self._enable_memory_policy = enable_memory_policy
         self._memory_policy_mode = memory_policy_mode
@@ -139,7 +147,12 @@ class MemoryController:
         mem0_host: str | None,
         local_memory_path: Path,
         hindsight_path: Path,
+        memory_ledger_path: Path | None = None,
         enable_hindsight: bool = True,
+        enable_hindsight_vector_recall: bool = False,
+        hindsight_vector_index_path: Path | None = None,
+        hindsight_vector_score_weight: float = 6.0,
+        hindsight_vector_candidate_limit: int = 160,
         snapshot_every_n_turns: int = 5,
         enable_memory_policy: bool = True,
         memory_policy_mode: str = "reject",
@@ -151,77 +164,152 @@ class MemoryController:
             backend = LocalMemoryBackend(local_memory_path)
             logger.warning("未设置 MEM0_API_KEY，使用本地 JSON 后端: %s", local_memory_path)
 
-        hs = HindsightStore(hindsight_path) if enable_hindsight else None
+        hs = (
+            HindsightStore(
+                hindsight_path,
+                enable_vector_recall=enable_hindsight_vector_recall,
+                vector_index_path=hindsight_vector_index_path,
+                vector_score_weight=hindsight_vector_score_weight,
+                vector_candidate_limit=hindsight_vector_candidate_limit,
+            )
+            if enable_hindsight
+            else None
+        )
+        ledger = MemoryLedger(memory_ledger_path) if memory_ledger_path is not None else None
         return cls(
             backend,
             hindsight=hs,
+            ledger=ledger,
             snapshot_every_n_turns=snapshot_every_n_turns,
             enable_memory_policy=enable_memory_policy,
             memory_policy_mode=memory_policy_mode,
         )
 
     def ingest_user_fact(self, fact: UserFact) -> MemoryWriteResult:
+        scope = _infer_scope(fact)
+        write_user_id = _profile_write_user_id(fact, scope)
+        target = "hindsight" if fact.lane == MemoryLane.TASK_FEEDBACK else "mem0"
+        policy_warning = False
+        policy_reason: str | None = None
+        policy_category: str | None = None
         if self._enable_memory_policy:
             decision = evaluate_memory_write(fact)
+            policy_reason = decision.reason
+            policy_category = decision.category
             if not decision.allow:
                 logger.info(
-                    "MemoryPolicy rejected client_id=%s lane=%s reason=%s",
+                    "MemoryPolicy rejected client_id=%s lane=%s category=%s reason=%s",
                     fact.client_id,
                     fact.lane.value,
+                    decision.category,
                     decision.reason,
                 )
                 if self._memory_policy_mode == "reject":
+                    if self._ledger is not None:
+                        self._ledger.record_rejected(
+                            client_id=fact.client_id,
+                            user_id=write_user_id,
+                            scope=scope,
+                            lane=fact.lane,
+                            target=target,
+                            text=fact.text,
+                            source=fact.source,
+                            policy_reason=decision.reason,
+                            idempotency_key=fact.source_message_id,
+                        )
                     return MemoryWriteResult(
                         dedup_skipped=True,
                         dedup_reason=f"policy_rejected:{decision.reason}",
                         policy_rejected=True,
                         policy_reason=decision.reason,
+                        policy_category=decision.category,
                     )
+                policy_warning = True
+                logger.warning(
+                    "MemoryPolicy audit allow client_id=%s lane=%s category=%s reason=%s",
+                    fact.client_id,
+                    fact.lane.value,
+                    decision.category,
+                    decision.reason,
+                )
 
-        scope = _infer_scope(fact)
-        write_user_id = _profile_write_user_id(fact, scope)
         fp = _fingerprint(fact.client_id, write_user_id, scope, fact.lane, fact.text)
         if fp in self._recent_fingerprints:
             return MemoryWriteResult(dedup_skipped=True, dedup_reason="fingerprint_duplicate")
 
-        written: list[Any] = []
-
-        if fact.lane == MemoryLane.ATTRIBUTE:
-            meta = {
-                "memory_version": "2.0",
-                "scope": scope,
-                "type": fact.fact_type,
-                "client_id": fact.client_id,
-                "user_id": write_user_id,
-                "skill_id": fact.skill_id,
-                "status": "active",
-                "source": "agent_os.memory.controller",
-                "recorded_at": fact.recorded_at.isoformat(),
-                "effective_at": fact.effective_at.isoformat() if fact.effective_at else None,
-                "expires_at": fact.expires_at.isoformat() if fact.expires_at else None,
-                "memory_source": fact.source,
-                "confidence": fact.confidence,
-            }
-            messages = [
-                {"role": "user", "content": fact.text},
-                {"role": "assistant", "content": "已记录长期事实或偏好。"},
-            ]
-            self._backend.add_messages(
-                messages=messages,
+        ledger_id: str | None = None
+        if self._ledger is not None:
+            begin = self._ledger.begin_write(
                 client_id=fact.client_id,
                 user_id=write_user_id,
-                metadata=meta,
+                scope=scope,
+                lane=fact.lane,
+                target=target,
+                text=fact.text,
+                source=fact.source,
+                idempotency_key=fact.source_message_id,
+                policy_reason=f"policy_warning:{policy_reason}" if policy_warning else None,
             )
-            written.append("mem0")
-        elif fact.lane == MemoryLane.TASK_FEEDBACK:
-            if self._hindsight is None:
-                raise RuntimeError("Hindsight 未配置")
-            self._hindsight.append_feedback(fact)
-            written.append("hindsight")
+            if begin.duplicate:
+                return MemoryWriteResult(
+                    dedup_skipped=True,
+                    dedup_reason=begin.reason or "ledger_duplicate",
+                    policy_warning=policy_warning,
+                    policy_reason=policy_reason,
+                    policy_category=policy_category,
+                )
+            ledger_id = begin.ledger_id
+
+        written: list[Any] = []
+
+        try:
+            if fact.lane == MemoryLane.ATTRIBUTE:
+                meta = {
+                    "memory_version": "2.0",
+                    "scope": scope,
+                    "type": fact.fact_type,
+                    "client_id": fact.client_id,
+                    "user_id": write_user_id,
+                    "skill_id": fact.skill_id,
+                    "status": "active",
+                    "source": "agent_os.memory.controller",
+                    "recorded_at": fact.recorded_at.isoformat(),
+                    "effective_at": fact.effective_at.isoformat() if fact.effective_at else None,
+                    "expires_at": fact.expires_at.isoformat() if fact.expires_at else None,
+                    "memory_source": fact.source,
+                    "confidence": fact.confidence,
+                }
+                messages = [
+                    {"role": "user", "content": fact.text},
+                    {"role": "assistant", "content": "已记录长期事实或偏好。"},
+                ]
+                self._backend.add_messages(
+                    messages=messages,
+                    client_id=fact.client_id,
+                    user_id=write_user_id,
+                    metadata=meta,
+                )
+                written.append("mem0")
+            elif fact.lane == MemoryLane.TASK_FEEDBACK:
+                if self._hindsight is None:
+                    raise RuntimeError("Hindsight 未配置")
+                self._hindsight.append_feedback(fact)
+                written.append("hindsight")
+        except Exception as e:
+            if ledger_id is not None and self._ledger is not None:
+                self._ledger.mark_failed(ledger_id, reason=type(e).__name__)
+            raise
 
         if written:
             self._recent_fingerprints.add(fp)
-        return MemoryWriteResult(written_to=written)
+            if ledger_id is not None and self._ledger is not None:
+                self._ledger.mark_committed(ledger_id, storage_ref=",".join(str(x) for x in written))
+        return MemoryWriteResult(
+            written_to=written,
+            policy_warning=policy_warning,
+            policy_reason=policy_reason if policy_warning else None,
+            policy_category=policy_category if policy_warning else None,
+        )
 
     def search_profile(self, query: str, client_id: str, user_id: str | None, limit: int = 8):
         """
@@ -283,6 +371,7 @@ class MemoryController:
         skill_id: str | None = None,
         deliverable_type: str | None = None,
         temporal_grounding: bool = True,
+        debug_scores: bool = False,
     ) -> list[str]:
         if self._hindsight is None:
             return []
@@ -295,6 +384,7 @@ class MemoryController:
             skill_id=skill_id,
             deliverable_type=deliverable_type,
             temporal_grounding=temporal_grounding,
+            debug_scores=debug_scores,
         )
 
     def retrieve_ordered_context(self, query: str, options: RetrieveOrderedContextOptions) -> str:

@@ -41,6 +41,10 @@ class UserFact(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc),
         description="系统记录该事实的事务时间（UTC）",
     )
+    event_at: datetime | None = Field(
+        None,
+        description="事实或经验对应的物理事件发生时间；为空表示未知",
+    )
     effective_at: datetime | None = Field(None, description="事实开始生效时间（可选）")
     expires_at: datetime | None = Field(None, description="事实预期过期时间（可选）")
     source: str = Field(
@@ -64,13 +68,41 @@ class UserFact(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list, description="证据或上游反馈 id")
     supersedes_event_id: str | None = Field(
         None,
-        description="Hindsight 的 event_id：写入时表示本条取代该事件（被取代行在检索中隐藏）",
+        description="Hindsight 的 event_id：写入时表示本条比该事件更优；召回时旧行降权但不删除",
     )
     weight_count: int = Field(
         1,
         ge=1,
         le=10000,
         description="检索合并时的权重（默认 1）；与同类行数一起计入总权重展示",
+    )
+    validity_score: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="经验有效性评分；越高表示越可信、越应被复用",
+    )
+    specificity_score: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="经验具体性评分；越高表示越可执行，避免空泛教训刷屏",
+    )
+    recurrence_count: int | None = Field(
+        None,
+        ge=1,
+        le=10000,
+        description="同类经验被后续观测强化的次数；不同于原始行数，不要求写回旧行",
+    )
+    negative_evidence_count: int | None = Field(
+        None,
+        ge=0,
+        le=10000,
+        description="反证或失败复用次数；召回时作为降权信号",
+    )
+    last_reinforced_at: datetime | None = Field(
+        None,
+        description="该经验最近一次被正向强化的现实或观测时间",
     )
 
 
@@ -79,7 +111,9 @@ class MemoryWriteResult(BaseModel):
     dedup_skipped: bool = False
     dedup_reason: str | None = None
     policy_rejected: bool = False
+    policy_warning: bool = False
     policy_reason: str | None = None
+    policy_category: str | None = None
 
 
 class MemorySearchHit(BaseModel):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import sqlite3
 from dataclasses import dataclass, field
@@ -75,6 +76,17 @@ class TaskSummary:
     covered_message_end_id: str | None = None
 
 
+@dataclass(frozen=True)
+class TaskMessage:
+    message_id: str
+    session_id: str
+    task_id: str
+    role: MessageRole
+    content: str
+    created_at: str
+    sequence_no: int
+
+
 class TaskMemoryStore:
     """同一 session 内的 task working memory 存储；不承载跨 session 长期记忆。"""
 
@@ -84,8 +96,11 @@ class TaskMemoryStore:
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._path))
+        conn = sqlite3.connect(str(self._path), timeout=10.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 10000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
     def _ensure_schema(self) -> None:
@@ -343,6 +358,29 @@ class TaskMemoryStore:
             status=row["status"],
         )
 
+    def task_messages(self, *, session_id: str, task_id: str) -> list[TaskMessage]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM session_messages
+                WHERE session_id = ? AND task_id = ?
+                ORDER BY sequence_no ASC
+                """,
+                (session_id, task_id),
+            ).fetchall()
+        return [
+            TaskMessage(
+                message_id=str(row["message_id"]),
+                session_id=str(row["session_id"]),
+                task_id=str(row["task_id"]),
+                role=row["role"],
+                content=str(row["content"]),
+                created_at=str(row["created_at"]),
+                sequence_no=int(row["sequence_no"]),
+            )
+            for row in rows
+        ]
+
     def task_index(self, *, session_id: str, limit: int = 5) -> list[TaskSegment]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -375,13 +413,161 @@ class TaskMemoryStore:
             ]
 
 
+def _shorten(text: str, max_chars: int) -> str:
+    t = " ".join((text or "").strip().split())
+    if len(t) <= max_chars:
+        return t
+    return t[: max_chars - 1] + "..."
+
+
+def _fallback_summary(
+    *,
+    existing_summary: str,
+    messages: list[TaskMessage],
+    max_chars: int,
+) -> str:
+    recent = messages[-8:]
+    user_lines = [
+        f"- { _shorten(m.content, 120) }"
+        for m in recent
+        if m.role == "user" and m.content.strip()
+    ]
+    assistant_lines = [
+        f"- { _shorten(m.content, 120) }"
+        for m in recent
+        if m.role == "assistant" and m.content.strip()
+    ]
+    parts = [
+        "- 当前任务目标：根据本 task 内最新消息继续推进。",
+        "- 用户已确认的约束：",
+        *(user_lines[:3] or ["- （暂无明确约束）"]),
+        "- 已做出的关键决定：",
+        *(assistant_lines[:2] or ["- （暂无明确决定）"]),
+        "- 当前交付物状态：继续沿用最近上下文。",
+        "- 待办/未决问题：优先响应用户最新请求。",
+        "- 不要重复尝试的方向：避免重复已被用户否定的表述。",
+        "- 最近一次用户反馈："
+        + (
+            f" {_shorten(user_lines[-1].lstrip('- '), 160)}"
+            if user_lines
+            else " （暂无）"
+        ),
+    ]
+    if existing_summary.strip():
+        parts.insert(0, "- 既有前情：" + _shorten(existing_summary, 240))
+    return _shorten("\n".join(parts), max_chars)
+
+
+def _llm_summary(
+    *,
+    existing_summary: str,
+    messages: list[TaskMessage],
+    model: str | None,
+    max_chars: int,
+) -> str | None:
+    if not os.getenv("OPENAI_API_KEY"):
+        return None
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("OPENAI_API_BASE") or None,
+        )
+        mid = model or os.getenv("AGENT_OS_TASK_SUMMARY_MODEL") or os.getenv(
+            "AGENT_OS_MODEL", "gpt-4o-mini"
+        )
+        transcript = "\n".join(
+            f"{m.role}: {_shorten(m.content, 1200)}" for m in messages[-24:]
+        )
+        prompt = (
+            "你是同一 session 内当前 task 的工作记忆压缩器。"
+            "请基于既有 summary 与新增对话，更新一份用于下一轮继续工作的结构化摘要。"
+            "不要加入长期事实，不要写入 Mem0/Hindsight/Asset/Graphiti。"
+            f"总长度不超过 {max_chars} 字。必须使用这些小标题：\n"
+            "- 当前任务目标：\n"
+            "- 用户已确认的约束：\n"
+            "- 已做出的关键决定：\n"
+            "- 当前交付物状态：\n"
+            "- 待办/未决问题：\n"
+            "- 不要重复尝试的方向：\n"
+            "- 最近一次用户反馈：\n\n"
+            f"既有 summary：\n{existing_summary or '（无）'}\n\n"
+            f"对话：\n{transcript}"
+        )
+        r = client.chat.completions.create(
+            model=mid,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        text = (r.choices[0].message.content or "").strip()
+        return _shorten(text, max_chars) if text else None
+    except Exception:
+        return None
+
+
+class TaskSummaryService:
+    """为 TaskMemoryStore 生成滚动 summary；只服务当前 session/task 连贯性。"""
+
+    def __init__(
+        self,
+        store: TaskMemoryStore,
+        *,
+        model: str | None = None,
+        max_chars: int = 800,
+        min_messages: int = 8,
+        every_n_messages: int = 6,
+    ) -> None:
+        self._store = store
+        self._model = model
+        self._max_chars = max(1, int(max_chars))
+        self._min_messages = max(1, int(min_messages))
+        self._every_n_messages = max(1, int(every_n_messages))
+
+    def maybe_update(self, *, session_id: str, task_id: str) -> TaskSummary | None:
+        messages = self._store.task_messages(session_id=session_id, task_id=task_id)
+        if len(messages) < self._min_messages:
+            return None
+        current = self._store.get_summary(session_id=session_id, task_id=task_id)
+        covered = current.covered_message_count if current is not None else 0
+        if current is not None and len(messages) - covered < self._every_n_messages:
+            return None
+        existing_text = current.summary_text if current is not None else ""
+        text = _llm_summary(
+            existing_summary=existing_text,
+            messages=messages,
+            model=self._model,
+            max_chars=self._max_chars,
+        ) or _fallback_summary(
+            existing_summary=existing_text,
+            messages=messages,
+            max_chars=self._max_chars,
+        )
+        summary = TaskSummary(
+            session_id=session_id,
+            task_id=task_id,
+            summary_text=text,
+            summary_version=(current.summary_version + 1) if current is not None else 1,
+            covered_message_start_id=messages[0].message_id if messages else None,
+            covered_message_end_id=messages[-1].message_id if messages else None,
+            covered_message_count=len(messages),
+            updated_at=_iso(),
+            summary_model=self._model or os.getenv("AGENT_OS_TASK_SUMMARY_MODEL") or "fallback",
+            summary_policy_version="task_summary_v1",
+            status="working",
+        )
+        self._store.upsert_summary(summary)
+        return summary
+
+
 def build_task_summary_instruction(summary: TaskSummary | None) -> str | None:
     if summary is None or not summary.summary_text.strip():
         return None
     return (
         "【当前任务前情提要】\n"
-        "用途：仅用于保持本 session 内当前 task 连贯；不代表长期事实，"
-        "不得自动写入 Mem0/Hindsight/Asset/Graphiti。\n"
+        "用途：仅用于当前 session/task 连贯性；不代表长期事实，"
+        "不得自动写入 Mem0，不得自动写入 Hindsight，"
+        "不得自动写入 Asset，不得自动写入 Graphiti。\n"
         f"- task_id：{summary.task_id}\n"
         f"- 覆盖消息数：{summary.covered_message_count}\n"
         f"- 更新时间：{summary.updated_at}\n"

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from agent_os.agent.factory import get_agent, new_session_id
-from agent_os.agent.task_memory import TaskMemoryStore
+from agent_os.agent.task_memory import TaskMemoryStore, TaskSummaryService
 from agent_os.config import Settings
 from agent_os.knowledge.graphiti_entitlements import (
     EntitlementsRevisionConflictError,
@@ -20,6 +20,7 @@ from agent_os.knowledge.asset_store import asset_store_from_settings
 from agent_os.knowledge.graphiti_reader import GraphitiReadService
 from agent_os.manifest_loader import load_skill_manifest_registry, resolve_effective_skill_id
 from agent_os.memory.controller import MemoryController
+from agent_os.memory.hindsight_store import HindsightStore
 from agent_os.review.async_review import AsyncReviewService
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -240,6 +241,48 @@ def _asset_rm_main(argv: list[str]) -> int:
     return 1
 
 
+def _hindsight_index_main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="agent-os-runtime hindsight-index",
+        description="手动查看、重建或删除 Hindsight JSON sidecar / LanceDB vector sidecar。",
+    )
+    p.add_argument(
+        "action",
+        choices=[
+            "status",
+            "rebuild",
+            "invalidate",
+            "vector-status",
+            "vector-rebuild",
+            "vector-invalidate",
+        ],
+    )
+    p.add_argument("--path", type=Path, default=None, help="Hindsight JSONL 路径；默认读取 Settings")
+    p.add_argument("--vector-path", type=Path, default=None, help="Hindsight LanceDB 向量索引路径")
+    args = p.parse_args(argv)
+
+    settings = Settings.from_env()
+    store = HindsightStore(
+        args.path or settings.hindsight_path,
+        enable_vector_recall=True,
+        vector_index_path=args.vector_path or settings.hindsight_vector_index_path,
+    )
+    if args.action == "status":
+        result = store.index_status()
+    elif args.action == "rebuild":
+        result = store.rebuild_index()
+    elif args.action == "invalidate":
+        result = {"status": "ok", "removed": store.invalidate_index()}
+    elif args.action == "vector-status":
+        result = store.vector_index_status()
+    elif args.action == "vector-rebuild":
+        result = store.rebuild_vector_index()
+    else:
+        result = {"status": "ok", "removed": store.invalidate_vector_index()}
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 1 if result.get("status") == "error" else 0
+
+
 def _mcp_probe_server_main(argv: list[str]) -> int:
     from agent_os.mcp.probe_server import main as mcp_main
 
@@ -387,7 +430,12 @@ def _chat_main(argv: list[str]) -> int:
         mem0_host=settings.mem0_host,
         local_memory_path=settings.local_memory_path,
         hindsight_path=settings.hindsight_path,
+        memory_ledger_path=settings.memory_ledger_path,
         enable_hindsight=settings.enable_hindsight,
+        enable_hindsight_vector_recall=settings.enable_hindsight_vector_recall,
+        hindsight_vector_index_path=settings.hindsight_vector_index_path,
+        hindsight_vector_score_weight=settings.hindsight_vector_score_weight,
+        hindsight_vector_candidate_limit=settings.hindsight_vector_candidate_limit,
         snapshot_every_n_turns=settings.snapshot_every_n_turns,
         enable_memory_policy=settings.enable_memory_policy,
         memory_policy_mode=settings.memory_policy_mode,
@@ -411,6 +459,17 @@ def _chat_main(argv: list[str]) -> int:
     )
     task_store = (
         TaskMemoryStore(settings.task_memory_sqlite_path) if settings.enable_task_memory else None
+    )
+    task_summary_service = (
+        TaskSummaryService(
+            task_store,
+            model=settings.task_summary_model,
+            max_chars=settings.task_summary_max_chars,
+            min_messages=settings.task_summary_min_messages,
+            every_n_messages=settings.task_summary_every_n_messages,
+        )
+        if task_store is not None
+        else None
     )
     active_task_id: str | None = None
 
@@ -484,9 +543,11 @@ def _chat_main(argv: list[str]) -> int:
                 role="assistant",
                 content=text,
             )
+            if task_summary_service is not None:
+                task_summary_service.maybe_update(session_id=session_id, task_id=active_task_id)
 
     if not args.no_async_review and ctrl.hindsight_store is not None and transcript:
-        review = AsyncReviewService.from_env(ctrl.hindsight_store)
+        review = AsyncReviewService.from_env(ctrl)
         review.submit_and_wait(
             client_id=args.client_id,
             user_id=args.user_id,
@@ -511,6 +572,8 @@ def main(argv: list[str] | None = None) -> int:
         return _asset_ingest_main(argv[1:])
     if argv and argv[0] == "asset-rm":
         return _asset_rm_main(argv[1:])
+    if argv and argv[0] == "hindsight-index":
+        return _hindsight_index_main(argv[1:])
     if argv and argv[0] == "mcp-probe-server":
         return _mcp_probe_server_main(argv[1:])
     if argv and argv[0] == "graphiti-entitlements":

@@ -2,6 +2,10 @@
 
 与 ``POST /api/memory/ingest`` 的 ``kind`` 分流不同：本模块按路线图 **v1 target** 命名，
 供统一 ``POST /ingest`` 或工具化调用。
+
+其中 Mem0 / Hindsight 属于在线高频记忆，由 ``MemoryController`` 统一执行 policy
+与 ledger 治理；Asset Store 是离线长文资产治理域，独立执行入库校验、特征抽取、
+去重和 scope 可见性控制，不纳入高频 Controller 写入路径。
 """
 
 from __future__ import annotations
@@ -18,6 +22,9 @@ from agent_os.memory.models import MemoryLane, UserFact
 IngestTargetV1 = Literal["mem0_profile", "hindsight", "asset_store"]
 
 _VALID = frozenset({"mem0_profile", "hindsight", "asset_store"})
+
+# 防止异常大字符串占用内存或撑爆下游；与 Web 示例 Pydantic max_length 对齐。
+INGEST_V1_MAX_TEXT_CHARS = 262_144
 
 
 def _ingest_allow_llm() -> bool:
@@ -52,6 +59,10 @@ def run_ingest_v1(
     raw = (text or "").strip()
     if not raw:
         raise ValueError("text 不能为空")
+    if len(raw) > INGEST_V1_MAX_TEXT_CHARS:
+        raise ValueError(
+            f"text 过长（>{INGEST_V1_MAX_TEXT_CHARS} 字符），请拆分或走离线入库通道"
+        )
 
     cid = (client_id or "").strip() or "demo_client"
     sk = (skill_id or "").strip() or settings.default_skill_id
@@ -122,7 +133,7 @@ def run_ingest_v1(
             "policy_reason": r.policy_reason,
         }
 
-    # asset_store
+    # Asset Store 面向低频长文案例/素材入库，按离线资产管线治理，不走 MemoryController。
     if not settings.enable_asset_store:
         raise ValueError("未启用 Asset Store（AGENT_OS_ENABLE_ASSET_STORE=0）")
     store = asset_store_from_settings(enable=True, path=settings.asset_store_path)

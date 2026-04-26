@@ -6,6 +6,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from agent_os.config import Settings
+from agent_os.memory.controller import MemoryController
+from agent_os.memory.models import MemoryLane, UserFact
 from examples import web_chat_fastapi as web
 
 
@@ -270,6 +272,81 @@ def test_web_memory_hindsight_list_skips_non_object_rows(tmp_path: Path, monkeyp
     assert [x["row"]["text"] for x in r.json()["items"]] == ["valid hindsight"]
 
 
+def test_web_memory_hindsight_search_exposes_debug_scores_when_requested(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _setup_admin_env(monkeypatch, tmp_path / "ent.json", tmp_path / "audit.jsonl")
+    local = tmp_path / "local.json"
+    hindsight = tmp_path / "hindsight.jsonl"
+    settings = Settings(mem0_api_key=None, local_memory_path=local, hindsight_path=hindsight)
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=local,
+        hindsight_path=hindsight,
+    )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.TASK_FEEDBACK,
+            client_id="c1",
+            user_id="u1",
+            skill_id="default_agent",
+            text="复盘结论：交付前必须确认关键约束。",
+            fact_type="feedback",
+        )
+    )
+    monkeypatch.setattr(web, "_bundles", {})
+    monkeypatch.setattr(web, "_get_bundle_for", lambda *args, **kwargs: (settings, ctrl, object()))
+    c = TestClient(web.app)
+
+    normal = c.get(
+        "/api/memory/hindsight/search",
+        params={"client_id": "c1", "user_id": "u1", "query": "关键约束"},
+    )
+    debug = c.get(
+        "/api/memory/hindsight/search",
+        headers={"x-admin-token": "tok_test"},
+        params={
+            "client_id": "c1",
+            "user_id": "u1",
+            "query": "关键约束",
+            "debug_scores": "true",
+        },
+    )
+
+    assert normal.status_code == 200
+    assert normal.json()["debug_scores"] is False
+    assert "score=" not in normal.json()["items"][0]
+    assert debug.status_code == 200
+    assert debug.json()["debug_scores"] is True
+    assert "score=" in debug.json()["items"][0]
+    assert "reasons=" in debug.json()["items"][0]
+
+
+def test_web_memory_hindsight_debug_search_requires_admin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    local = tmp_path / "local.json"
+    hindsight = tmp_path / "hindsight.jsonl"
+    settings = Settings(mem0_api_key=None, local_memory_path=local, hindsight_path=hindsight)
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=local,
+        hindsight_path=hindsight,
+    )
+    monkeypatch.setattr(web, "_bundles", {})
+    monkeypatch.setattr(web, "_get_bundle_for", lambda *args, **kwargs: (settings, ctrl, object()))
+    c = TestClient(web.app)
+
+    r = c.get(
+        "/api/memory/hindsight/search",
+        params={"client_id": "c1", "query": "关键约束", "debug_scores": "true"},
+    )
+
+    assert r.status_code == 403
+
+
 def test_web_memory_hindsight_delete_rejects_bad_utf8(tmp_path: Path, monkeypatch) -> None:
     hind = tmp_path / "hindsight.jsonl"
     hind.write_bytes(b"\xff\xfe\x00")
@@ -289,6 +366,78 @@ def test_web_memory_hindsight_delete_rejects_bad_utf8(tmp_path: Path, monkeypatc
     assert "无法读取" in r.json()["detail"]
 
 
+def test_web_memory_hindsight_delete_invalidates_sidecar_index(
+    tmp_path: Path, monkeypatch
+) -> None:
+    local = tmp_path / "local.json"
+    hind = tmp_path / "hindsight.jsonl"
+    settings = Settings(mem0_api_key=None, local_memory_path=local, hindsight_path=hind)
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=local,
+        hindsight_path=hind,
+    )
+    ctrl.ingest_user_fact(
+        UserFact(
+            lane=MemoryLane.TASK_FEEDBACK,
+            client_id="c1",
+            text="待删除教训：交付前必须确认关键约束。",
+            fact_type="feedback",
+        )
+    )
+    assert ctrl.search_hindsight("关键约束", client_id="c1")
+    index_path = hind.with_name(f"{hind.name}.index.json")
+    assert index_path.is_file()
+    assert "待删除教训" in index_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(web, "_bundles", {})
+    monkeypatch.setattr(web, "_get_bundle_for", lambda *args, **kwargs: (settings, ctrl, object()))
+    c = TestClient(web.app)
+
+    r = c.post(
+        "/api/memory/hindsight/delete-line",
+        json={"client_id": "c1", "file_line": 1},
+    )
+
+    assert r.status_code == 200
+    assert not index_path.exists()
+
+
+def test_web_memory_hindsight_delete_uses_store_delete_line(tmp_path: Path, monkeypatch) -> None:
+    hind = tmp_path / "hindsight.jsonl"
+    hind.write_text(
+        '{"event_id":"e1","type":"feedback","client_id":"c1","text":"待删教训"}\n',
+        encoding="utf-8",
+    )
+    settings = Settings(mem0_api_key=None, hindsight_path=hind)
+    called = {}
+
+    class _Store:
+        def __init__(self, path, **kwargs):
+            called["path"] = path
+            called["kwargs"] = kwargs
+
+        def delete_line(self, **kwargs):
+            called["delete_kwargs"] = kwargs
+            return {"status": "ok", "json_index_removed": True, "vector_index_removed": True}
+
+    monkeypatch.setattr(web, "_bundles", {})
+    monkeypatch.setattr(
+        web, "_get_bundle_for", lambda *args, **kwargs: (settings, object(), object())
+    )
+    monkeypatch.setattr(web, "HindsightStore", _Store)
+    c = TestClient(web.app)
+
+    r = c.post(
+        "/api/memory/hindsight/delete-line",
+        json={"client_id": "c1", "file_line": 1},
+    )
+
+    assert r.status_code == 200
+    assert called["kwargs"]["enable_vector_recall"] is True
+    assert called["delete_kwargs"] == {"file_line": 1, "expected_client_id": "c1"}
+
+
 def test_web_memory_hindsight_delete_rejects_non_object_row(tmp_path: Path, monkeypatch) -> None:
     hind = tmp_path / "hindsight.jsonl"
     hind.write_text('["not", "object"]\n', encoding="utf-8")
@@ -305,7 +454,47 @@ def test_web_memory_hindsight_delete_rejects_non_object_row(tmp_path: Path, monk
     )
 
     assert r.status_code == 400
-    assert r.json()["detail"] == "该行不是 JSON 对象"
+    assert r.json()["detail"]["reason"] == "not_json_object"
+
+
+def test_web_session_end_passes_controller_to_async_review(monkeypatch) -> None:
+    class _Ctrl:
+        hindsight_store = object()
+
+    class _Review:
+        controller_seen = None
+        submitted = False
+
+        @classmethod
+        def from_env(cls, controller):
+            cls.controller_seen = controller
+            return cls()
+
+        def submit_and_wait(self, **kwargs):
+            _ = kwargs
+            type(self).submitted = True
+            return {"status": "ok"}
+
+    ctrl = _Ctrl()
+    monkeypatch.setattr(web, "_get_bundle_for", lambda *args, **kwargs: (Settings(), ctrl, object()))
+    monkeypatch.setattr(web, "AsyncReviewService", _Review)
+    monkeypatch.setattr(web, "_transcripts", {"s1": [("user", "方向不对"), ("assistant", "我调整")]})
+    c = TestClient(web.app)
+
+    r = c.post(
+        "/api/session/end",
+        json={
+            "session_id": "s1",
+            "client_id": "c1",
+            "user_id": "u1",
+            "run_review": True,
+        },
+    )
+
+    assert r.status_code == 200
+    assert r.json()["review"] == "ok"
+    assert _Review.controller_seen is ctrl
+    assert _Review.submitted is True
 
 
 def test_web_port_invalid_env_falls_back(monkeypatch) -> None:

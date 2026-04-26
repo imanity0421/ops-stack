@@ -49,6 +49,7 @@ class RetrieveOrderedContextOptions:
     enable_asset_synthesis: bool
     asset_synthesis_model: str | None
     asset_synthesis_max_candidates: int
+    hindsight_debug_scores: bool = False
     mem_limit: int = 8
     hindsight_limit: int = 8
     asset_limit: int = 3
@@ -90,6 +91,7 @@ def render_retrieve_ordered_context_markdown(
             user_id=o.user_id,
             skill_id=o.skill_id,
             temporal_grounding=o.enable_temporal_grounding,
+            debug_scores=o.hindsight_debug_scores,
         )
         blocks.append(
             "## ② 历史教训与反馈 (Hindsight)\n"
@@ -97,7 +99,8 @@ def render_retrieve_ordered_context_markdown(
                 format_hindsight_lines_for_context(
                     query,
                     hs,
-                    enable_synthesis=o.enable_hindsight_synthesis,
+                    enable_synthesis=o.enable_hindsight_synthesis
+                    and not o.hindsight_debug_scores,
                     synthesis_model=o.hindsight_synthesis_model,
                     max_candidates=o.hindsight_synthesis_max_candidates,
                 )

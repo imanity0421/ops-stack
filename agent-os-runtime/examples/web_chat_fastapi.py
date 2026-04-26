@@ -49,7 +49,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from agent_os.agent.factory import get_agent, new_session_id
 from agent_os.config import Settings
-from agent_os.ingest_gateway import run_ingest_v1
+from agent_os.ingest_gateway import INGEST_V1_MAX_TEXT_CHARS, run_ingest_v1
 from agent_os.knowledge.graphiti_entitlements import (
     EntitlementsRevisionConflictError,
     append_entitlements_audit,
@@ -60,6 +60,7 @@ from agent_os.manifest_loader import load_skill_manifest_registry, resolve_effec
 from agent_os.observability import log_agent_run_obs
 from agent_os.knowledge.graphiti_reader import GraphitiReadService
 from agent_os.memory.controller import MemoryController
+from agent_os.memory.hindsight_store import HindsightStore
 from agent_os.memory.models import MemoryLane, UserFact
 from agent_os.review.async_review import AsyncReviewService
 
@@ -123,7 +124,12 @@ def _build_stack(
         mem0_host=settings.mem0_host,
         local_memory_path=settings.local_memory_path,
         hindsight_path=settings.hindsight_path,
+        memory_ledger_path=settings.memory_ledger_path,
         enable_hindsight=settings.enable_hindsight,
+        enable_hindsight_vector_recall=settings.enable_hindsight_vector_recall,
+        hindsight_vector_index_path=settings.hindsight_vector_index_path,
+        hindsight_vector_score_weight=settings.hindsight_vector_score_weight,
+        hindsight_vector_candidate_limit=settings.hindsight_vector_candidate_limit,
         snapshot_every_n_turns=settings.snapshot_every_n_turns,
         enable_memory_policy=settings.enable_memory_policy,
         memory_policy_mode=settings.memory_policy_mode,
@@ -466,7 +472,7 @@ def _format_web_chat_reply(
 
 
 class ChatIn(BaseModel):
-    message: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1, max_length=INGEST_V1_MAX_TEXT_CHARS)
     session_id: str | None = None
     client_id: str = "demo_client"
     user_id: str | None = None
@@ -521,7 +527,7 @@ class MemoryIngestIn(BaseModel):
         default=None, description="与对话 skill 对齐，用于选取同一 Agent bundle"
     )
     use_slow_reasoning: bool | None = Field(default=None, description="选取与对话一致的 bundle")
-    text: str = Field(..., min_length=1)
+    text: str = Field(..., min_length=1, max_length=INGEST_V1_MAX_TEXT_CHARS)
     kind: str = Field(..., description="fact | preference | feedback")
     task_id: str | None = None
 
@@ -573,7 +579,7 @@ class IngestV1In(BaseModel):
     """P2-6 显式 target 数据摄入；与旧版 ``/api/memory/ingest`` 并存。"""
 
     target: Literal["mem0_profile", "hindsight", "asset_store"]
-    text: str = Field(..., min_length=1, description="写入正文")
+    text: str = Field(..., min_length=1, max_length=INGEST_V1_MAX_TEXT_CHARS, description="写入正文")
     client_id: str = Field(default="demo_client", min_length=1)
     user_id: str | None = None
     skill_id: str | None = Field(
@@ -638,7 +644,7 @@ class _RequestIdMiddleware(BaseHTTPMiddleware):
         return response
 
 
-app = FastAPI(title="agent-os-runtime web demo", version="0.6.0")
+app = FastAPI(title="agent-os-runtime web demo", version="0.6.1")
 app.add_middleware(_RequestIdMiddleware)
 
 
@@ -2289,10 +2295,10 @@ def http_ingest_v1(inp: IngestV1In, request: Request):
 
 @app.get("/api/memory/profile/list")
 def memory_profile_list(
-    client_id: str,
+    client_id: str = Query(..., min_length=1, max_length=256),
     user_id: str | None = None,
     use_slow: bool | None = Query(None),
-    skill_id: str | None = Query(None),
+    skill_id: str | None = Query(None, max_length=256),
 ):
     """列出画像层记忆：本地 JSON 带 index 可删；Mem0 仅搜索展示。"""
     settings, ctrl, _ = _get_bundle_for(client_id, user_id, use_slow, skill_id=skill_id)
@@ -2351,9 +2357,9 @@ def memory_profile_delete_local(inp: ProfileDeleteLocalIn):
 
 @app.get("/api/memory/hindsight/list")
 def memory_hindsight_list(
-    client_id: str,
+    client_id: str = Query(..., min_length=1, max_length=256),
     use_slow: bool | None = Query(None),
-    skill_id: str | None = Query(None),
+    skill_id: str | None = Query(None, max_length=256),
 ):
     settings, _, _ = _get_bundle_for(client_id, None, use_slow, skill_id=skill_id)
     path = _resolve_under_agent_os(settings.hindsight_path)
@@ -2379,32 +2385,60 @@ def memory_hindsight_list(
     return {"items": items, "path": str(path)}
 
 
+@app.get("/api/memory/hindsight/search")
+def memory_hindsight_search(
+    request: Request,
+    client_id: str = Query(..., min_length=1, max_length=256),
+    query: str = Query("", max_length=8192),
+    user_id: str | None = None,
+    use_slow: bool | None = Query(None),
+    skill_id: str | None = Query(None, max_length=256),
+    task_id: str | None = Query(None, max_length=256),
+    deliverable_type: str | None = Query(None, max_length=256),
+    limit: int = Query(8, ge=1, le=50),
+    debug_scores: bool = Query(False),
+):
+    """受控检索 Hindsight；debug_scores 仅用于排查召回排序，不应默认展示给最终用户。"""
+    if debug_scores:
+        _assert_admin_request_allowed(request)
+    _, ctrl, _ = _get_bundle_for(client_id, user_id, use_slow, skill_id=skill_id)
+    lines = ctrl.search_hindsight(
+        query,
+        client_id=client_id,
+        limit=limit,
+        user_id=user_id,
+        task_id=task_id,
+        skill_id=skill_id,
+        deliverable_type=deliverable_type,
+        debug_scores=debug_scores,
+    )
+    return {
+        "items": lines,
+        "count": len(lines),
+        "debug_scores": bool(debug_scores),
+    }
+
+
 @app.post("/api/memory/hindsight/delete-line")
 def memory_hindsight_delete(inp: HindsightDeleteIn):
     settings, _, _ = _get_bundle_for(
         inp.client_id, None, inp.use_slow_reasoning, skill_id=inp.skill_id
     )
     path = _resolve_under_agent_os(settings.hindsight_path)
-    if not path.exists():
+    result = HindsightStore(
+        path,
+        enable_vector_recall=True,
+        vector_index_path=settings.hindsight_vector_index_path,
+    ).delete_line(file_line=inp.file_line, expected_client_id=inp.client_id)
+    if result.get("status") == "missing_source":
         raise HTTPException(404, detail="hindsight 文件不存在")
-    try:
-        lines = path.read_text(encoding="utf-8-sig").splitlines()
-    except (OSError, UnicodeDecodeError) as e:
-        raise HTTPException(400, detail=f"hindsight 文件无法读取: {e}") from e
-    if inp.file_line < 1 or inp.file_line > len(lines):
-        raise HTTPException(400, detail="file_line 越界")
-    raw = lines[inp.file_line - 1].strip()
-    try:
-        row = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise HTTPException(400, detail=f"该行不是合法 JSON: {e}") from e
-    if not isinstance(row, dict):
-        raise HTTPException(400, detail="该行不是 JSON 对象")
-    if row.get("client_id") != inp.client_id:
+    if result.get("status") == "forbidden":
         raise HTTPException(403, detail="该行的 client_id 与请求不一致，禁止删除")
-    del lines[inp.file_line - 1]
-    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-    return {"status": "ok"}
+    if result.get("reason") == "read_failed":
+        raise HTTPException(400, detail=f"hindsight 文件无法读取: {result.get('error')}")
+    if result.get("status") != "ok":
+        raise HTTPException(400, detail=result)
+    return result
 
 
 @app.post("/api/memory/ingest", response_model=MemoryIngestOut)
@@ -2461,14 +2495,14 @@ def session_end(inp: SessionEndIn):
         elif not transcript:
             review_status = "skipped: empty transcript"
         else:
-            review = AsyncReviewService.from_env(ctrl.hindsight_store)
-            review.submit_and_wait(
+            review = AsyncReviewService.from_env(ctrl)
+            result = review.submit_and_wait(
                 client_id=inp.client_id,
                 user_id=inp.user_id,
                 task_id=inp.task_id,
                 transcript=transcript,
             )
-            review_status = "completed"
+            review_status = str(result.get("status") or "unknown")
     else:
         review_status = "skipped: run_review false"
 
