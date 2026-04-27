@@ -188,6 +188,16 @@ class ContextBundle:
 
 
 @dataclass(frozen=True)
+class HistoryCleanReport:
+    lines: list[str]
+    tool_outputs_original_chars: int = 0
+    tool_outputs_kept_chars: int = 0
+    tool_outputs_folded_count: int = 0
+    tool_outputs_omitted_count: int = 0
+    tool_output_budget_chars: int = 0
+
+
+@dataclass(frozen=True)
 class AutoRetrieveDecision:
     enabled: bool
     reason: str
@@ -672,9 +682,31 @@ def clean_history_messages(
     max_messages: int,
     max_content_chars: int = 800,
     max_tool_output_chars: int = 240,
+    max_tool_outputs_total_chars: int = 2_000,
     max_recent_assistant_chars: int | None = None,
     recent_assistant_extended_count: int = 1,
 ) -> list[str]:
+    return clean_history_messages_with_report(
+        messages,
+        max_messages=max_messages,
+        max_content_chars=max_content_chars,
+        max_tool_output_chars=max_tool_output_chars,
+        max_tool_outputs_total_chars=max_tool_outputs_total_chars,
+        max_recent_assistant_chars=max_recent_assistant_chars,
+        recent_assistant_extended_count=recent_assistant_extended_count,
+    ).lines
+
+
+def clean_history_messages_with_report(
+    messages: Sequence[Any],
+    *,
+    max_messages: int,
+    max_content_chars: int = 800,
+    max_tool_output_chars: int = 240,
+    max_tool_outputs_total_chars: int = 2_000,
+    max_recent_assistant_chars: int | None = None,
+    recent_assistant_extended_count: int = 1,
+) -> HistoryCleanReport:
     """Return compact transcript lines for ContextBuilder-managed history.
 
     We inject cleaned history as plain context, not as protocol messages. Tool outputs are
@@ -683,8 +715,13 @@ def clean_history_messages(
 
     selected = _safe_message_list(messages)[-max(0, max_messages) :] if max_messages > 0 else []
     extended_assistant_remaining = max(0, int(recent_assistant_extended_count))
-    lines: list[str] = []
     rendered_reversed: list[str] = []
+    tool_budget = max(0, int(max_tool_outputs_total_chars))
+    tool_budget_remaining = tool_budget
+    tool_original_chars = 0
+    tool_kept_chars = 0
+    tool_folded_count = 0
+    tool_omitted_count = 0
     for msg in reversed(selected):
         role = _role_of(msg)
         content = _content_of(msg)
@@ -695,14 +732,38 @@ def clean_history_messages(
         if role == "tool":
             tool_name = _tool_name_of(msg)
             stripped = content.strip()
-            if max_tool_output_chars > 0 and len(stripped) <= max_tool_output_chars:
-                kept = _literal_text_for_prompt(stripped)
-                rendered_reversed.append(f"- tool:{tool_name}: {kept}")
-            else:
-                folded = _literal_text_for_prompt(_shorten(content, max_tool_output_chars))
+            original_chars = len(stripped)
+            tool_original_chars += original_chars
+            if tool_budget > 0 and tool_budget_remaining <= 0:
+                tool_omitted_count += 1
                 rendered_reversed.append(
-                    f"- tool:{tool_name}: [工具结果已折叠，仅保留摘要] {folded}"
+                    f"- tool:{tool_name}: [工具结果超过历史工具预算，已省略] "
+                    f"original_chars={original_chars}"
                 )
+                continue
+            if max_tool_output_chars > 0 and len(stripped) <= max_tool_output_chars:
+                kept_text = stripped
+                budget_note = ""
+            else:
+                kept_text = _shorten(content, max_tool_output_chars)
+                tool_folded_count += 1
+                budget_note = "[工具结果已折叠，仅保留摘要] "
+            if tool_budget > 0 and len(kept_text) > tool_budget_remaining:
+                if tool_budget_remaining <= 32:
+                    tool_omitted_count += 1
+                    rendered_reversed.append(
+                        f"- tool:{tool_name}: [工具结果超过历史工具预算，已省略] "
+                        f"original_chars={original_chars}"
+                    )
+                    continue
+                kept_text = _shorten(kept_text, tool_budget_remaining)
+                tool_folded_count += 1
+                budget_note = "[工具结果受历史工具预算限制，仅保留摘要] "
+            if tool_budget > 0:
+                tool_budget_remaining -= len(kept_text)
+            tool_kept_chars += len(kept_text)
+            kept = _literal_text_for_prompt(kept_text)
+            rendered_reversed.append(f"- tool:{tool_name}: {budget_note}{kept}")
             continue
         if role not in {"user", "assistant", "system"}:
             role = "message"
@@ -715,8 +776,14 @@ def clean_history_messages(
             cap = max(max_content_chars, int(max_recent_assistant_chars))
             extended_assistant_remaining -= 1
         rendered_reversed.append(f"- {role}: {_literal_text_for_prompt(_shorten(content, cap))}")
-    lines = list(reversed(rendered_reversed))
-    return lines
+    return HistoryCleanReport(
+        lines=list(reversed(rendered_reversed)),
+        tool_outputs_original_chars=tool_original_chars,
+        tool_outputs_kept_chars=tool_kept_chars,
+        tool_outputs_folded_count=tool_folded_count,
+        tool_outputs_omitted_count=tool_omitted_count,
+        tool_output_budget_chars=tool_budget,
+    )
 
 
 class ContextBuilder:
@@ -730,9 +797,11 @@ class ContextBuilder:
         include_runtime_context: bool = True,
         max_history_content_chars: int = 800,
         max_tool_output_chars: int = 240,
+        max_tool_outputs_total_chars: int = 2_000,
         context_char_budget: ContextCharBudget | None = None,
         enable_token_estimate: bool = True,
         hard_total_budget: bool = False,
+        self_heal_over_budget: bool = True,
         attention_anchor_max_chars: int = 480,
         max_recent_assistant_content_chars: int = 2400,
         recent_assistant_extended_count: int = 1,
@@ -742,9 +811,11 @@ class ContextBuilder:
         self._include_runtime_context = bool(include_runtime_context)
         self._max_history_content_chars = max(1, int(max_history_content_chars))
         self._max_tool_output_chars = max(1, int(max_tool_output_chars))
+        self._max_tool_outputs_total_chars = max(0, int(max_tool_outputs_total_chars))
         self._budget = context_char_budget or ContextCharBudget()
         self._enable_token_estimate = bool(enable_token_estimate)
         self._hard_total_budget = bool(hard_total_budget)
+        self._self_heal_over_budget = bool(self_heal_over_budget)
         self._attention_anchor_max_chars = max(1, int(attention_anchor_max_chars))
         self._max_recent_assistant_content_chars = max(1, int(max_recent_assistant_content_chars))
         self._recent_assistant_extended_count = max(0, int(recent_assistant_extended_count))
@@ -899,21 +970,31 @@ class ContextBuilder:
             if history_max_messages_override is not None
             else self._history_max_messages
         )
-        history_lines = clean_history_messages(
+        history_report = clean_history_messages_with_report(
             session_messages,
             max_messages=hist_cap,
             max_content_chars=self._max_history_content_chars,
             max_tool_output_chars=self._max_tool_output_chars,
+            max_tool_outputs_total_chars=self._max_tool_outputs_total_chars,
             max_recent_assistant_chars=self._max_recent_assistant_content_chars,
             recent_assistant_extended_count=self._recent_assistant_extended_count,
         )
+        history_lines = history_report.lines
         if history_lines:
             history_raw = "\n".join(history_lines)
             history, budget_note = _apply_char_budget(
                 history_raw, self._budget.recent_history_max_chars
             )
             blocks.append(("recent_history", f"<recent_history>\n{history}\n</recent_history>"))
-            note_parts = [f"cap_messages={hist_cap}", f"tool_fold={self._max_tool_output_chars}"]
+            note_parts = [
+                f"cap_messages={hist_cap}",
+                f"tool_fold={self._max_tool_output_chars}",
+                f"tool_total_budget={history_report.tool_output_budget_chars}",
+                f"tool_kept={history_report.tool_outputs_kept_chars}",
+                f"tool_original={history_report.tool_outputs_original_chars}",
+                f"tool_folded={history_report.tool_outputs_folded_count}",
+                f"tool_omitted={history_report.tool_outputs_omitted_count}",
+            ]
             if budget_note:
                 note_parts.append(budget_note)
             trace_blocks.append(
@@ -986,6 +1067,30 @@ class ContextBuilder:
             trace_blocks.extend(hard_budget_trace)
 
         message = _render_context_message(blocks, current)
+        if (
+            not self._hard_total_budget
+            and self._self_heal_over_budget
+            and self._budget.max_total_chars > 0
+            and len(message) > self._budget.max_total_chars
+        ):
+            before_chars = len(message)
+            blocks, hard_budget_trace = _apply_hard_total_budget(
+                blocks, current, self._budget.max_total_chars
+            )
+            trace_blocks.extend(hard_budget_trace)
+            message = _render_context_message(blocks, current)
+            trace_blocks.append(
+                ContextTraceBlock(
+                    "budget_self_heal",
+                    before_chars,
+                    False,
+                    source="context_builder",
+                    note=(
+                        f"applied,method=hard_budget,after_chars={len(message)},"
+                        "trim_order=recent_history>external_recall>working_memory"
+                    ),
+                )
+            )
         if self._enable_token_estimate:
             estimated_tokens = _estimate_tokens_with_tiktoken(message)
             trace_blocks.append(
@@ -1018,6 +1123,11 @@ class ContextBuilder:
                         f"max_total={self._budget.max_total_chars}"
                         + (",over_budget" if over_budget else ",within_budget")
                         + (",hard_budget=on" if self._hard_total_budget else ",hard_budget=off")
+                        + (
+                            ",self_heal=on"
+                            if self._self_heal_over_budget
+                            else ",self_heal=off"
+                        )
                         + current_ratio_note
                     ),
                 )

@@ -33,6 +33,9 @@ def test_context_diagnostics_reports_blocks_and_budget_status() -> None:
     assert data["total_chars"] == len(bundle.message)
     assert data["max_total_chars"] == 120
     assert data["budget_status"] in {"danger", "over_budget"}
+    assert data["budget_guard"]["status"] == data["budget_status"]
+    assert data["budget_guard"]["is_above_danger_threshold"] is True
+    assert data["budget_guard"]["percent_left"] is not None
     assert "external_recall" in names
     assert "recent_history" in names
     assert "current_user_message" in names
@@ -60,3 +63,28 @@ def test_context_diagnostics_markdown_contains_table() -> None:
     assert "| Block | Injected | Chars | Prompt % | Source | Note |" in text
     assert "`attention_anchor`" in text
     assert "`current_user_message`" in text
+
+
+def test_context_diagnostics_budget_guard_flags_large_current_message() -> None:
+    builder = ContextBuilder(
+        timezone_name="Asia/Shanghai",
+        history_max_messages=0,
+        include_runtime_context=False,
+        context_char_budget=ContextCharBudget(max_total_chars=300),
+        enable_token_estimate=False,
+    )
+    bundle = builder.build_turn_message(
+        "请处理以下超长材料：" + ("材料片段 " * 80),
+        entrypoint="api",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+    )
+
+    diag = build_context_diagnostics(bundle)
+    guard = diag.to_dict()["budget_guard"]
+
+    assert guard["is_at_blocking_limit"] is True
+    assert guard["current_user_high_ratio"] is True
+    assert guard["current_user_chars"] > 300
+    assert any("Current user message dominates" in item for item in guard["recommendations"])

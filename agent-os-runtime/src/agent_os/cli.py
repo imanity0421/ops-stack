@@ -451,6 +451,12 @@ def _context_diagnose_main(argv: list[str]) -> int:
     p.add_argument("--history-json", type=Path, default=None, help="可选历史消息 JSON 数组")
     p.add_argument("--retrieved-context-file", type=Path, default=None, help="可选外部召回文本")
     p.add_argument("--json", action="store_true", help="输出 JSON 而不是 Markdown")
+    p.add_argument(
+        "--fail-on-budget",
+        choices=["warning", "danger", "over_budget"],
+        default=None,
+        help="当预算状态达到指定级别时以退出码 2 结束，便于把 /context 用作预检门禁",
+    )
     args = p.parse_args(argv)
 
     settings = Settings.from_env()
@@ -459,9 +465,11 @@ def _context_diagnose_main(argv: list[str]) -> int:
         history_max_messages=settings.session_history_max_messages,
         include_runtime_context=settings.enable_ephemeral_metadata,
         max_tool_output_chars=settings.context_tool_output_max_chars,
+        max_tool_outputs_total_chars=settings.context_tool_outputs_total_max_chars,
         context_char_budget=ContextCharBudget.from_total(settings.context_max_chars),
         enable_token_estimate=settings.context_estimate_tokens,
         hard_total_budget=settings.context_hard_budget,
+        self_heal_over_budget=settings.context_self_heal_over_budget,
     )
     registry = load_skill_manifest_registry(settings.agent_manifest_dir)
     effective_skill_id = resolve_effective_skill_id(args.skill, settings.default_skill_id, registry)
@@ -491,6 +499,11 @@ def _context_diagnose_main(argv: list[str]) -> int:
         print(json.dumps(diagnostics.to_dict(), ensure_ascii=False, indent=2))
     else:
         print(format_context_diagnostics_markdown(diagnostics))
+    if args.fail_on_budget:
+        severity = {"ok": 0, "unbounded": 0, "warning": 1, "danger": 2, "over_budget": 3}
+        threshold = severity[args.fail_on_budget]
+        if severity.get(diagnostics.budget_status, 0) >= threshold:
+            return 2
     return 0
 
 
@@ -574,9 +587,11 @@ def _chat_main(argv: list[str]) -> int:
             history_max_messages=settings.session_history_max_messages,
             include_runtime_context=settings.enable_ephemeral_metadata,
             max_tool_output_chars=settings.context_tool_output_max_chars,
+            max_tool_outputs_total_chars=settings.context_tool_outputs_total_max_chars,
             context_char_budget=ContextCharBudget.from_total(settings.context_max_chars),
             enable_token_estimate=settings.context_estimate_tokens,
             hard_total_budget=settings.context_hard_budget,
+            self_heal_over_budget=settings.context_self_heal_over_budget,
         )
         if settings.enable_context_builder
         else None

@@ -210,9 +210,11 @@ def _context_builder_from_settings(settings: Settings) -> ContextBuilder | None:
         history_max_messages=settings.session_history_max_messages,
         include_runtime_context=settings.enable_ephemeral_metadata,
         max_tool_output_chars=settings.context_tool_output_max_chars,
+        max_tool_outputs_total_chars=settings.context_tool_outputs_total_max_chars,
         context_char_budget=ContextCharBudget.from_total(settings.context_max_chars),
         enable_token_estimate=settings.context_estimate_tokens,
         hard_total_budget=settings.context_hard_budget,
+        self_heal_over_budget=settings.context_self_heal_over_budget,
     )
 
 

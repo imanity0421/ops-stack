@@ -7,6 +7,7 @@ from agent_os.context_builder import (
     ContextCharBudget,
     ContextBuilder,
     clean_history_messages,
+    clean_history_messages_with_report,
     effective_session_history_max_messages,
     resolve_auto_retrieve_decision,
     should_auto_retrieve,
@@ -71,6 +72,125 @@ def test_context_builder_replay_folds_tool_output_on_next_turn() -> None:
     assert "工具结果已折叠" in bundle.message
     assert len(bundle.message) < len(ToolMsg.content)
     assert "召回正文 " * 20 not in bundle.message
+
+
+def test_clean_history_applies_aggregate_tool_output_budget() -> None:
+    lines = clean_history_messages(
+        [
+            Msg("tool", "旧工具输出 " * 30, tool_name="old_tool"),
+            Msg("tool", "新工具输出 " * 10, tool_name="new_tool"),
+            ("assistant", "继续处理"),
+        ],
+        max_messages=3,
+        max_tool_output_chars=500,
+        max_tool_outputs_total_chars=80,
+    )
+    joined = "\n".join(lines)
+
+    assert "new_tool" in joined
+    assert "新工具输出" in joined
+    assert "old_tool" in joined
+    assert "工具结果超过历史工具预算" in joined
+    assert "旧工具输出 " * 10 not in joined
+
+
+def test_clean_history_report_tracks_tool_budget_counts() -> None:
+    report = clean_history_messages_with_report(
+        [
+            Msg("tool", "A" * 120, tool_name="t1"),
+            Msg("tool", "B" * 120, tool_name="t2"),
+        ],
+        max_messages=2,
+        max_tool_output_chars=120,
+        max_tool_outputs_total_chars=100,
+    )
+
+    assert report.tool_output_budget_chars == 100
+    assert report.tool_outputs_original_chars == 240
+    assert report.tool_outputs_kept_chars <= 100
+    assert report.tool_outputs_omitted_count >= 1
+
+
+def test_context_builder_trace_reports_tool_history_budget() -> None:
+    builder = ContextBuilder(
+        timezone_name="Asia/Shanghai",
+        history_max_messages=3,
+        include_runtime_context=False,
+        max_tool_output_chars=500,
+        max_tool_outputs_total_chars=80,
+    )
+
+    bundle = builder.build_turn_message(
+        "继续当前任务",
+        entrypoint="cli",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        session_messages=[
+            Msg("tool", "旧工具输出 " * 30, tool_name="old_tool"),
+            Msg("tool", "新工具输出 " * 10, tool_name="new_tool"),
+            ("assistant", "上一轮完成了工具调用"),
+        ],
+    )
+    trace = bundle.trace.to_obs_log_line()
+
+    assert "tool_total_budget=80" in trace
+    assert "tool_omitted=1" in trace
+
+
+def test_context_builder_self_heals_over_budget_by_omitting_low_priority_blocks() -> None:
+    builder = ContextBuilder(
+        timezone_name="Asia/Shanghai",
+        history_max_messages=3,
+        include_runtime_context=False,
+        context_char_budget=ContextCharBudget(max_total_chars=1_000),
+        enable_token_estimate=False,
+        self_heal_over_budget=True,
+    )
+
+    bundle = builder.build_turn_message(
+        "请继续推进方案",
+        entrypoint="cli",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        session_messages=[
+            ("user", "上一轮问题 " * 80),
+            ("assistant", "上一轮回复 " * 120),
+        ],
+        retrieved_context="<ordered_context>" + ("召回证据 " * 120) + "</ordered_context>",
+    )
+    trace = bundle.trace.to_obs_log_line()
+
+    assert len(bundle.message) <= 1_000
+    assert "<current_user_message>" in bundle.message
+    assert "请继续推进方案" in bundle.message
+    assert "budget_self_heal" in trace
+    assert "hard_budget_trim" in trace
+
+
+def test_context_builder_can_disable_self_heal_for_diagnostics() -> None:
+    builder = ContextBuilder(
+        timezone_name="Asia/Shanghai",
+        history_max_messages=2,
+        include_runtime_context=False,
+        context_char_budget=ContextCharBudget(max_total_chars=900),
+        enable_token_estimate=False,
+        self_heal_over_budget=False,
+    )
+
+    bundle = builder.build_turn_message(
+        "请继续推进方案",
+        entrypoint="cli",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        session_messages=[("assistant", "上一轮回复 " * 120)],
+        retrieved_context="<ordered_context>" + ("召回证据 " * 120) + "</ordered_context>",
+    )
+
+    assert len(bundle.message) > 900
+    assert "budget_self_heal" not in bundle.trace.to_obs_log_line()
 
 
 def test_context_builder_adds_working_memory_and_attention_anchor() -> None:

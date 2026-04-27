@@ -165,6 +165,115 @@ def test_cli_context_diagnose_outputs_json(tmp_path: Path, monkeypatch, capsys) 
     assert any(b["name"] == "current_user_message" for b in data["blocks"])
 
 
+def test_cli_context_diagnose_can_fail_on_budget(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("AGENT_OS_CONTEXT_ESTIMATE_TOKENS", "0")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_MAX_CHARS", "240")
+
+    rc = cli.main(
+        [
+            "context-diagnose",
+            "--message",
+            "请处理以下超长材料：" + ("材料片段 " * 80),
+            "--client-id",
+            "c1",
+            "--json",
+            "--fail-on-budget",
+            "over_budget",
+        ]
+    )
+
+    assert rc == 2
+    data = json.loads(capsys.readouterr().out)
+    assert data["budget_guard"]["is_at_blocking_limit"] is True
+
+
+def test_cli_context_diagnose_smoke_self_heals_over_budget(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    history = tmp_path / "history.json"
+    retrieved = tmp_path / "retrieved.txt"
+    history.write_text(
+        json.dumps(
+            [
+                {"role": "user", "content": "上一轮问题 " * 80},
+                {"role": "assistant", "content": "上一轮回复 " * 120},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    retrieved.write_text(
+        "<ordered_context>" + ("召回证据 " * 140) + "</ordered_context>",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_OS_CONTEXT_ESTIMATE_TOKENS", "0")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_MAX_CHARS", "1200")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_SELF_HEAL_OVER_BUDGET", "1")
+
+    rc = cli.main(
+        [
+            "context-diagnose",
+            "--message",
+            "请继续推进方案",
+            "--client-id",
+            "c1",
+            "--history-json",
+            str(history),
+            "--retrieved-context-file",
+            str(retrieved),
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    signal_names = {s["name"] for s in data["signals"]}
+    assert data["total_chars"] <= 1200
+    assert data["budget_status"] != "over_budget"
+    assert "budget_self_heal" in signal_names
+    assert "hard_budget_trim" in signal_names
+
+
+def test_cli_context_diagnose_smoke_reports_tool_history_budget(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    history = tmp_path / "history.json"
+    history.write_text(
+        json.dumps(
+            [
+                {"role": "tool", "content": "旧工具输出 " * 30},
+                {"role": "tool", "content": "新工具输出 " * 10},
+                {"role": "assistant", "content": "继续处理"},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_OS_CONTEXT_ESTIMATE_TOKENS", "0")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_MAX_CHARS", "5000")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_TOOL_OUTPUT_MAX_CHARS", "500")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_TOOL_OUTPUTS_TOTAL_MAX_CHARS", "80")
+
+    rc = cli.main(
+        [
+            "context-diagnose",
+            "--message",
+            "继续",
+            "--client-id",
+            "c1",
+            "--history-json",
+            str(history),
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    recent = next(b for b in data["blocks"] if b["name"] == "recent_history")
+    assert "tool_total_budget=80" in recent["note"]
+    assert "tool_omitted=1" in recent["note"]
+
+
 def test_cli_hindsight_index_status_rebuild_invalidate(tmp_path: Path, capsys) -> None:
     hindsight = tmp_path / "hindsight.jsonl"
     store = HindsightStore(hindsight)

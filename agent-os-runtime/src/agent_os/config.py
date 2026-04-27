@@ -143,6 +143,8 @@ class Settings:
     )
     #: ContextBuilder 折叠 tool output 时保留的最大字符数
     context_tool_output_max_chars: int = 240
+    #: ContextBuilder 注入 recent_history 时，历史工具结果合计保留的最大字符数；0 表示不做聚合预算
+    context_tool_outputs_total_max_chars: int = 2_000
     #: P2-7：是否在日志中输出 ContextBuilder 块级 trace（不进 prompt）
     context_trace_log: bool = False
     #: P2-8：存在非空 task summary 时，将拼入模型的历史条数收紧为该上限与 ``session_history_max_messages`` 的较小值；0 表示不收紧
@@ -153,6 +155,8 @@ class Settings:
     context_estimate_tokens: bool = True
     #: P2-H4：是否启用默认关闭的硬总预算结构化裁切
     context_hard_budget: bool = False
+    #: Stage 1：当 ContextBuilder 组装后超过总预算时，自动启用确定性低优先级裁切自救
+    context_self_heal_over_budget: bool = True
     #: P1-3 是否在 system 最前注入「系统宪法·冲突解决序」
     enable_constitutional_prompt: bool = True
     #: 是否注入当轮临时环境元数据（只进 prompt，不落长期记忆）
@@ -302,6 +306,9 @@ class Settings:
             context_tool_output_max_chars=_env_int(
                 "AGENT_OS_CONTEXT_TOOL_OUTPUT_MAX_CHARS", 240, min_value=1
             ),
+            context_tool_outputs_total_max_chars=_env_int(
+                "AGENT_OS_CONTEXT_TOOL_OUTPUTS_TOTAL_MAX_CHARS", 2_000, min_value=0
+            ),
             context_trace_log=os.getenv("AGENT_OS_CONTEXT_TRACE_LOG", "0").lower()
             in ("1", "true", "yes"),
             session_history_cap_when_task_summary=_env_int(
@@ -312,6 +319,10 @@ class Settings:
             not in ("0", "false", "no"),
             context_hard_budget=os.getenv("AGENT_OS_CONTEXT_HARD_BUDGET", "0").lower()
             in ("1", "true", "yes"),
+            context_self_heal_over_budget=os.getenv(
+                "AGENT_OS_CONTEXT_SELF_HEAL_OVER_BUDGET", "1"
+            ).lower()
+            not in ("0", "false", "no"),
             enable_constitutional_prompt=enable_const,
             enable_ephemeral_metadata=os.getenv("AGENT_OS_ENABLE_EPHEMERAL_METADATA", "1").lower()
             not in ("0", "false", "no"),
