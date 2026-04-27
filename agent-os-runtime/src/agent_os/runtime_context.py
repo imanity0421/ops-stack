@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import escape
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 EntryPoint = Literal["cli", "web", "api"]
 
 _WEEKDAYS_ZH = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _text_or_empty(value: object) -> str:
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
 
 
 @dataclass(frozen=True)
@@ -48,7 +55,7 @@ def build_ephemeral_context(
     return EphemeralContext(
         now_utc=base.astimezone(timezone.utc),
         timezone_name=tz_name,
-        local_time_text=local.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        local_time_text=local.strftime("%Y-%m-%d %H:%M %Z"),
         weekday_text=_WEEKDAYS_ZH[local.weekday()],
         entrypoint=entrypoint,
         skill_id=skill_id,
@@ -60,13 +67,17 @@ def build_ephemeral_context(
 def build_ephemeral_instruction(ctx: EphemeralContext) -> str:
     """格式化为系统指令片段，明确禁止自动沉淀为长期记忆。"""
 
-    uid = ctx.user_id or "未指定"
+    tz = escape(_text_or_empty(ctx.timezone_name), quote=False)
+    entrypoint = escape(_text_or_empty(ctx.entrypoint), quote=False)
+    skill_id = escape(_text_or_empty(ctx.skill_id), quote=False)
+    client_id = escape(_text_or_empty(ctx.client_id), quote=False)
+    uid = escape(_text_or_empty(ctx.user_id).strip() or "未指定", quote=False)
     return (
         "【运行时临时上下文】\n"
-        f"- 当前时间：{ctx.local_time_text}（{ctx.weekday_text}，时区 {ctx.timezone_name}）\n"
-        f"- 入口：{ctx.entrypoint}\n"
-        f"- 当前 skill_id：{ctx.skill_id}\n"
-        f"- client_id：{ctx.client_id}；user_id：{uid}\n"
+        f"- 当前时间：{ctx.local_time_text}（{ctx.weekday_text}，时区 {tz}）\n"
+        f"- 入口：{entrypoint}\n"
+        f"- 当前 skill_id：{skill_id}\n"
+        f"- client_id：{client_id}；user_id：{uid}\n"
         "- 以上信息只用于本轮推理与排期判断，不代表长期事实；"
         "不得仅因本段内容调用记忆写入工具。"
     )

@@ -80,8 +80,11 @@ def test_get_agent_planning_draft_has_output_schema(tmp_path: Path) -> None:
     else:
         flat = str(inst)
     assert MARKER in flat
-    assert "【运行时临时上下文】" in flat
-    assert "入口：api" in flat
+    assert "【运行时临时上下文】" not in flat
+    assert "入口：api" not in flat
+
+    tool_names = {getattr(t, "name", None) or getattr(t, "__name__", "") for t in ag.tools}
+    assert tool_names == {"retrieve_ordered_context"}
 
 
 def test_packaged_planning_draft_manifest_loads() -> None:
@@ -117,6 +120,142 @@ def test_get_agent_respects_disable_constitutional(tmp_path: Path) -> None:
     assert MARKER not in flat
 
 
+def test_get_agent_static_prefix_omits_handoff_status_with_context_builder(tmp_path: Path) -> None:
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text(
+        json.dumps(
+            {
+                "handoff_version": "1.0",
+                "created_utc": "2026-04-27T00:00:00+00:00",
+                "video_raw_ingest_schema_ref": "/schema.json",
+                "lessons": [{"valid": True}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    s = Settings(
+        session_sqlite_path=tmp_path / "s.db",
+        handoff_manifest_path=handoff,
+    )
+
+    ag1 = get_agent(ctrl, client_id="c1", settings=s)
+    ag2 = get_agent(ctrl, client_id="c1", settings=s)
+    flat1 = "\n".join(str(x) for x in ag1.instructions)
+    flat2 = "\n".join(str(x) for x in ag2.instructions)
+
+    assert flat1 == flat2
+    assert "handoff_version=1.0" not in flat1
+    assert "条目数=" not in flat1
+    assert "2026-04-27" not in flat1
+    assert "当前配方手册版本" not in flat1
+
+
+def test_get_agent_legacy_mode_can_include_handoff_status(tmp_path: Path) -> None:
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text(
+        json.dumps(
+            {
+                "handoff_version": "1.0",
+                "created_utc": "2026-04-27T00:00:00+00:00",
+                "video_raw_ingest_schema_ref": "/schema.json",
+                "lessons": [{"valid": True}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    s = Settings(
+        session_sqlite_path=tmp_path / "s.db",
+        handoff_manifest_path=handoff,
+        enable_context_builder=False,
+        enable_ephemeral_metadata=False,
+    )
+
+    ag = get_agent(ctrl, client_id="c1", settings=s)
+    flat = "\n".join(str(x) for x in ag.instructions)
+
+    assert "handoff_version=1.0" in flat
+    assert "当前配方手册版本" in flat
+    assert "2026-04-27" not in flat
+
+
+def test_get_agent_default_manifest_uses_explicit_minimal_tools(tmp_path: Path) -> None:
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    s = Settings(session_sqlite_path=tmp_path / "s.db")
+    ag = get_agent(
+        ctrl,
+        client_id="c1",
+        settings=s,
+        skill_id="default_agent",
+    )
+    tool_names = {getattr(t, "name", None) or getattr(t, "__name__", "") for t in ag.tools}
+
+    assert tool_names == {
+        "retrieve_ordered_context",
+        "record_client_fact",
+        "record_client_preference",
+        "record_task_feedback",
+    }
+
+
+def test_get_agent_tool_mask_is_explicit_per_entrypoint_scope(tmp_path: Path) -> None:
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    s = Settings(session_sqlite_path=tmp_path / "s.db")
+    cli_agent = get_agent(
+        ctrl,
+        client_id="c1",
+        settings=s,
+        skill_id="default_agent",
+        entrypoint="cli",
+    )
+    web_agent = get_agent(
+        ctrl,
+        client_id="c1",
+        settings=s,
+        skill_id="default_agent",
+        entrypoint="web",
+        exclude_tool_names={
+            "record_client_fact",
+            "record_client_preference",
+            "record_task_feedback",
+        },
+    )
+    cli_tools = {getattr(t, "name", None) or getattr(t, "__name__", "") for t in cli_agent.tools}
+    web_tools = {getattr(t, "name", None) or getattr(t, "__name__", "") for t in web_agent.tools}
+
+    assert cli_tools == {
+        "retrieve_ordered_context",
+        "record_client_fact",
+        "record_client_preference",
+        "record_task_feedback",
+    }
+    assert web_tools == {"retrieve_ordered_context"}
+    assert "\n".join(str(x) for x in cli_agent.instructions) == "\n".join(
+        str(x) for x in web_agent.instructions
+    )
+
+
 def test_get_agent_can_disable_ephemeral_metadata(tmp_path: Path) -> None:
     ctrl = MemoryController.create_default(
         mem0_api_key=None,
@@ -143,7 +282,9 @@ def test_get_agent_can_disable_ephemeral_metadata(tmp_path: Path) -> None:
     assert "【运行时临时上下文】" not in flat
 
 
-def test_get_agent_injects_task_summary_and_index(tmp_path: Path) -> None:
+def test_get_agent_context_builder_keeps_task_summary_out_of_static_instructions(
+    tmp_path: Path,
+) -> None:
     ctrl = MemoryController.create_default(
         mem0_api_key=None,
         mem0_host=None,
@@ -151,6 +292,48 @@ def test_get_agent_injects_task_summary_and_index(tmp_path: Path) -> None:
         hindsight_path=tmp_path / "h.jsonl",
     )
     s = Settings(session_sqlite_path=tmp_path / "s.db")
+    summary = TaskSummary(
+        session_id="s1",
+        task_id="task_20260425T000000Z_abcdef12",
+        summary_text="- 当前任务目标：整理当前交付物",
+        summary_version=1,
+        covered_message_count=4,
+        updated_at="2026-04-25T00:00:00+00:00",
+    )
+    task = TaskSegment(
+        task_id=summary.task_id,
+        session_id="s1",
+        client_id="c1",
+        user_id=None,
+        primary_skill_id="default_agent",
+        invoked_skills=["default_agent"],
+        task_title="交付物整理",
+        status="active",
+        created_at="2026-04-25T00:00:00+00:00",
+        updated_at="2026-04-25T00:00:00+00:00",
+    )
+    ag = get_agent(
+        ctrl,
+        client_id="c1",
+        settings=s,
+        current_task_summary=summary,
+        session_task_index=[task],
+    )
+    inst = ag.instructions
+    flat = "\n".join(str(x) for x in inst) if isinstance(inst, list) else str(inst)
+    assert "【当前任务前情提要】" not in flat
+    assert "整理当前交付物" not in flat
+    assert "【本 session 任务目录（短索引）】" not in flat
+
+
+def test_get_agent_legacy_mode_injects_task_summary_and_index(tmp_path: Path) -> None:
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    s = Settings(session_sqlite_path=tmp_path / "s.db", enable_context_builder=False)
     summary = TaskSummary(
         session_id="s1",
         task_id="task_20260425T000000Z_abcdef12",

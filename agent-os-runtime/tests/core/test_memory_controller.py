@@ -190,9 +190,7 @@ def test_ledger_idempotency_key_dedupes_changed_text(tmp_path: Path) -> None:
     assert r2.dedup_reason == "ledger_idempotency_committed_duplicate"
     assert len(memories) == 1
     with sqlite3.connect(str(ledger)) as conn:
-        row = conn.execute(
-            "SELECT idempotency_key FROM memory_write_ledger"
-        ).fetchone()
+        row = conn.execute("SELECT idempotency_key FROM memory_write_ledger").fetchone()
         attempt = conn.execute(
             "SELECT attempt_status, reason FROM memory_write_attempts"
         ).fetchone()
@@ -548,9 +546,7 @@ def test_memory_policy_warn_mode_writes_and_audits_policy_reason(tmp_path: Path)
     assert r.policy_category == "temporary_or_uncertain"
     assert "mem0" in r.written_to
     with sqlite3.connect(str(ledger)) as conn:
-        row = conn.execute(
-            "SELECT status, policy_reason FROM memory_write_ledger"
-        ).fetchone()
+        row = conn.execute("SELECT status, policy_reason FROM memory_write_ledger").fetchone()
     assert row == ("committed", "policy_warning:uncertain_or_temporary")
 
 

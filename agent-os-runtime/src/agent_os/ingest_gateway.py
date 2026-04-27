@@ -60,9 +60,7 @@ def run_ingest_v1(
     if not raw:
         raise ValueError("text 不能为空")
     if len(raw) > INGEST_V1_MAX_TEXT_CHARS:
-        raise ValueError(
-            f"text 过长（>{INGEST_V1_MAX_TEXT_CHARS} 字符），请拆分或走离线入库通道"
-        )
+        raise ValueError(f"text 过长（>{INGEST_V1_MAX_TEXT_CHARS} 字符），请拆分或走离线入库通道")
 
     cid = (client_id or "").strip() or "demo_client"
     sk = (skill_id or "").strip() or settings.default_skill_id

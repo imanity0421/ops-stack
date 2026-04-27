@@ -175,7 +175,12 @@ class HindsightVectorIndex:
         )
         if not indexed:
             self.invalidate()
-            return {"status": "ok", "row_count": 0, "path": str(self._path), "table": self._table_name}
+            return {
+                "status": "ok",
+                "row_count": 0,
+                "path": str(self._path),
+                "table": self._table_name,
+            }
         if self._open_table():
             try:
                 source = _lance_str_literal(source_path)
@@ -265,10 +270,9 @@ class HindsightVectorIndex:
                 ):
                     fresh = False
                     break
-                if (
-                    int(source_sizes[i] or 0) == int(source_signature.get("size", 0))
-                    and int(source_mtimes[i] or 0) == int(source_signature.get("mtime_ns", 0))
-                ):
+                if int(source_sizes[i] or 0) == int(source_signature.get("size", 0)) and int(
+                    source_mtimes[i] or 0
+                ) == int(source_signature.get("mtime_ns", 0)):
                     has_current_signature = True
             fresh = fresh and has_current_signature
         return {

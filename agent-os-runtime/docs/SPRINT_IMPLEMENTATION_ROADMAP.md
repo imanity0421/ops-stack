@@ -1,8 +1,8 @@
-# Agent OS 路线图（定版）— 实现流程与设计图
+# Sprint Implementation Roadmap — 实现流程与设计图
 
-**索引**：阅读顺序见仓库 [README.md](../README.md) §**文档与阅读顺序**。本文与代码落地进度**可能部分已完成、部分仍为规划**，以 [CHANGELOG.md](CHANGELOG.md) 与代码为准。若**嫌表太长**：可只读 [ENGINEERING.md](ENGINEERING.md) 与最近 CHANGELOG，本文件作 Sprint/DoD 备查即可。
+**索引**：阅读顺序见仓库 [README.md](../README.md) §**文档与阅读顺序**。本文是 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md) 的 Sprint / DoD 级工程拆解：负责记录近期实施顺序、验收口径和代码落点；业务架构方向、模块边界和阶段原则以上述 Claude Code 参考架构文档为中心。本文与代码落地进度**可能部分已完成、部分仍为规划**，以 [CHANGELOG.md](CHANGELOG.md) 与代码为准。若**嫌表太长**：可只读 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md)、[ENGINEERING.md](ENGINEERING.md) 与最近 CHANGELOG，本文作 Sprint/DoD 备查即可。
 
-本文档是 **agent-os-runtime** 在「CLI + 最终 Web/API 对外、持续新增 Skill、通用任务型交付」目标下的**定版**实施蓝图，与 [ENGINEERING.md](ENGINEERING.md) 中的运行时边界一致，**不**覆盖账户/计费/多租户控制台等完整商业化（见 ENGINEERING §1.2）。
+本文档是 **agent-os-runtime** 在「CLI + 最终 Web/API 对外、持续新增 Skill、通用任务型交付」目标下的实施蓝图，与 [ENGINEERING.md](ENGINEERING.md) 中的运行时边界一致，**不**覆盖账户/计费/多租户控制台等完整商业化（见 ENGINEERING §1.2）。
 
 ---
 
@@ -237,9 +237,10 @@ flowchart LR
 
 ## 12. 变更与维护
 
-- 本文件为 **定版设计图**；若 Sprint 内容或 DoD 变更，需更新本文件并视情况更新 [CHANGELOG.md](CHANGELOG.md) 与 [ENGINEERING.md](ENGINEERING.md) 引用。
+- 本文件为 **Sprint/DoD 执行计划**；若实施内容、验收口径或代码落点变更，需更新本文并视情况更新 [CHANGELOG.md](CHANGELOG.md) 与 [ENGINEERING.md](ENGINEERING.md) 引用。
+- 业务架构方向、Claude Code 参考边界、Stage 定义与冻结清单以 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md) 为中心；本文不重复承载顶层路线。
 - Agno/第三方 API 以**实现当时版本文档**为准，表内类名仅作**意图**，实现前须核对。
 
 ---
 
-*文档版本：定版 v1.0 | 与 agent-os-runtime 仓库同步维护*
+*文档版本：Sprint implementation roadmap v1.0 | 与 agent-os-runtime 仓库同步维护*

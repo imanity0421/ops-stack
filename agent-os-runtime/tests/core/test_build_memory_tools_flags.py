@@ -94,11 +94,12 @@ def test_retrieve_ordered_context_tool_entrypoint_uses_unified_context(tmp_path:
 
     out = _tool_by_name(tools, "retrieve_ordered_context").entrypoint("结论")
 
-    assert "## ① 主体画像 (Mem0)" in out
+    assert "<ordered_context" in out
+    assert "<mem0_profile" in out
     assert "公司长期要求" in out
-    assert "## ② 历史教训与反馈 (Hindsight)" in out
-    assert "## ③ 领域知识" in out
-    assert "## ④ 参考案例 (Asset Store)" in out
+    assert "<hindsight_lessons" in out
+    assert "<graphiti_knowledge" in out
+    assert "<asset_references" in out
 
 
 def test_search_reference_cases_non_numeric_limit_uses_default(tmp_path: Path) -> None:
@@ -284,7 +285,8 @@ def test_retrieve_ordered_context_exposes_hindsight_debug_scores(tmp_path: Path)
         "关键约束",
         debug_scores=True,
     )
-    assert "## ② 历史教训与反馈 (Hindsight)" in out
+    assert "<hindsight_lessons" in out
+    assert "<lesson_item" in out
     assert "score=" in out
     assert "reasons=" in out
 

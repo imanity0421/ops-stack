@@ -32,6 +32,14 @@ def test_load_manifest(tmp_path: Path) -> None:
     assert enabled_tool_name_set(m) == {"retrieve_ordered_context", "fetch_probe_context"}
 
 
+def test_empty_enabled_tools_means_no_tools(tmp_path: Path) -> None:
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({"system_prompt": "测试配方", "enabled_tools": []}), encoding="utf-8")
+    m = load_agent_manifest(p)
+    assert m is not None
+    assert enabled_tool_name_set(m) == set()
+
+
 def test_load_manifest_accepts_utf8_bom(tmp_path: Path) -> None:
     p = tmp_path / "m.json"
     p.write_text("\ufeff" + json.dumps({"system_prompt": "ok"}), encoding="utf-8")
@@ -76,9 +84,17 @@ def test_skill_registry_has_builtin_default_agent() -> None:
     assert eff == "default_agent"
 
 
-def test_filter_tools_empty_enabled_returns_all() -> None:
+def test_filter_tools_none_enabled_returns_all() -> None:
     class Fn:
         name = "a"
 
     tools = [Fn()]  # type: ignore[list-item]
     assert len(filter_tools_by_manifest(tools, None)) == 1
+
+
+def test_filter_tools_empty_enabled_returns_none() -> None:
+    class Fn:
+        name = "a"
+
+    tools = [Fn()]  # type: ignore[list-item]
+    assert filter_tools_by_manifest(tools, set()) == []

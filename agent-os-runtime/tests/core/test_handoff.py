@@ -34,7 +34,8 @@ def test_handoff_valid_summary(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     lines = load_handoff_instruction_lines(p)
-    assert len(lines) == 3
+    assert len(lines) == 2
     assert "条目数=2" in lines[0]
     assert "校验通过=1" in lines[0]
     assert "未通过=1" in lines[0]
+    assert "2026-01-01" not in "\n".join(lines)

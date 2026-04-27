@@ -209,3 +209,17 @@ def test_ingest_unknown_target(tmp_path: Path) -> None:
             settings=Settings(),
             controller=_ctrl(tmp_path, hindsight=True),
         )
+
+
+def test_ingest_mem0_profile_rejects_invalid_mem_kind(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="mem_kind"):
+        run_ingest_v1(
+            target="mem0_profile",
+            text="客户偏好先给结论再给依据。",
+            client_id="c1",
+            user_id=None,
+            skill_id="default_agent",
+            settings=Settings(),
+            controller=_ctrl(tmp_path, hindsight=True),
+            mem_kind="unknown_kind",
+        )

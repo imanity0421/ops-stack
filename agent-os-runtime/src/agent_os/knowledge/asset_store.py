@@ -162,6 +162,17 @@ def _safe_short(text: str, max_chars: int) -> str:
     return t[: max_chars - 1] + "…"
 
 
+def _include_raw_excerpt_limit() -> int:
+    """P2-12：include_raw 时正文节选上限（字符），可由环境覆盖。"""
+    raw = (os.getenv("AGENT_OS_ASSET_INCLUDE_RAW_MAX_CHARS") or "").strip()
+    if not raw:
+        return 1200
+    try:
+        return max(200, min(int(raw), 8000))
+    except ValueError:
+        return 1200
+
+
 def _lance_str_literal(s: str) -> str:
     """Lance/字符串过滤中单引号需写成 ''。"""
     return str(s).replace("'", "''")
@@ -309,7 +320,9 @@ def format_hits_for_agent(
             lines.insert(1, f"- 记录于：{h.created_at or '记录时间未知'}")
         blocks.append("\n".join(lines))
         if include_raw and h.raw_content:
-            blocks.append("#### 原文（节选）\n" + _safe_short(h.raw_content, 2400))
+            blocks.append(
+                "#### 原文（节选）\n" + _safe_short(h.raw_content, _include_raw_excerpt_limit())
+            )
     return "\n\n".join(blocks)
 
 

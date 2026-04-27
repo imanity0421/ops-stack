@@ -48,7 +48,16 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from agent_os.agent.factory import get_agent, new_session_id
+from agent_os.agent.task_memory import TaskMemoryStore, TaskSummaryService
 from agent_os.config import Settings
+from agent_os.context_builder import (
+    ContextCharBudget,
+    ContextBuilder,
+    build_auto_retrieval_context,
+    effective_session_history_max_messages,
+    resolve_auto_retrieve_decision,
+)
+from agent_os.context_diagnostics import build_context_diagnostics
 from agent_os.ingest_gateway import INGEST_V1_MAX_TEXT_CHARS, run_ingest_v1
 from agent_os.knowledge.graphiti_entitlements import (
     EntitlementsRevisionConflictError,
@@ -57,7 +66,8 @@ from agent_os.knowledge.graphiti_entitlements import (
     update_entitlements_file,
 )
 from agent_os.manifest_loader import load_skill_manifest_registry, resolve_effective_skill_id
-from agent_os.observability import log_agent_run_obs
+from agent_os.observability import log_agent_run_obs, log_context_management_trace
+from agent_os.knowledge.asset_store import asset_store_from_settings
 from agent_os.knowledge.graphiti_reader import GraphitiReadService
 from agent_os.memory.controller import MemoryController
 from agent_os.memory.hindsight_store import HindsightStore
@@ -137,18 +147,31 @@ def _build_stack(
     knowledge = (
         None if no_knowledge else GraphitiReadService.from_env(settings.knowledge_fallback_path)
     )
+    asset_store = asset_store_from_settings(
+        enable=settings.enable_asset_store, path=settings.asset_store_path
+    )
+    # P2-H19: Web 演示提示不再走静态 instructions，避免跨 entrypoint 静态前缀漂移；
+    # 当 ContextBuilder 启用时，提示通过 attention_anchor 的 <entrypoint_notice> 注入。
+    legacy_extra_instructions: list[str] | None = (
+        list(_WEB_EXTRA_INSTRUCTIONS) if not settings.enable_context_builder else None
+    )
     agent = get_agent(
         ctrl,
         client_id=client_id,
         user_id=user_id,
         thought_mode="slow" if slow else "fast",
         knowledge=knowledge,
+        asset_store=asset_store,
         settings=settings,
         skill_id=_bundle_skill_param(skill_id),
         exclude_tool_names=set(_WEB_EXCLUDED_MEMORY_WRITE_TOOLS),
-        extra_instructions=list(_WEB_EXTRA_INSTRUCTIONS),
+        extra_instructions=legacy_extra_instructions,
         entrypoint="web",
     )
+    # Keep retrieval dependencies attached to the cached bundle so /chat auto recall
+    # uses the same instances as the agent tool layer.
+    setattr(agent, "_agent_os_knowledge", knowledge)
+    setattr(agent, "_agent_os_asset_store", asset_store)
     return settings, ctrl, agent
 
 
@@ -177,6 +200,65 @@ def _get_bundle_for(
 
 def _mem_uid(client_id: str, user_id: str | None) -> str:
     return f"{client_id}::{user_id}" if user_id else client_id
+
+
+def _context_builder_from_settings(settings: Settings) -> ContextBuilder | None:
+    if not settings.enable_context_builder:
+        return None
+    return ContextBuilder(
+        timezone_name=settings.runtime_timezone,
+        history_max_messages=settings.session_history_max_messages,
+        include_runtime_context=settings.enable_ephemeral_metadata,
+        max_tool_output_chars=settings.context_tool_output_max_chars,
+        context_char_budget=ContextCharBudget.from_total(settings.context_max_chars),
+        enable_token_estimate=settings.context_estimate_tokens,
+        hard_total_budget=settings.context_hard_budget,
+    )
+
+
+def _task_memory_from_settings(
+    settings: Settings,
+) -> tuple[TaskMemoryStore | None, TaskSummaryService | None]:
+    if not settings.enable_task_memory:
+        return None, None
+    store = TaskMemoryStore(settings.task_memory_sqlite_path)
+    return (
+        store,
+        TaskSummaryService(
+            store,
+            model=settings.task_summary_model,
+            max_chars=settings.task_summary_max_chars,
+            min_messages=settings.task_summary_min_messages,
+            every_n_messages=settings.task_summary_every_n_messages,
+        ),
+    )
+
+
+def _effective_skill_for_context(settings: Settings, skill_id: str | None) -> str:
+    return resolve_effective_skill_id(
+        _bundle_skill_param(skill_id),
+        settings.default_skill_id,
+        load_skill_manifest_registry(settings.agent_manifest_dir),
+    )
+
+
+def _session_messages_for_context(agent: Any, session_id: str, max_messages: int) -> list[Any]:
+    """Prefer Agno's persisted session DB so Web history survives process restarts."""
+    limit = max(0, int(max_messages))
+    if limit <= 0:
+        return []
+    getter = getattr(agent, "get_session_messages", None)
+    if getattr(agent, "db", None) is not None and callable(getter):
+        try:
+            messages = getter(
+                session_id=session_id.strip(),
+                limit=limit,
+                skip_history_messages=False,
+            )
+            return list(messages)
+        except Exception:
+            pass
+    return list(_transcripts.get(session_id, []))[-limit:]
 
 
 def _load_local_memory_json(path: Path) -> dict[str, Any]:
@@ -474,7 +556,7 @@ def _format_web_chat_reply(
 class ChatIn(BaseModel):
     message: str = Field(..., min_length=1, max_length=INGEST_V1_MAX_TEXT_CHARS)
     session_id: str | None = None
-    client_id: str = "demo_client"
+    client_id: str = Field(default="demo_client", min_length=1, max_length=256)
     user_id: str | None = None
     skill_id: str | None = Field(
         default=None,
@@ -579,7 +661,9 @@ class IngestV1In(BaseModel):
     """P2-6 显式 target 数据摄入；与旧版 ``/api/memory/ingest`` 并存。"""
 
     target: Literal["mem0_profile", "hindsight", "asset_store"]
-    text: str = Field(..., min_length=1, max_length=INGEST_V1_MAX_TEXT_CHARS, description="写入正文")
+    text: str = Field(
+        ..., min_length=1, max_length=INGEST_V1_MAX_TEXT_CHARS, description="写入正文"
+    )
     client_id: str = Field(default="demo_client", min_length=1)
     user_id: str | None = None
     skill_id: str | None = Field(
@@ -2215,17 +2299,128 @@ def api_session_messages(
 
 @app.post("/chat", response_model=ChatOut)
 def chat(inp: ChatIn, request: Request):
+    if not inp.message.strip():
+        raise HTTPException(status_code=400, detail="message 不能为空")
     slow_applied = _resolve_use_slow(inp.use_slow_reasoning)
-    _, ctrl, agent = _get_bundle_for(
+    settings, ctrl, agent = _get_bundle_for(
         inp.client_id, inp.user_id, slow_applied, skill_id=inp.skill_id
     )
     sid = inp.session_id or new_session_id()
     rid = getattr(request.state, "request_id", "-")
     try:
         ctrl.bump_turn_and_maybe_snapshot(inp.client_id, inp.user_id)
+        effective_skill_id = _effective_skill_for_context(settings, inp.skill_id)
+        task_store, task_summary_service = _task_memory_from_settings(settings)
+        active_task_id: str | None = None
+        if task_store is not None:
+            task = task_store.get_or_create_active_task(
+                session_id=sid,
+                client_id=inp.client_id,
+                user_id=inp.user_id,
+                skill_id=effective_skill_id,
+                seed_message=inp.message,
+            )
+            active_task_id = task.task_id
+            task_store.append_message(
+                session_id=sid,
+                task_id=active_task_id,
+                role="user",
+                content=inp.message,
+            )
+        run_message = inp.message
+        context_diagnostics: dict[str, Any] | None = None
+        builder = _context_builder_from_settings(settings)
+        if builder is not None:
+            manifest_registry = load_skill_manifest_registry(settings.agent_manifest_dir)
+            effective_manifest = manifest_registry.get(effective_skill_id)
+            current_summary = (
+                task_store.get_summary(session_id=sid, task_id=active_task_id)
+                if task_store is not None and active_task_id is not None
+                else None
+            )
+            task_index = (
+                task_store.task_index(session_id=sid)
+                if task_store is not None and active_task_id is not None
+                else None
+            )
+            hist_cap = effective_session_history_max_messages(
+                base_max_messages=settings.session_history_max_messages,
+                task_summary=current_summary,
+                cap_when_summary_present=settings.session_history_cap_when_task_summary,
+            )
+            retrieved_context = None
+            retrieve_mode = (
+                effective_manifest.auto_retrieve_mode
+                if effective_manifest and effective_manifest.auto_retrieve_mode
+                else settings.context_auto_retrieve_mode
+            )
+            retrieve_keywords = (
+                tuple(effective_manifest.auto_retrieve_keywords)
+                if effective_manifest and effective_manifest.auto_retrieve_keywords
+                else settings.context_auto_retrieve_keywords
+            )
+            retrieve_decision = resolve_auto_retrieve_decision(
+                inp.message, mode=retrieve_mode, keywords=retrieve_keywords
+            )
+            if settings.enable_context_auto_retrieve and retrieve_decision.enabled:
+                asset_store = getattr(agent, "_agent_os_asset_store", None)
+                if asset_store is None:
+                    asset_store = asset_store_from_settings(
+                        enable=settings.enable_asset_store, path=settings.asset_store_path
+                    )
+                knowledge = getattr(agent, "_agent_os_knowledge", None)
+                if knowledge is None and not _no_knowledge:
+                    knowledge = GraphitiReadService.from_env(settings.knowledge_fallback_path)
+                retrieved_context = build_auto_retrieval_context(
+                    ctrl,
+                    inp.message,
+                    client_id=inp.client_id,
+                    user_id=inp.user_id,
+                    skill_id=effective_skill_id,
+                    enable_hindsight=settings.enable_hindsight,
+                    enable_temporal_grounding=settings.enable_temporal_grounding,
+                    knowledge=knowledge,
+                    enable_asset_store=settings.enable_asset_store,
+                    asset_store=asset_store,
+                    enable_hindsight_synthesis=settings.enable_hindsight_synthesis,
+                    hindsight_synthesis_model=settings.hindsight_synthesis_model,
+                    hindsight_synthesis_max_candidates=settings.hindsight_synthesis_max_candidates,
+                    enable_asset_synthesis=settings.enable_asset_synthesis,
+                    asset_synthesis_model=settings.asset_synthesis_model,
+                    asset_synthesis_max_candidates=settings.asset_synthesis_max_candidates,
+                )
+            bundle = builder.build_turn_message(
+                inp.message,
+                entrypoint="web",
+                client_id=inp.client_id,
+                user_id=inp.user_id,
+                skill_id=effective_skill_id,
+                session_messages=_session_messages_for_context(
+                    agent,
+                    sid,
+                    hist_cap,
+                ),
+                retrieved_context=retrieved_context,
+                current_task_summary=current_summary,
+                session_task_index=task_index,
+                history_max_messages_override=hist_cap,
+                auto_retrieve_reason=(
+                    retrieve_decision.reason if settings.enable_context_auto_retrieve else None
+                ),
+                entrypoint_extra_lines=list(_WEB_EXTRA_INSTRUCTIONS),
+            )
+            run_message = bundle.message
+            context_diagnostics = build_context_diagnostics(bundle).to_dict()
+            if settings.context_trace_log:
+                log_context_management_trace(
+                    request_id=rid,
+                    session_id=sid,
+                    trace=bundle.trace,
+                    route="/chat",
+                )
         t0 = time.perf_counter()
         out = agent.run(
-            inp.message,
+            run_message,
             session_id=sid,
             user_id=inp.user_id or inp.client_id,
             stream=False,
@@ -2238,10 +2433,21 @@ def chat(inp: ChatIn, request: Request):
             route="/chat",
         )
         text, rkind, structured = _format_web_chat_reply(agent, out)
+        if task_store is not None and active_task_id is not None:
+            task_store.append_message(
+                session_id=sid,
+                task_id=active_task_id,
+                role="assistant",
+                content=text,
+            )
+            if task_summary_service is not None:
+                task_summary_service.maybe_update(session_id=sid, task_id=active_task_id)
         tr = _transcripts.setdefault(sid, [])
         tr.append(("user", inp.message))
         tr.append(("assistant", text))
         trace = _serialize_run_trace(out) if inp.include_trace else None
+        if trace is not None and context_diagnostics is not None:
+            trace["context_diagnostics"] = context_diagnostics
         history = [ChatHistoryTurn(role=r, content=c) for r, c in tr]
         return ChatOut(
             reply=text,
@@ -2444,6 +2650,9 @@ def memory_hindsight_delete(inp: HindsightDeleteIn):
 @app.post("/api/memory/ingest", response_model=MemoryIngestOut)
 def memory_ingest(inp: MemoryIngestIn):
     k = inp.kind.strip().lower()
+    text = inp.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text 不能为空")
     if k == "fact":
         lane = MemoryLane.ATTRIBUTE
         fact_type: Any = "attribute"
@@ -2463,7 +2672,7 @@ def memory_ingest(inp: MemoryIngestIn):
         lane=lane,
         client_id=inp.client_id,
         user_id=inp.user_id,
-        text=inp.text.strip(),
+        text=text,
         fact_type=fact_type,
         task_id=inp.task_id if k == "feedback" else None,
     )

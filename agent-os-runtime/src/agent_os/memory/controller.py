@@ -303,7 +303,9 @@ class MemoryController:
         if written:
             self._recent_fingerprints.add(fp)
             if ledger_id is not None and self._ledger is not None:
-                self._ledger.mark_committed(ledger_id, storage_ref=",".join(str(x) for x in written))
+                self._ledger.mark_committed(
+                    ledger_id, storage_ref=",".join(str(x) for x in written)
+                )
         return MemoryWriteResult(
             written_to=written,
             policy_warning=policy_warning,
@@ -372,6 +374,7 @@ class MemoryController:
         deliverable_type: str | None = None,
         temporal_grounding: bool = True,
         debug_scores: bool = False,
+        include_superseded: bool = True,
     ) -> list[str]:
         if self._hindsight is None:
             return []
@@ -385,10 +388,11 @@ class MemoryController:
             deliverable_type=deliverable_type,
             temporal_grounding=temporal_grounding,
             debug_scores=debug_scores,
+            include_superseded=include_superseded,
         )
 
     def retrieve_ordered_context(self, query: str, options: RetrieveOrderedContextOptions) -> str:
-        """Mem0 → Hindsight → Graphiti → Asset 四层编排检索（Markdown）。"""
+        """Mem0 → Hindsight → Graphiti → Asset 四层编排检索（XML-like evidence bundle）。"""
         from agent_os.memory.ordered_context import render_retrieve_ordered_context_markdown
 
         return render_retrieve_ordered_context_markdown(self, query, options)

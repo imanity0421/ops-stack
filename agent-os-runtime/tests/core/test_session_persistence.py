@@ -53,7 +53,9 @@ def test_create_session_db_rejects_bad_scheme() -> None:
         create_session_db(s)
 
 
-def test_get_agent_includes_db_when_enabled(tmp_path: Path) -> None:
+def test_get_agent_keeps_db_but_disables_agno_history_when_context_builder_manages_it(
+    tmp_path: Path,
+) -> None:
     from agent_os.agent.factory import get_agent
 
     ctrl = MemoryController.create_default(
@@ -73,7 +75,110 @@ def test_get_agent_includes_db_when_enabled(tmp_path: Path) -> None:
         settings=s,
     )
     assert getattr(ag, "db", None) is not None
+    assert getattr(ag, "add_history_to_context", False) is False
+    assert getattr(ag, "num_history_messages", None) is None
+
+
+def test_get_agent_legacy_history_in_context_when_context_builder_disabled(
+    tmp_path: Path,
+) -> None:
+    from agent_os.agent.factory import get_agent
+
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    s = Settings(
+        enable_context_builder=False,
+        enable_session_db=True,
+        session_sqlite_path=tmp_path / "agent_sess.db",
+        session_history_max_messages=10,
+    )
+    ag = get_agent(
+        ctrl,
+        client_id="c1",
+        settings=s,
+    )
+    assert getattr(ag, "db", None) is not None
     assert getattr(ag, "add_history_to_context", False) is True
+    assert getattr(ag, "num_history_messages", None) == 10
+
+
+def test_get_agent_suppresses_double_history_risk_by_default(tmp_path: Path) -> None:
+    from agent_os.agent.factory import get_agent
+
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    s = Settings(
+        enable_context_builder=True,
+        context_self_managed_history=False,
+        enable_session_db=True,
+        session_sqlite_path=tmp_path / "agent_sess.db",
+        session_history_max_messages=10,
+    )
+
+    ag = get_agent(ctrl, client_id="c1", settings=s)
+
+    assert getattr(ag, "db", None) is not None
+    assert getattr(ag, "add_history_to_context", False) is False
+    assert getattr(ag, "num_history_messages", None) is None
+
+
+def test_get_agent_allows_double_history_only_with_explicit_override(tmp_path: Path) -> None:
+    from agent_os.agent.factory import get_agent
+
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    s = Settings(
+        enable_context_builder=True,
+        context_self_managed_history=False,
+        context_allow_agno_history_with_builder=True,
+        enable_session_db=True,
+        session_sqlite_path=tmp_path / "agent_sess.db",
+        session_history_max_messages=10,
+    )
+
+    ag = get_agent(ctrl, client_id="c1", settings=s)
+
+    assert getattr(ag, "db", None) is not None
+    assert getattr(ag, "add_history_to_context", False) is True
+    assert getattr(ag, "num_history_messages", None) == 10
+
+
+def test_get_agent_double_history_override_uses_raw_agno_history_cap(tmp_path: Path) -> None:
+    from agent_os.agent.factory import get_agent
+
+    ctrl = MemoryController.create_default(
+        mem0_api_key=None,
+        mem0_host=None,
+        local_memory_path=tmp_path / "m.json",
+        hindsight_path=tmp_path / "h.jsonl",
+    )
+    s = Settings(
+        enable_context_builder=True,
+        context_self_managed_history=False,
+        context_allow_agno_history_with_builder=True,
+        enable_session_db=True,
+        session_sqlite_path=tmp_path / "agent_sess.db",
+        session_history_max_messages=10,
+        session_history_cap_when_task_summary=2,
+    )
+
+    ag = get_agent(ctrl, client_id="c1", settings=s)
+
+    assert getattr(ag, "add_history_to_context", False) is True
+    # This explicit escape hatch delegates raw history to Agno, so it intentionally
+    # uses the configured Agno cap rather than ContextBuilder's task-summary cap.
     assert getattr(ag, "num_history_messages", None) == 10
 
 

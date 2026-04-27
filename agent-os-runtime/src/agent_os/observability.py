@@ -89,6 +89,26 @@ def log_agent_run_obs(
     return line
 
 
+CTX_TRACE_PREFIX = "AGENT_OS_CONTEXT_TRACE"
+
+
+def log_context_management_trace(
+    *,
+    request_id: str,
+    session_id: str,
+    trace: Any,
+    route: str = "-",
+) -> str:
+    """P2-7：ContextBuilder 块级 trace，仅日志，不进 prompt。"""
+    body = trace.to_obs_log_line()
+    line = (
+        f"{CTX_TRACE_PREFIX} route={route} request_id={request_id} "
+        f"session_id={session_id} blocks={body}"
+    )
+    logger.info(line)
+    return line
+
+
 def grep_obs_line_pattern() -> re.Pattern[str]:
     """在测试中校验格式。"""
     return re.compile(

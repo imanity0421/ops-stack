@@ -376,8 +376,7 @@ class HindsightStore:
         self._vector_score_weight = max(0.0, float(vector_score_weight))
         self._vector_index = (
             HindsightVectorIndex(
-                path=vector_index_path
-                or path.with_name(f"{path.stem}.hindsight_vector.lancedb")
+                path=vector_index_path or path.with_name(f"{path.stem}.hindsight_vector.lancedb")
             )
             if enable_vector_recall
             else None
@@ -456,7 +455,11 @@ class HindsightStore:
 
     def index_status(self) -> dict[str, Any]:
         if not self._path.is_file():
-            return {"source_exists": False, "index_exists": self._index_path.is_file(), "fresh": False}
+            return {
+                "source_exists": False,
+                "index_exists": self._index_path.is_file(),
+                "fresh": False,
+            }
         sig = self._file_signature()
         if not self._index_path.is_file():
             return {"source_exists": True, "index_exists": False, "fresh": False, **sig}
@@ -828,6 +831,7 @@ class HindsightStore:
         deliverable_type: str | None = None,
         temporal_grounding: bool = True,
         debug_scores: bool = False,
+        include_superseded: bool = True,
     ) -> list[str]:
         """检索反馈与教训：租户硬过滤 + supersedes 降权 + 可选同类合并/频次加权。"""
         if not self._path.is_file():
@@ -897,6 +901,8 @@ class HindsightStore:
             scored: list[tuple[float, str, bool, str, str, str, str, str]] = []
             for row in candidates:
                 is_superseded = _row_event_id(row) in superseded_ids
+                if is_superseded and not include_superseded and not debug_scores:
+                    continue
                 sc = _explain_hindsight_row(
                     row,
                     qtokens=qtokens,
@@ -931,7 +937,16 @@ class HindsightStore:
                 requested_skill_id=skill_id,
                 requested_deliverable_type=deliverable_type,
             )
-            for _, t, is_superseded, cluster_key, row_user_key, row_task_key, skill_key, dtype_key in scored:
+            for (
+                _,
+                t,
+                is_superseded,
+                cluster_key,
+                row_user_key,
+                row_task_key,
+                skill_key,
+                dtype_key,
+            ) in scored:
                 _append_with_budget(
                     out,
                     rendered=t,
@@ -980,6 +995,8 @@ class HindsightStore:
                 ),
             )
             is_best_superseded = _row_event_id(best) in superseded_ids
+            if is_best_superseded and not include_superseded and not debug_scores:
+                continue
             base_score = _explain_hindsight_row(
                 best,
                 qtokens=qtokens,
@@ -1024,7 +1041,16 @@ class HindsightStore:
             requested_skill_id=skill_id,
             requested_deliverable_type=deliverable_type,
         )
-        for _, t, is_superseded, cluster_key, row_user_key, row_task_key, skill_key, dtype_key in merged_scored:
+        for (
+            _,
+            t,
+            is_superseded,
+            cluster_key,
+            row_user_key,
+            row_task_key,
+            skill_key,
+            dtype_key,
+        ) in merged_scored:
             _append_with_budget(
                 out2,
                 rendered=t,

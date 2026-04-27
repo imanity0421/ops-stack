@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from agent_os import cli
+from agent_os.agent.task_memory import TaskMemoryStore, TaskSummary
 from agent_os.knowledge import asset_ingest as asset_ingest_mod
 from agent_os.memory.hindsight_store import HindsightStore
 from agent_os.memory.models import MemoryLane, UserFact
@@ -49,6 +50,119 @@ def test_cli_task_memory_records_turn_and_injects_index(
             "SELECT role, content FROM session_messages ORDER BY sequence_no"
         ).fetchall()
     assert rows == [("user", "帮我做一个通用方案"), ("assistant", "ok")]
+
+
+def test_cli_interactive_skips_blank_and_handles_unusual_characters(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AGENT_OS_ENABLE_TASK_MEMORY", "0")
+    monkeypatch.setenv("AGENT_OS_ENABLE_SESSION_DB", "0")
+    monkeypatch.setenv("AGENT_OS_ENABLE_CONTEXT_BUILDER", "0")
+    monkeypatch.setenv("AGENT_OS_LOCAL_MEMORY_PATH", str(tmp_path / "local.json"))
+    monkeypatch.setenv("AGENT_OS_HISTORICAL_PATH", str(tmp_path / "hindsight.jsonl"))
+
+    seen_messages: list[str] = []
+
+    class FakeAgent:
+        def run(self, message: str, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
+            seen_messages.append(message)
+            return SimpleNamespace(content="ok")
+
+    answers = iter(["   ", "\x00异常字符\u200b方案 <xml> & text", "exit"])
+    monkeypatch.setattr(cli, "get_agent", lambda *_args, **_kwargs: FakeAgent())
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
+
+    rc = cli.main(["--client-id", "c1", "--no-knowledge", "--no-async-review"])
+
+    assert rc == 0
+    assert seen_messages == ["\x00异常字符\u200b方案 <xml> & text"]
+
+
+def test_cli_context_builder_fetches_history_with_effective_summary_cap(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    task_db = tmp_path / "task.db"
+    store = TaskMemoryStore(task_db)
+    task = store.get_or_create_active_task(
+        session_id="s1",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        seed_message="既有任务",
+    )
+    store.upsert_summary(
+        TaskSummary(
+            session_id="s1",
+            task_id=task.task_id,
+            summary_text="- 当前任务目标：验证 CLI history cap",
+            summary_version=1,
+            covered_message_count=6,
+            updated_at="2026-04-27T00:00:00+00:00",
+        )
+    )
+    monkeypatch.setenv("AGENT_OS_ENABLE_TASK_MEMORY", "1")
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(task_db))
+    monkeypatch.setenv("AGENT_OS_ENABLE_SESSION_DB", "0")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_AUTO_RETRIEVE", "0")
+    monkeypatch.setenv("AGENT_OS_SESSION_HISTORY_MAX_MESSAGES", "8")
+    monkeypatch.setenv("AGENT_OS_SESSION_HISTORY_CAP_WHEN_TASK_SUMMARY", "2")
+    monkeypatch.setenv("AGENT_OS_LOCAL_MEMORY_PATH", str(tmp_path / "local.json"))
+    monkeypatch.setenv("AGENT_OS_HISTORICAL_PATH", str(tmp_path / "hindsight.jsonl"))
+
+    captured_limits: list[int] = []
+
+    class FakeAgent:
+        db = object()
+
+        def get_session_messages(self, **kwargs: Any) -> list[Any]:
+            captured_limits.append(kwargs["limit"])
+            return []
+
+        def run(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
+            return SimpleNamespace(content="ok")
+
+    monkeypatch.setattr(cli, "get_agent", lambda *_args, **_kwargs: FakeAgent())
+    answers = iter(["继续", "exit"])
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
+
+    rc = cli.main(
+        ["--client-id", "c1", "--session-id", "s1", "--no-knowledge", "--no-async-review"]
+    )
+
+    assert rc == 0
+    assert captured_limits == [2]
+
+
+def test_cli_context_diagnose_outputs_json(tmp_path: Path, monkeypatch, capsys) -> None:
+    history = tmp_path / "history.json"
+    history.write_text(
+        json.dumps([{"role": "user", "content": "上一轮问题"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_OS_CONTEXT_ESTIMATE_TOKENS", "0")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_MAX_CHARS", "1000")
+
+    rc = cli.main(
+        [
+            "context-diagnose",
+            "--message",
+            "继续给我方案",
+            "--client-id",
+            "c1",
+            "--history-json",
+            str(history),
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_chars"] > 0
+    assert data["max_total_chars"] == 1000
+    assert any(b["name"] == "recent_history" for b in data["blocks"])
+    assert any(b["name"] == "current_user_message" for b in data["blocks"])
 
 
 def test_cli_hindsight_index_status_rebuild_invalidate(tmp_path: Path, capsys) -> None:
@@ -128,7 +242,9 @@ def test_cli_hindsight_vector_index_ops(tmp_path: Path, capsys, monkeypatch) -> 
     assert status["fresh"] is True
 
 
-def test_cli_hindsight_vector_rebuild_error_returns_nonzero(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_cli_hindsight_vector_rebuild_error_returns_nonzero(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     class _Store:
         def __init__(self, *args, **kwargs):
             _ = (args, kwargs)

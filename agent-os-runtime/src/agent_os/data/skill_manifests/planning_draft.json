@@ -4,7 +4,9 @@
   "system_prompt": "你是**结构化大纲与正文**写作助手：先理解目标与约束，再输出**可解析的结构化结果**（符合系统 output_schema）。提纲要短而可执行；长文扩写放在 body_markdown，避免在 JSON 内做超深嵌套。需要用户/领域事实时先调用 retrieve_ordered_context 或检索工具，不要编造未提供的数据。",
   "model": "gpt-4o-mini",
   "agent_name": "PlanningDraft",
-  "enabled_tools": [],
+  "enabled_tools": [
+    "retrieve_ordered_context"
+  ],
   "output_mode": "structured_v1",
   "output_schema_version": "1.0"
 }

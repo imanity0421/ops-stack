@@ -131,11 +131,15 @@ agent-os-runtime/
   pyproject.toml
   README.md
   docs/
+    CLAUDE_CODE_REFERENCE_ROADMAP.md  # 业务 / Harness 架构中心：方向、模块、Stage、冻结清单
     ENGINEERING.md    ← 本文件（阅读顺序见仓库 README §文档与阅读顺序）
     ARCHITECTURE.md
     OPERATIONS.md
     CHANGELOG.md
     MEMORY_SYSTEM_V2.md
+    CONTEXT_MANAGEMENT_V2.md         # 上下文工程专项接手手册
+    SPRINT_IMPLEMENTATION_ROADMAP.md # Sprint / DoD 执行计划
+    STAGE_EXECUTION_PLAN.md          # 当前 Stage 战役与完成历史
   src/agent_os/
     __init__.py
     __main__.py
@@ -220,9 +224,12 @@ agent-os-runtime/
 
 每阶段更新 **CHANGELOG** 与本文件 **§7**。
 
-### 7.1 Agent OS 定版路线图（面向 Web/API + 持续扩展 Skill）
+### 7.1 文档层级与执行计划
 
-面向 **CLI + Web/API 对外、持续新增 Skill** 的 Sprint 级实施表、DoD、Mermaid 设计图与实现落点见 **[AGENT_OS_ROADMAP.md](AGENT_OS_ROADMAP.md)**（定版 v1.0）。
+- 业务架构方向、Claude Code Harness 参考边界、五大模块、Stage 节奏与冻结清单见 **[CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md)**。
+- 面向 **CLI + Web/API 对外、持续新增 Skill** 的 Sprint 级实施表、DoD、Mermaid 设计图与实现落点见 **[SPRINT_IMPLEMENTATION_ROADMAP.md](SPRINT_IMPLEMENTATION_ROADMAP.md)**。
+- 当前 Stage 的战役拆解与完成历史见 **[STAGE_EXECUTION_PLAN.md](STAGE_EXECUTION_PLAN.md)**。
+- 若规划文档与实现冲突，以代码、测试与 **[CHANGELOG.md](CHANGELOG.md)** 校准事实；本文仍负责记录当前工程契约。
 
 ---
 

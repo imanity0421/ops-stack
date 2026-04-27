@@ -6,6 +6,7 @@
 
 ### 文档
 
+- **文档权威层级整理**：明确 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md) 为业务 / Claude Code Harness 参考架构中心文档；Sprint/DoD 执行拆解改为 [SPRINT_IMPLEMENTATION_ROADMAP.md](SPRINT_IMPLEMENTATION_ROADMAP.md)，并同步 README、ENGINEERING、Memory/Context/Stage 文档的关系说明与链接。
 - **文档入口合并**：原 `docs/README.md` 已撤并至仓库 [README.md](../README.md) §**文档与阅读顺序**（避免根目录与 `docs/` 双 README）；[AGENTS.md](../AGENTS.md) 与相关交叉链接已更新。
 - 统一 **Hindsight `supersedes_event_id`** 表述：**append-only 存储，召回层降权**（与 `HindsightRetrievalPolicy` 一致），修正 [ENGINEERING.md](ENGINEERING.md)、[OPERATIONS.md](OPERATIONS.md)、[MEMORY_SYSTEM_V2.md](MEMORY_SYSTEM_V2.md)、[examples/ingest_post_samples.md](examples/ingest_post_samples.md) 中旧版「从召回剔除/隐藏」等措辞。
 
@@ -48,7 +49,7 @@
 ### 文档
 
 - **Memory V2 运维**：`docs/OPERATIONS.md` 增补「Memory V2 运维」（环境变量、Graphiti legacy、`migrate_memory_v2`）；`MEMORY_SYSTEM_V2.md` 增补运维与迁移交叉说明。
-- **Agent OS 定版路线图**：新增 [docs/AGENT_OS_ROADMAP.md](AGENT_OS_ROADMAP.md)（Sprint 1–4、DoD、Mermaid 设计图与实现落点）；`ENGINEERING.md` §7.1 引用。
+- **Sprint 实施路线图**：新增 [docs/SPRINT_IMPLEMENTATION_ROADMAP.md](SPRINT_IMPLEMENTATION_ROADMAP.md)（Sprint 1–4、DoD、Mermaid 设计图与实现落点）；`ENGINEERING.md` §7.1 引用。
 
 ### 新增
 

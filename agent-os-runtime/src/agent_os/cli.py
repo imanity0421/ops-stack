@@ -10,6 +10,18 @@ from pathlib import Path
 from agent_os.agent.factory import get_agent, new_session_id
 from agent_os.agent.task_memory import TaskMemoryStore, TaskSummaryService
 from agent_os.config import Settings
+from agent_os.context_builder import (
+    ContextCharBudget,
+    ContextBuilder,
+    build_auto_retrieval_context,
+    effective_session_history_max_messages,
+    resolve_auto_retrieve_decision,
+)
+from agent_os.context_diagnostics import (
+    build_context_diagnostics,
+    format_context_diagnostics_markdown,
+)
+from agent_os.observability import log_context_management_trace
 from agent_os.knowledge.graphiti_entitlements import (
     EntitlementsRevisionConflictError,
     append_entitlements_audit,
@@ -257,7 +269,9 @@ def _hindsight_index_main(argv: list[str]) -> int:
             "vector-invalidate",
         ],
     )
-    p.add_argument("--path", type=Path, default=None, help="Hindsight JSONL 路径；默认读取 Settings")
+    p.add_argument(
+        "--path", type=Path, default=None, help="Hindsight JSONL 路径；默认读取 Settings"
+    )
     p.add_argument("--vector-path", type=Path, default=None, help="Hindsight LanceDB 向量索引路径")
     args = p.parse_args(argv)
 
@@ -399,6 +413,87 @@ def _graphiti_entitlements_main(argv: list[str]) -> int:
     return 0
 
 
+def _load_diagnostic_history(path: Path | None) -> list[object]:
+    if path is None:
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"无法读取 history JSON: {exc}") from exc
+    if not isinstance(raw, list):
+        raise ValueError("history JSON 须为数组")
+    messages: list[object] = []
+    for item in raw:
+        if isinstance(item, dict):
+            role = str(item.get("role") or "user")
+            content = str(item.get("content") or "")
+            messages.append((role, content))
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            messages.append((str(item[0]), str(item[1])))
+    return messages
+
+
+def _context_diagnose_main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="agent-os-runtime context-diagnose",
+        description="构造一轮 ContextBuilder 消息并输出 /context 诊断；不调用模型。",
+    )
+    p.add_argument("--message", "-m", required=True, help="要诊断的当前用户消息")
+    p.add_argument("--client-id", default="demo_client", help="租户或工作区隔离键")
+    p.add_argument("--user-id", default=None, help="终端用户 ID（可选）")
+    p.add_argument("--skill", default=None, help="skill_id；默认按 Settings / manifest 解析")
+    p.add_argument(
+        "--entrypoint",
+        choices=["cli", "web", "api"],
+        default="cli",
+        help="用于 runtime_context 的入口标识",
+    )
+    p.add_argument("--history-json", type=Path, default=None, help="可选历史消息 JSON 数组")
+    p.add_argument("--retrieved-context-file", type=Path, default=None, help="可选外部召回文本")
+    p.add_argument("--json", action="store_true", help="输出 JSON 而不是 Markdown")
+    args = p.parse_args(argv)
+
+    settings = Settings.from_env()
+    builder = ContextBuilder(
+        timezone_name=settings.runtime_timezone,
+        history_max_messages=settings.session_history_max_messages,
+        include_runtime_context=settings.enable_ephemeral_metadata,
+        max_tool_output_chars=settings.context_tool_output_max_chars,
+        context_char_budget=ContextCharBudget.from_total(settings.context_max_chars),
+        enable_token_estimate=settings.context_estimate_tokens,
+        hard_total_budget=settings.context_hard_budget,
+    )
+    registry = load_skill_manifest_registry(settings.agent_manifest_dir)
+    effective_skill_id = resolve_effective_skill_id(args.skill, settings.default_skill_id, registry)
+    try:
+        session_messages = _load_diagnostic_history(args.history_json)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    retrieved_context = None
+    if args.retrieved_context_file is not None:
+        try:
+            retrieved_context = args.retrieved_context_file.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"无法读取 retrieved context: {exc}", file=sys.stderr)
+            return 1
+    bundle = builder.build_turn_message(
+        args.message,
+        entrypoint=args.entrypoint,
+        client_id=args.client_id,
+        user_id=args.user_id,
+        skill_id=effective_skill_id,
+        session_messages=session_messages,
+        retrieved_context=retrieved_context,
+    )
+    diagnostics = build_context_diagnostics(bundle)
+    if args.json:
+        print(json.dumps(diagnostics.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(format_context_diagnostics_markdown(diagnostics))
+    return 0
+
+
 def _chat_main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="agent-os-runtime",
@@ -452,11 +547,13 @@ def _chat_main(argv: list[str]) -> int:
 
     session_id = args.session_id or new_session_id()
     skill_id = args.skill if args.skill is not None else None
+    manifest_registry = load_skill_manifest_registry(settings.agent_manifest_dir)
     effective_skill_id = resolve_effective_skill_id(
         skill_id,
         settings.default_skill_id,
-        load_skill_manifest_registry(settings.agent_manifest_dir),
+        manifest_registry,
     )
+    effective_manifest = manifest_registry.get(effective_skill_id)
     task_store = (
         TaskMemoryStore(settings.task_memory_sqlite_path) if settings.enable_task_memory else None
     )
@@ -471,14 +568,31 @@ def _chat_main(argv: list[str]) -> int:
         if task_store is not None
         else None
     )
+    context_builder = (
+        ContextBuilder(
+            timezone_name=settings.runtime_timezone,
+            history_max_messages=settings.session_history_max_messages,
+            include_runtime_context=settings.enable_ephemeral_metadata,
+            max_tool_output_chars=settings.context_tool_output_max_chars,
+            context_char_budget=ContextCharBudget.from_total(settings.context_max_chars),
+            enable_token_estimate=settings.context_estimate_tokens,
+            hard_total_budget=settings.context_hard_budget,
+        )
+        if settings.enable_context_builder
+        else None
+    )
     active_task_id: str | None = None
 
-    def _build_agent_for_turn():
+    def _task_context():
         current_summary = None
         task_index = None
         if task_store is not None and active_task_id is not None:
             current_summary = task_store.get_summary(session_id=session_id, task_id=active_task_id)
             task_index = task_store.task_index(session_id=session_id)
+        return current_summary, task_index
+
+    def _build_agent_for_turn():
+        current_summary, task_index = _task_context()
         return get_agent(
             ctrl,
             client_id=args.client_id,
@@ -492,6 +606,26 @@ def _chat_main(argv: list[str]) -> int:
             current_task_summary=current_summary,
             session_task_index=task_index,
         )
+
+    def _session_messages_for_context(limit: int) -> list[object]:
+        if context_builder is None or agent is None or getattr(agent, "db", None) is None:
+            return []
+        getter = getattr(agent, "get_session_messages", None)
+        if not callable(getter):
+            return []
+        effective_limit = max(0, int(limit))
+        if effective_limit <= 0:
+            return []
+        try:
+            return list(
+                getter(
+                    session_id=session_id,
+                    limit=effective_limit,
+                    skip_history_messages=False,
+                )
+            )
+        except Exception:
+            return []
 
     agent = None if task_store is not None else _build_agent_for_turn()
     transcript: list[tuple[str, str]] = []
@@ -525,8 +659,72 @@ def _chat_main(argv: list[str]) -> int:
         ctrl.bump_turn_and_maybe_snapshot(args.client_id, args.user_id)
         if agent is None:
             agent = _build_agent_for_turn()
+        run_message = line
+        if context_builder is not None:
+            current_summary, task_index = _task_context()
+            retrieved_context = None
+            retrieve_mode = (
+                effective_manifest.auto_retrieve_mode
+                if effective_manifest and effective_manifest.auto_retrieve_mode
+                else settings.context_auto_retrieve_mode
+            )
+            retrieve_keywords = (
+                tuple(effective_manifest.auto_retrieve_keywords)
+                if effective_manifest and effective_manifest.auto_retrieve_keywords
+                else settings.context_auto_retrieve_keywords
+            )
+            retrieve_decision = resolve_auto_retrieve_decision(
+                line, mode=retrieve_mode, keywords=retrieve_keywords
+            )
+            if settings.enable_context_auto_retrieve and retrieve_decision.enabled:
+                retrieved_context = build_auto_retrieval_context(
+                    ctrl,
+                    line,
+                    client_id=args.client_id,
+                    user_id=args.user_id,
+                    skill_id=effective_skill_id,
+                    enable_hindsight=settings.enable_hindsight,
+                    enable_temporal_grounding=settings.enable_temporal_grounding,
+                    knowledge=knowledge,
+                    enable_asset_store=settings.enable_asset_store,
+                    asset_store=asset_store,
+                    enable_hindsight_synthesis=settings.enable_hindsight_synthesis,
+                    hindsight_synthesis_model=settings.hindsight_synthesis_model,
+                    hindsight_synthesis_max_candidates=settings.hindsight_synthesis_max_candidates,
+                    enable_asset_synthesis=settings.enable_asset_synthesis,
+                    asset_synthesis_model=settings.asset_synthesis_model,
+                    asset_synthesis_max_candidates=settings.asset_synthesis_max_candidates,
+                )
+            hist_cap = effective_session_history_max_messages(
+                base_max_messages=settings.session_history_max_messages,
+                task_summary=current_summary,
+                cap_when_summary_present=settings.session_history_cap_when_task_summary,
+            )
+            bundle = context_builder.build_turn_message(
+                line,
+                entrypoint="cli",
+                client_id=args.client_id,
+                user_id=args.user_id,
+                skill_id=effective_skill_id,
+                session_messages=_session_messages_for_context(hist_cap),
+                retrieved_context=retrieved_context,
+                current_task_summary=current_summary,
+                session_task_index=task_index,
+                history_max_messages_override=hist_cap,
+                auto_retrieve_reason=(
+                    retrieve_decision.reason if settings.enable_context_auto_retrieve else None
+                ),
+            )
+            run_message = bundle.message
+            if settings.context_trace_log:
+                log_context_management_trace(
+                    request_id="-",
+                    session_id=session_id,
+                    trace=bundle.trace,
+                    route="cli",
+                )
         out = agent.run(
-            line,
+            run_message,
             session_id=session_id,
             user_id=args.user_id or args.client_id,
             stream=False,
@@ -578,6 +776,8 @@ def main(argv: list[str] | None = None) -> int:
         return _mcp_probe_server_main(argv[1:])
     if argv and argv[0] == "graphiti-entitlements":
         return _graphiti_entitlements_main(argv[1:])
+    if argv and argv[0] in ("context-diagnose", "context"):
+        return _context_diagnose_main(argv[1:])
     return _chat_main(argv)
 
 

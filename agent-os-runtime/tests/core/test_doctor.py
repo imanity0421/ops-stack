@@ -25,12 +25,28 @@ def test_settings_invalid_numeric_env_falls_back(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_OS_SESSION_HISTORY_MAX_MESSAGES", "not-an-int")
     monkeypatch.setenv("AGENT_OS_SNAPSHOT_EVERY_N_TURNS", "not-an-int")
     monkeypatch.setenv("AGENT_OS_TASK_SUMMARY_MAX_CHARS", "not-an-int")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_MAX_CHARS", "not-an-int")
 
     s = Settings.from_env()
 
     assert s.session_history_max_messages == 20
     assert s.snapshot_every_n_turns == 5
     assert s.task_summary_max_chars == 800
+    assert s.context_max_chars == 24_000
+
+
+def test_settings_context_auto_retrieve_and_budget_env(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_OS_CONTEXT_AUTO_RETRIEVE_MODE", "manual")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_AUTO_RETRIEVE_KEYWORDS", "投放,复盘")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_ESTIMATE_TOKENS", "0")
+    monkeypatch.setenv("AGENT_OS_CONTEXT_HARD_BUDGET", "1")
+
+    s = Settings.from_env()
+
+    assert s.context_auto_retrieve_mode == "manual"
+    assert s.context_auto_retrieve_keywords == ("投放", "复盘")
+    assert s.context_estimate_tokens is False
+    assert s.context_hard_budget is True
 
 
 def test_graphiti_invalid_numeric_env_falls_back(monkeypatch) -> None:

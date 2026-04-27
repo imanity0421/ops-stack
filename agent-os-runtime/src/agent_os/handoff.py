@@ -21,7 +21,6 @@ def load_handoff_instruction_lines(manifest_path: Path | None) -> list[str]:
         return []
 
     ver = data.get("handoff_version", "?")
-    created = data.get("created_utc", "")
     schema_ref = data.get("video_raw_ingest_schema_ref", "")
     lessons = data.get("lessons")
     if not isinstance(lessons, list):
@@ -34,8 +33,6 @@ def load_handoff_instruction_lines(manifest_path: Path | None) -> list[str]:
     parts = [
         f"【制品清单】handoff_version={ver}，条目数={n}，校验通过={valid_n}，未通过={invalid_n}。"
     ]
-    if created:
-        parts.append(f"清单生成时间（UTC）：{created}。")
     if schema_ref:
         parts.append(f"关联 schema：{schema_ref}。")
     return parts

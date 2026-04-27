@@ -32,6 +32,10 @@ class AgentManifestV1(BaseModel):
     #: P1-4；为 ``structured_v1`` 时由 ``manifest_output.resolve_structured_output_model`` 解析为 Agno ``output_schema``
     output_mode: str | None = None
     output_schema_version: str | None = None
+    #: P2-H2；覆盖 Settings 中的自动预取策略：keywords / always / manual(off)
+    auto_retrieve_mode: str | None = None
+    #: P2-H2；覆盖 Settings 中的关键词列表
+    auto_retrieve_keywords: list[str] | None = None
 
 
 def packaged_skill_manifest_dir() -> Path:
@@ -97,9 +101,11 @@ def load_skill_manifest_registry(overlay_dir: Path | None = None) -> dict[str, A
 
 
 def enabled_tool_name_set(manifest: AgentManifestV1 | None) -> set[str] | None:
-    """若 manifest 未设或列表为空，返回 None 表示「不筛选，使用全部工具」。"""
+    """Return the manifest tool allowlist.
+
+    ``None`` still means no manifest-level filter. An explicit empty list now means
+    "no tools" so default skills do not silently inherit every platform tool.
+    """
     if manifest is None:
-        return None
-    if not manifest.enabled_tools:
         return None
     return set(manifest.enabled_tools)

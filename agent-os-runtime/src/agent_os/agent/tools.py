@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from agno.tools import tool
 
+from agent_os.context_builder import auto_retrieve_active_reason
 from agent_os.evaluator.golden import check_violations
 from agent_os.memory.classify import suggest_memory_lane
 from agent_os.memory.context_formatters import (
@@ -16,7 +17,6 @@ from agent_os.memory.context_formatters import (
 )
 from agent_os.memory.controller import MemoryController
 from agent_os.memory.models import MemoryLane, UserFact
-from agent_os.memory.ordered_context import RetrieveOrderedContextOptions
 from agent_os.mcp.fixture_probe import format_probe_for_agent, load_probe_data
 
 if TYPE_CHECKING:
@@ -31,13 +31,14 @@ def _tool_name(fn: Callable) -> str:
 
 
 def filter_tools_by_manifest(tools: list[Callable], enabled: set[str] | None) -> list[Callable]:
-    """按 Manifest enabled_tools 子集筛选；为空集或 None 则不过滤。"""
-    if not enabled:
+    """按 Manifest enabled_tools 子集筛选；None 表示无 manifest 过滤，空集表示不暴露工具。"""
+    if enabled is None:
         return tools
+    if not enabled:
+        return []
     out = [t for t in tools if _tool_name(t) in enabled]
     if not out:
-        logger.warning("enabled_tools 与当前工具无交集，回退为全部工具")
-        return tools
+        logger.warning("enabled_tools 与当前工具无交集，本 skill 将不暴露工具")
     return out
 
 
@@ -84,16 +85,17 @@ def build_memory_tools(
 
     exclude_tool_names：在 Manifest 白名单之后再剔除的工具 id（例如 Web 演示仅允许手动写入记忆）。
     """
+    from agent_os.context_builder import make_retrieve_ordered_context_options
 
-    _retrieve_ordered_opts = RetrieveOrderedContextOptions(
+    _retrieve_ordered_opts = make_retrieve_ordered_context_options(
         client_id=client_id,
         user_id=user_id,
         skill_id=skill_id,
+        knowledge=knowledge,
+        asset_store=asset_store,
         enable_hindsight=enable_hindsight,
         enable_temporal_grounding=enable_temporal_grounding,
-        knowledge=knowledge,
         enable_asset_store=enable_asset_store,
-        asset_store=asset_store,
         enable_hindsight_synthesis=enable_hindsight_synthesis,
         hindsight_synthesis_model=hindsight_synthesis_model,
         hindsight_synthesis_max_candidates=hindsight_synthesis_max_candidates,
@@ -104,11 +106,7 @@ def build_memory_tools(
 
     @tool(
         name="record_client_fact",
-        description=(
-            "【特权写入】仅记录长期有效、未来多次任务都应复用的主体事实"
-            "（组织名、稳定约束、默认流程、长期禁忌等）。禁止记录玩笑、临时任务、模糊推测、一次性素材；"
-            "不确定时不要调用。写入 Mem0。"
-        ),
+        description="写入长期稳定主体事实到 Mem0；临时信息、玩笑或推测会被拒绝。",
     )
     def record_client_fact(fact_text: str) -> str:
         text = _clean_required_text(fact_text)
@@ -132,10 +130,7 @@ def build_memory_tools(
 
     @tool(
         name="record_client_preference",
-        description=(
-            "【特权写入】仅记录用户或对话方明确表达的稳定偏好、禁忌或判断规则"
-            "（默认语气、长期不要做的表达等）。禁止记录“这次先...”等一次性要求；不确定时不要调用。写入 Mem0。"
-        ),
+        description="写入长期稳定偏好/禁忌到 Mem0；一次性要求会被拒绝。",
     )
     def record_client_preference(preference_text: str) -> str:
         text = _clean_required_text(preference_text)
@@ -159,12 +154,7 @@ def build_memory_tools(
 
     @tool(
         name="record_task_feedback",
-        description=(
-            "【特权写入】仅记录明确、可复盘、会影响后续方法的任务反馈或教训。"
-            "禁止记录闲聊、情绪噪声、模糊夸奖或一次性改字需求。写入 Hindsight。"
-            "可选 supersedes_event_id：填入既有 Hindsight 行的 event_id 表示本条在语义上取代该条；JSONL 不删旧行，检索时被取代行在排序中降权（见 HindsightRetrievalPolicy）。"
-            "可选 weight_count（1–10000，默认 1）：同类合并统计权重。"
-        ),
+        description="写入可复盘任务教训到 Hindsight；支持 supersedes_event_id 与 weight_count。",
     )
     def record_task_feedback(
         feedback_text: str,
@@ -202,7 +192,7 @@ def build_memory_tools(
 
     @tool(
         name="search_client_memory",
-        description="仅检索 Mem0 中的主体画像与事实（第一层）。完整检索请优先用 retrieve_ordered_context。",
+        description="检索 Mem0 主体画像与事实。",
     )
     def search_client_memory(query: str) -> str:
         hits = controller.search_profile(query, client_id=client_id, user_id=user_id, limit=8)
@@ -216,10 +206,7 @@ def build_memory_tools(
 
     @tool(
         name="search_past_lessons",
-        description=(
-            "仅检索 Hindsight 中的历史反馈与复盘教训（第二层）。完整检索请优先用 retrieve_ordered_context。"
-            "debug_scores 默认 false；仅排查召回污染/排序问题时才设为 true。"
-        ),
+        description="检索 Hindsight 历史教训；debug_scores 仅用于排查排序。",
     )
     def search_past_lessons(query: str, debug_scores: bool = False) -> str:
         if debug_scores and not enable_hindsight_debug_tools:
@@ -245,10 +232,7 @@ def build_memory_tools(
 
     @tool(
         name="search_reference_cases",
-        description=(
-            "检索资产库（Asset Store）。asset_type 可传 style_reference（风格/Few-shot）"
-            "或 source_material（背景素材/故事资料）；运行时仅检索，不做清洗与入库治理。"
-        ),
+        description="检索 Asset Store；asset_type 支持 style_reference/source_material。",
     )
     def search_reference_cases(
         query: str,
@@ -282,7 +266,7 @@ def build_memory_tools(
 
     @tool(
         name="suggest_memory_lane",
-        description="对用户一句话做记忆槽启发式分类（任务反馈 vs 长期画像），不写入存储；不确定时请自行判断。",
+        description="启发式判断一句话适合写入哪类记忆；不写入。",
     )
     def suggest_memory_lane_tool(utterance: str) -> str:
         lane, reason = suggest_memory_lane(utterance)
@@ -292,7 +276,7 @@ def build_memory_tools(
 
     @tool(
         name="fetch_probe_context",
-        description="读取外部上下文探针（fixture 或 AGENT_OS_MCP_PROBE_FIXTURE_PATH），作为回答的旁路参考。",
+        description="读取外部上下文探针作为旁路参考。",
     )
     def fetch_probe_context() -> str:
         data = load_probe_data(mcp_probe_fixture_path)
@@ -300,15 +284,19 @@ def build_memory_tools(
 
     @tool(
         name="retrieve_ordered_context",
-        description=(
-            "按固定顺序**检索**上下文：① Mem0 主体画像 ② Hindsight 历史教训 ③ Graphiti 领域知识（若已配置）④ Asset Store 参考案例（若已配置）。"
-            "多源冲突时如何整合到最终回复，须遵守系统指令中的「宪法·冲突解决序」（与检索顺序不同）。"
-            "回答策略/方案类问题前应优先调用本工具。debug_scores 默认 false；仅排查 Hindsight 召回污染/排序问题时才设为 true。"
-        ),
+        description="按 Mem0→Hindsight→Graphiti→Asset 返回 XML-like ordered context。",
     )
     def retrieve_ordered_context(query: str, debug_scores: bool = False) -> str:
         if debug_scores and not enable_hindsight_debug_tools:
             return "debug_scores_disabled: 需要显式启用 Hindsight 调试工具模式。"
+        # P2-H20: 当 ContextBuilder 已经在本轮注入自动召回时，工具层短路，避免重复访问后端。
+        active_reason = auto_retrieve_active_reason()
+        if active_reason:
+            return (
+                "auto_retrieved_already_injected: 本轮已自动预取 external recall（"
+                f"reason={active_reason}）。"
+                "如需补充，请用更具体的 query 或下一轮再调用本工具。"
+            )
         opts = (
             replace(_retrieve_ordered_opts, hindsight_debug_scores=True)
             if bool(debug_scores)
@@ -337,7 +325,7 @@ def build_memory_tools(
 
         @tool(
             name="check_delivery_text",
-            description="按 AGENT_OS_GOLDEN_RULES_PATH 加载的正则规则检查交付文本是否命中禁忌表述。",
+            description="按 Golden rules 检查交付文本。",
         )
         def check_delivery_text(text: str) -> str:
             v = check_violations(text, rules)
@@ -351,7 +339,7 @@ def build_memory_tools(
 
         @tool(
             name="search_domain_knowledge",
-            description="仅检索 Graphiti 领域知识（第三层）。完整检索请优先用 retrieve_ordered_context。",
+            description="检索 Graphiti 领域知识。",
         )
         def search_domain_knowledge(query: str) -> str:
             return knowledge.search_domain_knowledge(query, client_id=client_id, skill_id=skill_id)
@@ -362,7 +350,7 @@ def build_memory_tools(
 
         @tool(
             name="check_skill_compliance_text",
-            description="按 AGENT_OS_SKILL_COMPLIANCE_DIR/<skill_id>.json 校验交付文本是否违反该 skill 硬规则（与 asset-ingest 入库合规同源）。",
+            description="按 skill 合规规则检查交付文本。",
         )
         def check_skill_compliance_text(text: str) -> str:
             from agent_os.knowledge.skill_compliance import check_skill_compliance

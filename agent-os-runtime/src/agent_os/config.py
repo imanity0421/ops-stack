@@ -47,6 +47,14 @@ def _env_float(name: str, default: float, *, min_value: float | None = None) -> 
     return value
 
 
+def _env_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    values = tuple(x.strip() for x in raw.split(",") if x.strip())
+    return values or default
+
+
 @dataclass(frozen=True)
 class Settings:
     """从环境变量读取配置；未设置项使用安全默认值。"""
@@ -94,6 +102,57 @@ class Settings:
     session_db_url: str | None = None
     #: 将历史拼入模型上文时的最大消息条数；0 表示**仍落库**但不把历史拼进 context
     session_history_max_messages: int = 20
+    #: 是否启用 ContextBuilder V2：静态 instructions 与每轮动态上下文分层
+    enable_context_builder: bool = True
+    #: 启用 ContextBuilder 时，由本仓清洗后注入 history，而不是让 Agno 自动注入原始历史
+    context_self_managed_history: bool = True
+    #: 逃生开关：允许 ContextBuilder 与 Agno 原生 history 同时注入；默认关闭以避免双 history
+    context_allow_agno_history_with_builder: bool = False
+    #: 是否让 ContextBuilder 对方案/策略/交付类请求做确定性外部召回预取
+    enable_context_auto_retrieve: bool = True
+    #: 自动预取策略：keywords / always / manual(off)
+    context_auto_retrieve_mode: str = "keywords"
+    #: keywords 策略下的触发词
+    context_auto_retrieve_keywords: tuple[str, ...] = (
+        "方案",
+        "策略",
+        "计划",
+        "规划",
+        "交付",
+        "文案",
+        "脚本",
+        "复盘",
+        "总结",
+        "分析",
+        "撰写",
+        "设计",
+        "架构",
+        "迭代",
+        "研发",
+        "优化",
+        "plan",
+        "strategy",
+        "design",
+        "draft",
+        "write",
+        "summarize",
+        "summary",
+        "analyze",
+        "optimize",
+        "proposal",
+    )
+    #: ContextBuilder 折叠 tool output 时保留的最大字符数
+    context_tool_output_max_chars: int = 240
+    #: P2-7：是否在日志中输出 ContextBuilder 块级 trace（不进 prompt）
+    context_trace_log: bool = False
+    #: P2-8：存在非空 task summary 时，将拼入模型的历史条数收紧为该上限与 ``session_history_max_messages`` 的较小值；0 表示不收紧
+    session_history_cap_when_task_summary: int = 12
+    #: P2-10：ContextBuilder 字符预算总上限；0 表示关闭块级预算
+    context_max_chars: int = 24_000
+    #: P2-H3-mini：是否估算最终 prompt token 总量（缺 tiktoken 时静默降级）
+    context_estimate_tokens: bool = True
+    #: P2-H4：是否启用默认关闭的硬总预算结构化裁切
+    context_hard_budget: bool = False
     #: P1-3 是否在 system 最前注入「系统宪法·冲突解决序」
     enable_constitutional_prompt: bool = True
     #: 是否注入当轮临时环境元数据（只进 prompt，不落长期记忆）
@@ -220,6 +279,39 @@ class Settings:
             session_sqlite_path=Path(sdb),
             session_db_url=(sdb_url.strip() or None) if sdb_url else None,
             session_history_max_messages=hist_n,
+            enable_context_builder=os.getenv("AGENT_OS_ENABLE_CONTEXT_BUILDER", "1").lower()
+            not in ("0", "false", "no"),
+            context_self_managed_history=os.getenv(
+                "AGENT_OS_CONTEXT_SELF_MANAGED_HISTORY", "1"
+            ).lower()
+            not in ("0", "false", "no"),
+            context_allow_agno_history_with_builder=os.getenv(
+                "AGENT_OS_CONTEXT_ALLOW_AGNO_HISTORY_WITH_BUILDER", "0"
+            ).lower()
+            in ("1", "true", "yes"),
+            enable_context_auto_retrieve=os.getenv("AGENT_OS_CONTEXT_AUTO_RETRIEVE", "1").lower()
+            not in ("0", "false", "no"),
+            context_auto_retrieve_mode=(
+                os.getenv("AGENT_OS_CONTEXT_AUTO_RETRIEVE_MODE", "keywords").strip().lower()
+                or "keywords"
+            ),
+            context_auto_retrieve_keywords=_env_csv(
+                "AGENT_OS_CONTEXT_AUTO_RETRIEVE_KEYWORDS",
+                cls.context_auto_retrieve_keywords,
+            ),
+            context_tool_output_max_chars=_env_int(
+                "AGENT_OS_CONTEXT_TOOL_OUTPUT_MAX_CHARS", 240, min_value=1
+            ),
+            context_trace_log=os.getenv("AGENT_OS_CONTEXT_TRACE_LOG", "0").lower()
+            in ("1", "true", "yes"),
+            session_history_cap_when_task_summary=_env_int(
+                "AGENT_OS_SESSION_HISTORY_CAP_WHEN_TASK_SUMMARY", 12, min_value=0
+            ),
+            context_max_chars=_env_int("AGENT_OS_CONTEXT_MAX_CHARS", 24_000, min_value=0),
+            context_estimate_tokens=os.getenv("AGENT_OS_CONTEXT_ESTIMATE_TOKENS", "1").lower()
+            not in ("0", "false", "no"),
+            context_hard_budget=os.getenv("AGENT_OS_CONTEXT_HARD_BUDGET", "0").lower()
+            in ("1", "true", "yes"),
             enable_constitutional_prompt=enable_const,
             enable_ephemeral_metadata=os.getenv("AGENT_OS_ENABLE_EPHEMERAL_METADATA", "1").lower()
             not in ("0", "false", "no"),

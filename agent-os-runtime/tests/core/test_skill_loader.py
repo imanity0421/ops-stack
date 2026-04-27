@@ -83,7 +83,7 @@ def test_get_agent_sample_includes_ping_tool(
                 "system_prompt": "示例 skill，仅用于测试外部 manifest 与工具包热插拔。",
                 "model": "gpt-4o-mini",
                 "agent_name": "SampleSkill",
-                "enabled_tools": [],
+                "enabled_tools": ["retrieve_ordered_context", "ping_sample_skill"],
             },
             ensure_ascii=False,
         ),

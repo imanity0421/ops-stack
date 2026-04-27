@@ -237,10 +237,14 @@ POLICY_EVAL_CASES: tuple[PolicyEvalCase, ...] = (
 )
 
 
-def evaluate_policy_cases(cases: tuple[PolicyEvalCase, ...] = POLICY_EVAL_CASES) -> PolicyEvalReport:
+def evaluate_policy_cases(
+    cases: tuple[PolicyEvalCase, ...] = POLICY_EVAL_CASES,
+) -> PolicyEvalReport:
     failed: list[str] = []
     for case in cases:
         decision = evaluate_memory_write(case.fact)
         if decision.allow != case.expected_allow or decision.category != case.expected_category:
             failed.append(case.case_id)
-    return PolicyEvalReport(total=len(cases), passed=len(cases) - len(failed), failed_case_ids=failed)
+    return PolicyEvalReport(
+        total=len(cases), passed=len(cases) - len(failed), failed_case_ids=failed
+    )

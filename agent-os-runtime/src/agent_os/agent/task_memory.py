@@ -28,10 +28,16 @@ def new_task_id(now: datetime | None = None) -> str:
 
 
 def fallback_task_title(message: str, *, max_chars: int = 24) -> str:
-    text = " ".join((message or "").strip().split())
+    text = " ".join(_text_or_empty(message).strip().split())
     if not text:
         return "未命名任务"
     return text[:max_chars]
+
+
+def _text_or_empty(value: object) -> str:
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
 
 
 def _decode_invoked_skills(raw: str | None, *, fallback: str) -> list[str]:
@@ -414,10 +420,14 @@ class TaskMemoryStore:
 
 
 def _shorten(text: str, max_chars: int) -> str:
-    t = " ".join((text or "").strip().split())
+    t = " ".join(_text_or_empty(text).strip().split())
+    if max_chars <= 0:
+        return ""
     if len(t) <= max_chars:
         return t
-    return t[: max_chars - 1] + "..."
+    if max_chars <= 3:
+        return t[:max_chars]
+    return t[: max_chars - 3] + "..."
 
 
 def _fallback_summary(
@@ -428,14 +438,14 @@ def _fallback_summary(
 ) -> str:
     recent = messages[-8:]
     user_lines = [
-        f"- { _shorten(m.content, 120) }"
+        f"- {_shorten(m.content, 120)}"
         for m in recent
-        if m.role == "user" and m.content.strip()
+        if m.role == "user" and _text_or_empty(m.content).strip()
     ]
     assistant_lines = [
-        f"- { _shorten(m.content, 120) }"
+        f"- {_shorten(m.content, 120)}"
         for m in recent
-        if m.role == "assistant" and m.content.strip()
+        if m.role == "assistant" and _text_or_empty(m.content).strip()
     ]
     parts = [
         "- 当前任务目标：根据本 task 内最新消息继续推进。",
@@ -447,13 +457,9 @@ def _fallback_summary(
         "- 待办/未决问题：优先响应用户最新请求。",
         "- 不要重复尝试的方向：避免重复已被用户否定的表述。",
         "- 最近一次用户反馈："
-        + (
-            f" {_shorten(user_lines[-1].lstrip('- '), 160)}"
-            if user_lines
-            else " （暂无）"
-        ),
+        + (f" {_shorten(user_lines[-1].lstrip('- '), 160)}" if user_lines else " （暂无）"),
     ]
-    if existing_summary.strip():
+    if _text_or_empty(existing_summary).strip():
         parts.insert(0, "- 既有前情：" + _shorten(existing_summary, 240))
     return _shorten("\n".join(parts), max_chars)
 
@@ -474,12 +480,12 @@ def _llm_summary(
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("OPENAI_API_BASE") or None,
         )
-        mid = model or os.getenv("AGENT_OS_TASK_SUMMARY_MODEL") or os.getenv(
-            "AGENT_OS_MODEL", "gpt-4o-mini"
+        mid = (
+            model
+            or os.getenv("AGENT_OS_TASK_SUMMARY_MODEL")
+            or os.getenv("AGENT_OS_MODEL", "gpt-4o-mini")
         )
-        transcript = "\n".join(
-            f"{m.role}: {_shorten(m.content, 1200)}" for m in messages[-24:]
-        )
+        transcript = "\n".join(f"{m.role}: {_shorten(m.content, 1200)}" for m in messages[-24:])
         prompt = (
             "你是同一 session 内当前 task 的工作记忆压缩器。"
             "请基于既有 summary 与新增对话，更新一份用于下一轮继续工作的结构化摘要。"
@@ -561,7 +567,8 @@ class TaskSummaryService:
 
 
 def build_task_summary_instruction(summary: TaskSummary | None) -> str | None:
-    if summary is None or not summary.summary_text.strip():
+    summary_text = _text_or_empty(getattr(summary, "summary_text", None)).strip()
+    if summary is None or not summary_text:
         return None
     return (
         "【当前任务前情提要】\n"
@@ -571,7 +578,7 @@ def build_task_summary_instruction(summary: TaskSummary | None) -> str | None:
         f"- task_id：{summary.task_id}\n"
         f"- 覆盖消息数：{summary.covered_message_count}\n"
         f"- 更新时间：{summary.updated_at}\n"
-        f"{summary.summary_text.strip()}"
+        f"{summary_text}"
     )
 
 

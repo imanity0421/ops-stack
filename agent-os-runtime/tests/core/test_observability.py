@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from agno.metrics import RunMetrics
 
+from agent_os.context_builder import ContextTrace, ContextTraceBlock
 from agent_os.observability import (
     grep_obs_line_pattern,
     log_agent_run_obs,
+    log_context_management_trace,
     tool_names_from_run_output,
 )
 
@@ -42,6 +44,20 @@ def test_log_agent_run_empty_tools() -> None:
     o.tools = []
     line = log_agent_run_obs(request_id="a", session_id="b", out=o, elapsed_s=1.0, route="/chat")
     assert "tools=-" in line
+
+
+def test_log_context_management_trace_line() -> None:
+    tr = ContextTrace(
+        blocks=[
+            ContextTraceBlock("runtime_context", 10, True, source="ephemeral"),
+            ContextTraceBlock(
+                "external_recall", 0, False, source="retrieve_ordered_context", note="empty"
+            ),
+        ]
+    )
+    line = log_context_management_trace(request_id="r1", session_id="s1", trace=tr, route="/chat")
+    assert line.startswith("AGENT_OS_CONTEXT_TRACE")
+    assert "runtime_context:10:1:ephemeral" in line
 
 
 def test_log_agent_run_uses_metrics_details_when_top_level_zero() -> None:

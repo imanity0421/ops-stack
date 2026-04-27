@@ -10,12 +10,7 @@ from agno.models.openai import OpenAIChat
 from agent_os.agent.constitutional import build_constitutional_instruction_blocks
 from agent_os.agent.session_db import create_session_db, session_db_summary
 from agent_os.agent.skills import get_incremental_tools
-from agent_os.agent.task_memory import (
-    TaskSegment,
-    TaskSummary,
-    build_task_index_instruction,
-    build_task_summary_instruction,
-)
+from agent_os.agent.task_memory import TaskSegment, TaskSummary
 from agent_os.agent.tools import build_memory_tools
 from agent_os.config import Settings
 from agent_os.evaluator.golden import load_golden_rules
@@ -38,6 +33,27 @@ if TYPE_CHECKING:
     from agent_os.knowledge.graphiti_reader import GraphitiReadService
 
 logger = logging.getLogger(__name__)
+
+# P2-H25: 一次性记录 manifest miss，避免每轮日志噪声；进程级缓存即可。
+_MANIFEST_MISS_LOGGED: set[str] = set()
+
+
+def _log_manifest_miss_once(*, requested_skill_id: str | None, effective_skill_id: str) -> None:
+    """显式传入 skill_id 但 registry 没有该 manifest 时，按 skill 唯一记录一次 INFO。"""
+    if not requested_skill_id:
+        return
+    requested = str(requested_skill_id).strip()
+    if not requested:
+        return
+    if requested in _MANIFEST_MISS_LOGGED:
+        return
+    _MANIFEST_MISS_LOGGED.add(requested)
+    logger.info(
+        "manifest miss: skill_id=%s exposes all platform tools (no enabled_tools allowlist); "
+        "effective skill resolved to %s",
+        requested,
+        effective_skill_id,
+    )
 
 
 def _knowledge_status_hint(skill_id: str, knowledge: Optional["GraphitiReadService"]) -> str | None:
@@ -89,11 +105,17 @@ def get_agent(
 
     ``skill_id`` 主键决定 manifest 与系统级 Graphiti 分区 ``system_graphiti_group_id(skill_id)``；
     未传时使用 ``Settings.default_skill_id``（环境 ``AGENT_OS_DEFAULT_SKILL_ID``）。
+    当 ``enable_context_builder`` 开启时，``entrypoint`` 只由调用方传给 ContextBuilder 的
+    runtime context 使用；这里保留参数是为了 legacy instructions 路径兼容。
     """
     s = settings or Settings.from_env()
     registry = load_skill_manifest_registry(s.agent_manifest_dir)
     eff_skill = resolve_effective_skill_id(skill_id, s.default_skill_id, registry)
     manifest = registry.get(eff_skill)
+    if manifest is None:
+        _log_manifest_miss_once(
+            requested_skill_id=skill_id, effective_skill_id=eff_skill
+        )
     golden_rules = load_golden_rules(s.golden_rules_path)
     incremental = get_incremental_tools(eff_skill, settings=s)
     resolved_asset_store: AssetStore | None = asset_store
@@ -132,7 +154,7 @@ def get_agent(
             enabled=s.enable_constitutional_prompt,
         )
     )
-    if s.enable_ephemeral_metadata:
+    if s.enable_ephemeral_metadata and not s.enable_context_builder:
         instructions.append(
             build_ephemeral_instruction(
                 build_ephemeral_context(
@@ -144,26 +166,33 @@ def get_agent(
                 )
             )
         )
-    task_summary_instruction = build_task_summary_instruction(current_task_summary)
-    if task_summary_instruction:
-        instructions.append(task_summary_instruction)
-    task_index_instruction = build_task_index_instruction(session_task_index or [])
-    if task_index_instruction:
-        instructions.append(task_index_instruction)
+    if not s.enable_context_builder:
+        from agent_os.agent.task_memory import (
+            build_task_index_instruction,
+            build_task_summary_instruction,
+        )
+
+        task_summary_instruction = build_task_summary_instruction(current_task_summary)
+        if task_summary_instruction:
+            instructions.append(task_summary_instruction)
+        task_index_instruction = build_task_index_instruction(session_task_index or [])
+        if task_index_instruction:
+            instructions.append(task_index_instruction)
     if manifest is not None:
         sp = str(getattr(manifest, "system_prompt", "") or "").strip()
         if sp:
             instructions.append(sp)
         hv = getattr(manifest, "handbook_version", None)
-        if hv:
+        if hv and not s.enable_context_builder:
             instructions.append(f"当前配方手册版本：{hv}")
-    instructions.extend(load_handoff_instruction_lines(s.handoff_manifest_path))
-    if golden_rules:
+    if not s.enable_context_builder:
+        instructions.extend(load_handoff_instruction_lines(s.handoff_manifest_path))
+    if golden_rules and not s.enable_context_builder:
         instructions.append(
             f"已加载本地交付规则 {len(golden_rules)} 条：回复前可对关键段落调用 check_delivery_text 自检。"
         )
     hint = _knowledge_status_hint(eff_skill, knowledge)
-    if hint:
+    if hint and not s.enable_context_builder:
         instructions.append(hint)
     if extra_instructions:
         instructions.extend(extra_instructions)
@@ -194,7 +223,21 @@ def get_agent(
     if session_db is not None:
         kwargs["db"] = session_db
         n = s.session_history_max_messages
-        if n > 0:
+        unsafe_double_history = s.enable_context_builder and not s.context_self_managed_history
+        if unsafe_double_history and not s.context_allow_agno_history_with_builder:
+            logger.warning(
+                "ContextBuilder is enabled while context_self_managed_history is disabled; "
+                "suppressing Agno add_history_to_context to avoid double history. Set "
+                "AGENT_OS_CONTEXT_ALLOW_AGNO_HISTORY_WITH_BUILDER=1 to override."
+            )
+        use_agno_history = not (
+            s.enable_context_builder
+            and (
+                s.context_self_managed_history
+                or (unsafe_double_history and not s.context_allow_agno_history_with_builder)
+            )
+        )
+        if n > 0 and use_agno_history:
             kwargs["add_history_to_context"] = True
             kwargs["num_history_messages"] = n
 

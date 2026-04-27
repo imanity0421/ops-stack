@@ -71,6 +71,14 @@ pre-commit run --all-files
 | `AGENT_OS_SESSION_DB_PATH` | 单机 Sqlite 文件路径，默认 `data/agno_session.db`；父目录不存在时会自动创建 |
 | `AGENT_OS_SESSION_DB_URL` | 可选；**优先于** `AGENT_OS_SESSION_DB_PATH`。支持 `sqlite:`、`postgres://`/`postgresql://`、`redis://`/`rediss://`；或**无** `://` 的绝对/相对路径字符串（走 Sqlite 文件） |
 | `AGENT_OS_SESSION_HISTORY_MAX_MESSAGES` | 将**最近 N 条**历史拼入模型上文；默认 `20`；`0` 表示仍**写入**库但不把历史拼进当轮（适合仅审计） |
+| `AGENT_OS_CONTEXT_AUTO_RETRIEVE` | ContextBuilder 自动预取总开关，默认 `1` |
+| `AGENT_OS_CONTEXT_AUTO_RETRIEVE_MODE` | 自动预取策略：`keywords`（默认）、`always`、`manual`/`off` |
+| `AGENT_OS_CONTEXT_AUTO_RETRIEVE_KEYWORDS` | `keywords` 策略触发词，逗号分隔；可由 skill manifest 覆盖 |
+| `AGENT_OS_SESSION_HISTORY_CAP_WHEN_TASK_SUMMARY` | 存在当前 task summary 时，ContextBuilder 将 recent history 收紧到该上限与 `AGENT_OS_SESSION_HISTORY_MAX_MESSAGES` 的较小值；默认 `12`；`0` 表示不收紧 |
+| `AGENT_OS_CONTEXT_MAX_CHARS` | P2-10 ContextBuilder 字符预算总上限，默认 `24000`；按块派生预算并优先截断 retrieval/history，`0` 表示关闭块级预算 |
+| `AGENT_OS_CONTEXT_ESTIMATE_TOKENS` | P2-H3-mini token 总量观测开关，默认 `1`；缺 `tiktoken` 时仅记录 unavailable，不影响运行 |
+| `AGENT_OS_CONTEXT_HARD_BUDGET` | P2-H4 结构化硬总预算保护，默认 `0`；启用后只省略低优先级整块，永不裁剪当前用户请求 |
+| `AGENT_OS_CONTEXT_TRACE_LOG` | 默认 `0`；设为 `1`/`true`/`yes` 时输出 `AGENT_OS_CONTEXT_TRACE` 块级 trace（不进 prompt） |
 | `AGENT_OS_ENABLE_CONSTITUTIONAL` | 默认 `1`；`0`/`false`/`no` 关闭系统「宪法」固定段（不推荐生产关闭） |
 | `AGENT_OS_ENABLE_EPHEMERAL_METADATA` | 默认 `1`；每轮 prompt 注入当前时间、入口、skill 等**临时上下文**，不写长期记忆 |
 | `AGENT_OS_TIMEZONE` | 临时上下文的本地时区，默认 `Asia/Shanghai` |

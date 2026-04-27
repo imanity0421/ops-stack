@@ -11,9 +11,7 @@ from agent_os.review import async_review
 from agent_os.review.async_review import AsyncReviewService, parse_review_lessons
 
 
-def test_async_review_writes_through_memory_controller(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_async_review_writes_through_memory_controller(monkeypatch, tmp_path: Path) -> None:
     local = tmp_path / "local.json"
     hindsight = tmp_path / "hindsight.jsonl"
     ledger = tmp_path / "ledger.sqlite"
@@ -73,9 +71,7 @@ def test_async_review_submit_and_wait_reports_timeout(tmp_path: Path) -> None:
     assert result["status"] == "timeout"
 
 
-def test_async_review_structured_lessons_write_quality_scores(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_async_review_structured_lessons_write_quality_scores(monkeypatch, tmp_path: Path) -> None:
     local = tmp_path / "local.json"
     hindsight = tmp_path / "hindsight.jsonl"
     ctrl = MemoryController.create_default(
@@ -256,9 +252,7 @@ def test_async_review_explicit_upstream_outcome_overrides_candidate(
     assert rows[0]["is_success"] is False
 
 
-def test_async_review_outcome_and_reinforcement_time_semantics(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_async_review_outcome_and_reinforcement_time_semantics(monkeypatch, tmp_path: Path) -> None:
     hindsight = tmp_path / "hindsight.jsonl"
     ctrl = MemoryController.create_default(
         mem0_api_key=None,
