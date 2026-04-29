@@ -8,7 +8,7 @@
 
 ### Stage 5
 
-- **Battle 2：ER `start_resumed_session` 真实 Agno spin up**（2026-04-30，done-local）
+- **Battle 2：ER `start_resumed_session` 真实 Agno spin up**（2026-04-30，commit `6a8af17`）
   - 新增 ER resumed-session 入口，`start_resumed_session(prompt, session_meta)` 负责创建 Agent 并调用 Agno `agent.run()`，CLI 不直接持有运行细节。
   - `resume_task` / `branch_task` 从 prompt-only 升级为可委托 ER 的 CTE 路径，返回 `runtime_status` / `runtime_session_id` / `runtime_session` 诊断；runtime 失败时返回 error，不把 prompt-only 当成功兜底。
   - `/task resume` 与 `/task branch` 默认通过 CTE 触发 ER spin up；测试通过 fake runtime 覆盖 resume fork、branch session、CLI JSON 和错误路径。

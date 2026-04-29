@@ -528,7 +528,7 @@
   - 不接真实 skill；用 mock skill（如 `MockSkillA` / `MockSkillB` 字段集结构不同）验证注册接口对异类 skill 平等。
   - **前置已就位**：[compact.py](../src/agent_os/agent/compact.py) `SkillSchemaProvider` Protocol 已存在 + `CompactSummary` v2 两层 schema + `compose(core_schema, skill_state_schema)` 合成路径已在 §3.2 文档明文。
 
-- **Battle 2：ER `start_resumed_session` 真实 agno spin up**（done-local @ 2026-04-30，commit 待回填）
+- **Battle 2：ER `start_resumed_session` 真实 agno spin up**（done @ 2026-04-30，commit `6a8af17`）
   - 把 Stage 4 的 deferred ER 入口（A5 备注）实现为 `start_resumed_session(prompt, session_meta) -> SessionId`，签名见 [ARCHITECTURE.md](ARCHITECTURE.md) §1.1（Phase 9 Step 2.5 已加）。
   - resume_task / branch_task 内 CTE→ER 调用路径切换为真实 ER 入口；不再通过 `RuntimeServices.run_task_with_prompt` 兜底。
 
