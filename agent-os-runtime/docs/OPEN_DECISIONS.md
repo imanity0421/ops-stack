@@ -51,7 +51,7 @@
 
 **Battle 6 路径决策（2026-04-29）**：Battle 6 选择最小路径，只统计已进入 prompt / trace 的 artifact ref 与 artifactized signal，不主动查 ArtifactStore、不实现跨 task artifact 召回、不决策跨 task 权重公式。A3 的召回权重 / flag / 风险提示文本仍留到 Stage 4 resume 与真实 cross-task case 后回答。
 
-**Stage 4 启动前确认（2026-04-29，Phase 8）**：A3 仍按 Battle 6 路径决策延续——Stage 4 五个 battle 不实现跨 task artifact 召回、不引入权重公式 / `--include-other-tasks` flag / 跨 task 风险提示文本。Stage 4 resume 装配仅消费当前 task 及祖先链 artifact；跨 task 召回推到 Stage 5 真实 business_writing 出现 cross-task case 后回答（与 F4 暂缓项一致）。
+**Stage 4 启动前确认（2026-04-29，Phase 8）**：A3 仍按 Battle 6 路径决策延续——Stage 4 五个 battle 不实现跨 task artifact 召回、不引入权重公式 / `--include-other-tasks` flag / 跨 task 风险提示文本。Stage 4 resume 装配仅消费当前 task 及祖先链 artifact；跨 task 召回推到 Stage 7 第一次真实 skill 接入出现 cross-task case 后回答（与 F4 暂缓项一致）。原 "Stage 5 真实 business_writing" 措辞已随 Phase 9 Stage 路线 5/6/7/8+ 重拆同步更新。
 
 ### A4：task_table 是否真的够 5 字段
 
@@ -105,7 +105,9 @@
 - compact 协调仍归 ER 自身（Stage 3 已落地）；CTE 不接管。
 - Stage 5 引入 `/skill compose context_pack` 时再验证 SR 级编排是否结构同构；不预先抽象 `SkillOrchestrator`。
 
-**Stage 4 v0 落地备注（2026-04-30，Stage 4 收口）**：经 Battle 1-5 实测，平铺函数 (`resume_task` / `branch_task`) 与 `MA.fetch_task_final_state` 等价语义已通过 `TaskMemoryStore` 直接消费落地（`store.get_task_entity` / `task_messages` / `get_compact_summary` / `task_messages_after`），不专门抽象 MA 包装类。**ER `start_resumed_session` 入口 Stage 4 v0 不实现**——`resume_task` 只产出 `ResumeFinalState.prompt` + 写 `sessions` 元数据（`upsert_session(parent_session_id, branch_role)` / `set_current_main_session`），prompt 由表现层（CLI / Web）注入到下次 agno 启动；与 GC6/7/8 / Trace 3-5 的"prompt 与 trace 字段断言"范围一致。完整 ER spin up（agno 真实新会话注入 + voice_pack 字段消费）推到 Stage 5 真实 `business_writing` skill 落地时一起做（与 S3 / F4 voice pack 推迟节奏一致）。Stage 5 启动前再回到本段路径决策做最终签名校准。
+**Stage 4 v0 落地备注（2026-04-30，Stage 4 收口）**：经 Battle 1-5 实测，平铺函数 (`resume_task` / `branch_task`) 与 `MA.fetch_task_final_state` 等价语义已通过 `TaskMemoryStore` 直接消费落地（`store.get_task_entity` / `task_messages` / `get_compact_summary` / `task_messages_after`），不专门抽象 MA 包装类。**ER `start_resumed_session` 入口 Stage 4 v0 不实现**——`resume_task` 只产出 `ResumeFinalState.prompt` + 写 `sessions` 元数据（`upsert_session(parent_session_id, branch_role)` / `set_current_main_session`），prompt 由表现层（CLI / Web）注入到下次 agno 启动；与 GC6/7/8 / Trace 3-5 的"prompt 与 trace 字段断言"范围一致。
+
+**Phase 9 同日修订（2026-04-30）**：Stage 路线 5/6/7/8+ 重拆后，原"完整 ER spin up 推到 Stage 5 真实 business_writing 时一起做"调整为：**ER `start_resumed_session` 真实 spin up 推到 Stage 5 (SR Framework v0) Battle 2 落地**（不再绑定真实 skill；Battle 2 用 mock skill 验证 ER 真实 agno spin up 路径）；voice_pack 字段消费推到 Stage 7 真实 skill 接入与 Voice Pack 一起落（与 B1 重打开备注一致）。详见 G1 Battle 2。
 
 ### A6：超长 deliverable 的章节切分策略
 
@@ -127,11 +129,11 @@
 - `digest_only` 兜底必含 H2 标题列表 + 已出现专有名词集合（300 字内）。
 - 这些行为属于 SR.business_writing 的 deliverable lifecycle 装配，不污染 CTE 通用降级机制。
 
-**Stage 4 启动前确认（2026-04-29，Phase 8）**：A6 章节切分策略 Stage 4 不做。Stage 4 resume 装配仅复用 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 现有降级链 `full → digest+tail_3 → digest+tail_2 → digest+tail_1 → digest_only`，不引入 `/deliverable split` 命令、不引入章节级 `tail_n` 切分粒度、不引入 H2 标题列表 + 已出现专有名词集合的 `digest_only` 兜底字段。完整 A6 实现推到 Stage 5 真实 1.5 万字以上 business_writing 任务（与 F4 暂缓项一致）。
+**Stage 4 启动前确认（2026-04-29，Phase 8）**：A6 章节切分策略 Stage 4 不做。Stage 4 resume 装配仅复用 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 现有降级链 `full → digest+tail_3 → digest+tail_2 → digest+tail_1 → digest_only`，不引入 `/deliverable split` 命令、不引入章节级 `tail_n` 切分粒度、不引入 H2 标题列表 + 已出现专有名词集合的 `digest_only` 兜底字段。完整 A6 实现推到 Stage 7 真实 1.5 万字以上交付物任务（Phase 9 Stage 路线 5/6/7/8+ 重拆后归 Stage 7 第一个真实 skill 接入；与 F4 暂缓项一致）。
 
 ### A7：compact schema fragment 契约（签名已定，参数级残留待回答）
 
-**已知**：[ARCHITECTURE.md](ARCHITECTURE.md) 3.2 已定机制——SR 通过 schema fragment 注册接口向 CTE 暴露 business_writing_pack / skill_state 的 Pydantic / JSON Schema；CTE 在 compact LLM 调用前合成完整 schema。机制级已上文档，本条只剩接口签名级。
+**已知**：[ARCHITECTURE.md](ARCHITECTURE.md) §3.2 已定机制——SR 通过 schema fragment 注册接口向 CTE 暴露 `skill_state` 的 Pydantic / JSON Schema（Phase 9 起两层 schema：core + skill_state，Layer 2 `business_writing_pack` 已删）；CTE 在 compact LLM 调用前合成完整 schema。机制级已上文档，本条只剩接口签名级。
 
 **Stage 3 已回答（已落地并沉淀回 ARCHITECTURE §3.2）**：
 
@@ -139,17 +141,19 @@
 - 首版强制 single-skill-active；不支持多 skill 同时活跃合成。
 - schema 版本由 `CompactSummary.schema_version` 字段承载，不额外引入 schema metadata 二元组。
 
-**回答方式**：Stage 3 写第一个 compact 实现时落地；Stage 5 引入 business_writing skill 时验证接口在跨 skill 类间的复用性。
+**回答方式**：Stage 3 写第一个 compact 实现时落地；Stage 5 (SR Framework v0) Battle 1 用 mock skill 验证接口对异类 skill family 平等承载性；Stage 7 第一个真实 skill 接入时落地业务字段填充与跨 skill 复用性验证。
 
 **当前推荐**：启动时注册（让 DI 容器主导）；签名为 `Protocol.get_compact_schema_fragment() -> Type[BaseModel]`，schema 版本管理交给 Pydantic model 内部 `schema_version` 字段；多 skill 暂不支持（第一个实现强制 single-skill-active）。
 
-**Stage 3 收口备注（2026-04-29）**：已按用户确认的推荐路径落地 `SkillSchemaProvider` Protocol，签名为 `get_compact_schema_fragment() -> type[BaseModel]`。Stage 3 首版强制 single-skill-active；`business_writing_pack` / `skill_state` 默认 `null`，Stage 5 再由真实 skill fragment 验证复用性。
+**Stage 3 收口备注（2026-04-29）**：已按用户确认的推荐路径落地 `SkillSchemaProvider` Protocol，签名为 `get_compact_schema_fragment() -> type[BaseModel]`。Stage 3 首版强制 single-skill-active；`skill_state` 默认 `null`，由 active skill 的 SR 实现按需填充。
+
+**Phase 9 修订备注（2026-04-30）**：随 [ARCHITECTURE.md](ARCHITECTURE.md) §3.2 schema 收敛为两层（core + skill_state），原"`business_writing_pack` / `skill_state` 默认 null"中 `business_writing_pack` 字段已删除；schema fragment 注册接口签名不变（`get_compact_schema_fragment() -> Type[BaseModel]`）；CTE 合成时只合成两层（`compose(core_schema, skill_state_schema)`，缺 fragment 时 `compose` 返回 core 单层 + trace 记 `skill_fragment_skipped: true`）。详见 ARCH §3.2 "Schema 合成注册接口" 段更新。
 
 **仍保留的参数级残留（待 Stage 5/7+ 或性能压力触发）**：
 
 - 多 skill 同时活跃时如何合成（concat fields？嵌套 dict？）——仅在出现 Multi-Skill 真实需求时再开。
 - schema fragment 缓存策略（首字延迟 vs schema 体积）——仅在 compact LLM schema 明显成为瓶颈时再开。
-- `business_writing_pack` / `skill_state` 的 size 阈值与降级策略（与 [ARCHITECTURE.md](ARCHITECTURE.md) §3.2 Layer 2/3 size 约束一致）——属于参数级，随真实 PR/GC trace 微调。
+- `skill_state` 的 size 阈值与降级策略（与 [ARCHITECTURE.md](ARCHITECTURE.md) §3.2 Layer 2 size 约束一致）——属于参数级，随真实 PR/GC trace 微调。
 
 ### A8：pinned_refs 填充 / 取消 pin 策略
 
@@ -196,7 +200,7 @@
 
 - 准则框架本身在 Phase 9 沉淀作 Stage 7 反向建模时的指南；**Phase 9 / Stage 5 / Stage 6 不应用这 4 项准则做任何具体字段决策**。
 - 第一次真实接入 skill（Stage 7）时，由真实 case 反向回答"这个 skill 应该有哪些字段"，应用本准则；4 项准则是必要不充分条件——通过 4 项后字段是否最终入 schema 仍由 skill 维护者结合 SOTA 实践拍板。
-- 准则迭代：Stage 7+ 实测后若发现遗漏（如 "可访问性" / "可序列化" 等），通过本条 OPEN_DECISIONS 修订追加，不触发 ARCH 主干修订。
+- 准则迭代：Stage 7 起实测后若发现遗漏（如 "可访问性" / "可序列化" 等），通过本条 OPEN_DECISIONS 修订追加，不触发 ARCH 主干修订。
 
 ### A10：brand_voice / audience 等具体字段的建模派系选择
 
@@ -217,46 +221,42 @@
 
 ## B. 总设计师决策待回答（用户决策）
 
-### B1：Voice Pack 是 Stage 5 还是更早
+### B1：Voice Pack 归属（已 Phase 9 重打开 → Stage 7）
 
-**背景**：GPT 多轮挑刺要求把 Voice Pack 提到 Stage 2 或 Stage 3，理由是"商业写作不带 voice 等于残次品"。
+**Phase 9 当前结论（2026-04-30，权威）**：Voice Pack 推到 **Stage 7**（"First Skill SOTA + Voice Pack + 反向建模"）与第一个真实 skill 接入一起落地。Stage 5（SR Framework v0）/ Stage 6（Memory Candidate Stream）的 SR 框架**不得预设任何 voice 字段**（违反 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 "未做先猜业务字段" 反模式抗体）；voice 字段集本身由 A10 派系选择决定，不在 Phase 9 范围。
 
-**当前选择**：留 Stage 5 Battle 1（First Skill SOTA Loop 内）。
+> **以下"背景 / 理由 / 反向选项"段是 Phase 9 前的历史快照**（对应 ARCH 三层 schema + 旧 Stage 5 = First Skill 的方案），保留作历史溯源；现行结论以本段为准。
 
-**理由**：
+---
+
+**背景（历史快照）**：GPT 多轮挑刺要求把 Voice Pack 提到 Stage 2 或 Stage 3，理由是"商业写作不带 voice 等于残次品"。
+
+**Phase 9 前的当前选择**：留 Stage 5 Battle 1（First Skill SOTA Loop 内）。
+
+**Phase 9 前的理由**（已不适用——Phase 9 已删 Layer 2 + Stage 路线 5/6/7/8+ 重拆）：
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) 3.2 的 `CompactSummary` schema 三层结构中，整个 `business_writing_pack` 是 nullable 子层，Stage 2-4 默认全 null，没有"先有数据结构再有数据填充"的真悖论。
 - Stage 2-4 的 GC 断言 `business_writing_pack.brand_voice` 字段时按 nullable 处理（Stage 3 不强求；Stage 5 强求非空），见 3.5 GC 分级规则。
 - 更早做 voice pack 会导致 Stage 2-4 的 GC 在没有真实 skill / context pack 的情况下"为测 voice 而 mock voice"，违背"先有货再建物流"。
 
-**反向选项（如果用户改主意）**：
+**Phase 9 前的反向选项**（已失效——Stage 路线重拆后场景已变）：
 
 - B1.a：Stage 3 引入"轻 voice 占位"——只是字段默认值，不写真业务，仅供 schema 验证。
 - B1.b：Stage 5 提前到 Stage 4 之后立刻做（合并 Stage 4 和 Stage 5 中间过渡期）。
 
-**决策门槛**：除非用户明确要求，否则保持当前选择。
-
-**Phase 9 重打开备注（2026-04-30）**：B1 因 Phase 9 ARCH §4 Stage 路线重拆 + §3.2 Layer 2 删除而**重打开**——Voice Pack 的归属与字段集从 Stage 5 推到 Stage 7（"First Skill SOTA + Voice Pack + 反向建模"）。新承诺：
-
-- Voice Pack 推到 Stage 7 与第一次真实 skill 接入一起落地；
-- Stage 5（SR Framework v0）/ Stage 6（Memory Candidate Stream）的 SR 框架**不得预设任何 voice 字段**（违反 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 "未做先猜业务字段" 反模式抗体）；
-- voice 字段集本身由 A10 派系选择决定，不在 Phase 9 范围。
-
-原 B1.a / B1.b 反向选项已失效（Stage 路线重拆后场景已变）。
-
 ### B2：是否做 SubAgent ContextSandbox
 
-**背景**：Claude Code Harness 有完整的 SubAgent ContextSandbox（隔离上下文、独立工具集）。原 V1 计划独立 stage，V2 推到 Stage 7+。
+**背景**：Claude Code Harness 有完整的 SubAgent ContextSandbox（隔离上下文、独立工具集）。原 V1 计划独立 stage，V2 推到 Stage 7+；Phase 9 Stage 路线 5/6/7/8+ 重拆后归 **Stage 8+ Optional**。
 
-**当前选择**：暂不做，留 Stage 7+ 可选项。
+**当前选择**：暂不做，留 Stage 8+ 可选项。
 
 **理由**：
 
 - 个人级 SOTA 的核心痛点是"主线 agent 把一个 skill 在一个长任务里做到底"，不是"调度一群 SubAgent"。
 - SubAgent 引入 inter-agent context boundary、工具子集、子任务 summary、子产物归档等大量复杂度，主线 agent 没稳定时引入会爆炸。
-- 真用例（如 Reviewer SubAgent / Research SubAgent）只在 Stage 5 真实跑过 business_writing 后才知道是否真有需求。
+- 真用例（如 Reviewer SubAgent / Research SubAgent）只在 Stage 7 第一个真实 skill 接入并跑过若干 task 后才知道是否真有需求。
 
-**反向触发条件**：Stage 5 后的真实 business_writing 任务出现"主线 agent 上下文爆炸但任务本身可拆"的硬证据时，再启 Stage 7。
+**反向触发条件**：Stage 7 后的真实 skill 任务出现"主线 agent 上下文爆炸但任务本身可拆"的硬证据时，再启 Stage 8 中对应 SubAgent battle。
 
 ### B4：Task 实体的产品语义边界
 
@@ -339,7 +339,7 @@
 
 3 条全过 = 合并；任一条不过 = 切独立 SR。
 
-**反向选项（如果 Stage 7+ 实测判别准则失灵）**：B6.a 引入"SR 组合（Composition）"机制（多个 SR 共享同一 task，schema fragment 自动 merge），需 ARCH 主干修订，Phase 9 不预设。
+**反向选项（如果 Stage 7 起实测判别准则失灵）**：B6.a 引入"SR 组合（Composition）"机制（多个 SR 共享同一 task，schema fragment 自动 merge），需 ARCH 主干修订，Phase 9 不预设。
 
 ### B7：第一个真实接入的 skill 选择
 
@@ -502,8 +502,8 @@
 ### F4：暂缓但不可遗忘的研发管理项
 
 - **`task_history` 雏形**：Stage 4 不做（推到 Stage 6 与 `cross_run_lessons` 一起），Stage 4 task summary 仅 schema 层预留扩展位；实施时按 F2 H5 路径走（独立 SQLite 表，不动 `CompactSummary` schema_version）。
-- **A3 cross-task artifact 召回**：Stage 4 不做，推到 Stage 5 真实 business_writing 时回答（与 A3 当前推荐一致）；权重公式 / `--include-other-tasks` flag / 风险提示文本均不在 Stage 4 范围。
-- **A6 章节切分策略**：Stage 4 不做，推到 Stage 5 真实 1.5 万字 business_writing 时回答（与 A6 当前推荐一致）；Stage 4 仅复用 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 现有降级链 `full → digest+tail_n`。
+- **A3 cross-task artifact 召回**：Stage 4 不做，推到 Stage 7 第一次真实 skill 接入时回答（Phase 9 Stage 路线重拆后，原 "推到 Stage 5 真实 business_writing" 同步调整；与 A3 当前推荐一致）；权重公式 / `--include-other-tasks` flag / 风险提示文本均不在 Stage 4 范围。
+- **A6 章节切分策略**：Stage 4 不做，推到 Stage 7 真实 1.5 万字以上交付物任务时回答（Phase 9 同步调整；与 A6 当前推荐一致）；Stage 4 仅复用 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 现有降级链 `full → digest+tail_n`。
 - **PR template**：暂缓创建（参考 D4 第 302 行规则）；若 Stage 4 5 battle 中出现 ≥ 1 次 Reference Check / F1 Status / CHANGELOG 漏填再触发。
 - **Stage 4 baseline trace 用例**：Battle 5 启动前最终敲定（草案：隔天 resume 命中 L0 / 分支对照 / 短 session 提前 resume 走祖先链 + connect 路径），不在 Stage 4 启动前预先固化。
 
@@ -523,10 +523,10 @@
 
 ### G1：5 battle 草案
 
-- **Battle 1：SR 框架 v0 + Layer 2 删除迁移落地**
-  - schema fragment 注册接口的真实合成（`SkillSchemaProvider` Protocol 接两层：`core_schema` + `skill_state_schema`）。
-  - compact.py / task_memory.py 的 `business_writing_pack` 引用全量删除 + 迁移脚本可执行（详见 Phase 9 Step 3）。
+- **Battle 1：SR 框架 v0**
+  - schema fragment 注册接口的真实合成（`SkillSchemaProvider` Protocol 接两层：`core_schema` + `skill_state_schema`，Phase 9 Step 3 已完成两层 schema 收敛与 `business_writing_pack` 迁移；本 Battle 在此基础上落 SR 框架真实 fragment 注册路径）。
   - 不接真实 skill；用 mock skill（如 `MockSkillA` / `MockSkillB` 字段集结构不同）验证注册接口对异类 skill 平等。
+  - **前置已就位**：[compact.py](../src/agent_os/agent/compact.py) `SkillSchemaProvider` Protocol 已存在 + `CompactSummary` v2 两层 schema + `compose(core_schema, skill_state_schema)` 合成路径已在 §3.2 文档明文。
 
 - **Battle 2：ER `start_resumed_session` 真实 agno spin up**
   - 把 Stage 4 的 deferred ER 入口（A5 备注）实现为 `start_resumed_session(prompt, session_meta) -> SessionId`，签名见 [ARCHITECTURE.md](ARCHITECTURE.md) §1.1（Phase 9 Step 2.5 已加）。
