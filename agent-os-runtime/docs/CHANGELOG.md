@@ -8,6 +8,12 @@
 
 ### Stage 5
 
+- **Battle 4：SR 平等性 + 跨 skill artifact 共享 invariant 工程验证**（2026-04-30，done-local）
+  - `branch_task` 的 resume final-state 合成路径支持透传 mock skill schema registry，确保 branch / resume 端到端诊断能看到 active skill fragment。
+  - 用 `MockSkillA` / `MockSkillB` 异类字段集验证注册 → resume/branch 装配 → fake ER spin up 的平等路径，两个 skill 均不触发 fragment skipped。
+  - 验证跨 skill 共享只走 artifact ref：MockSkillA 产出 artifact，MockSkillB 的独立 task 通过 `current_artifact_refs` 恢复交付物内容，不共享 A/B schema 字段。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_cli.py tests/core/test_context_diagnostics.py`；`python -m ruff check src tests`。
+
 - **Battle 3：缺失 skill fragment fallback 诊断**（2026-04-30，commit `7132f3f`）
   - 新增 `SkillFragmentResolution`，将无 active skill、无 provider、provider 返回 None 三类 core-only fallback 显式区分为 `no_active_skill_id` / `provider_missing` / `fragment_missing`。
   - `resume_task` / `branch_task` 的 diagnostics 增加 `active_skill_id`、`skill_fragment_skipped`、`skill_fragment_skip_reason`；缺 fragment 不报错，仍走 core-only schema。

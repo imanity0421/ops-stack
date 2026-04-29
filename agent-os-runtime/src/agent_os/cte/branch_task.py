@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Literal
 from uuid import uuid4
 
+from agent_os.agent.compact import SkillSchemaProvider, SkillSchemaRegistry
 from agent_os.agent.task_memory import TaskEntity, TaskMemoryStore, TaskSession
 from agent_os.cte.resume_task import ArtifactLookupPort, ResumeFinalState, resume_task
 from agent_os.er.resume_session import ResumeSessionMeta, StartedSession
@@ -57,6 +58,8 @@ def branch_task(
     context_char_budget: int = 12000,
     max_deliverable_chars: int = 12000,
     skill_id: str | None = None,
+    skill_schema_provider: SkillSchemaProvider | None = None,
+    skill_schema_registry: SkillSchemaRegistry | None = None,
     resumed_session_starter: Callable[[str, ResumeSessionMeta], StartedSession] | None = None,
 ) -> BranchResult:
     task = store.get_task_entity(task_id)
@@ -92,6 +95,8 @@ def branch_task(
         context_char_budget=context_char_budget,
         max_deliverable_chars=max_deliverable_chars,
         skill_id=skill_id,
+        skill_schema_provider=skill_schema_provider,
+        skill_schema_registry=skill_schema_registry,
     )
     if resume_result.status != "ok" or resume_result.final_state is None:
         return BranchResult(

@@ -582,6 +582,160 @@ def test_branch_task_starts_runtime_after_branch_session_creation(tmp_path: Path
     assert diagnostics["skill_fragment_skip_reason"] == "provider_missing"
 
 
+def test_stage5_battle4_mock_skills_reach_resume_and_branch_runtime(tmp_path: Path) -> None:
+    class MockSkillAState(BaseModel):
+        a1: str
+        a2: int = 0
+        a3: list[str] = []
+
+    class MockSkillBState(BaseModel):
+        b1: bool
+        b2: dict[str, str] = {}
+
+    class MockSkillAProvider:
+        def get_compact_schema_fragment(self) -> type[BaseModel]:
+            return MockSkillAState
+
+    class MockSkillBProvider:
+        def get_compact_schema_fragment(self) -> type[BaseModel]:
+            return MockSkillBState
+
+    registry = SkillSchemaProviderRegistry()
+    registry.register("mock_skill_a", MockSkillAProvider())
+    registry.register("mock_skill_b", MockSkillBProvider())
+    store = TaskMemoryStore(tmp_path / "task.db")
+    task = store.create_task(name="mock sr equality", current_main_session_id="s-a")
+    store.upsert_session(session_id="s-a", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s-a", task_id=task.task_id, role="user", content="start")
+    calls: list[tuple[str, ResumeSessionMeta]] = []
+
+    def fake_start(prompt: str, session_meta: ResumeSessionMeta) -> StartedSession:
+        calls.append((prompt, session_meta))
+        return StartedSession(status="ok", session_id=session_meta.session_id, output_text="ok")
+
+    resume_result = resume_task(
+        store=store,
+        task_id=task.task_id,
+        force_mode="fork",
+        session_id_factory=lambda: "s-a-resumed",
+        skill_id="mock_skill_a",
+        skill_schema_registry=registry,
+        resumed_session_starter=fake_start,
+    )
+    branch_result = branch_task(
+        store=store,
+        task_id=task.task_id,
+        from_session_id="s-a-resumed",
+        session_id_factory=lambda: "s-b-branch",
+        skill_id="mock_skill_b",
+        skill_schema_registry=registry,
+        resumed_session_starter=fake_start,
+    )
+
+    assert resume_result.status == "ok"
+    resume_diag = resume_result.to_dict()["resume_diagnostics"]
+    assert resume_diag["active_skill_id"] == "mock_skill_a"
+    assert resume_diag["skill_fragment_skipped"] is False
+    assert branch_result.status == "ok"
+    branch_diag = branch_result.to_dict()["resume_diagnostics"]
+    assert branch_diag["active_skill_id"] == "mock_skill_b"
+    assert branch_diag["skill_fragment_skipped"] is False
+    assert [meta.skill_id for _prompt, meta in calls] == ["mock_skill_a", "mock_skill_b"]
+    assert all("<task_resume" in prompt for prompt, _meta in calls)
+
+
+def test_stage5_battle4_cross_skill_artifact_ref_shared_without_schema_coupling(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    class MockSkillAState(BaseModel):
+        a1: str
+        a2: int = 0
+        a3: list[str] = []
+
+    class MockSkillBState(BaseModel):
+        b1: bool
+        b2: dict[str, str] = {}
+
+    class MockSkillAProvider:
+        def get_compact_schema_fragment(self) -> type[BaseModel]:
+            return MockSkillAState
+
+    class MockSkillBProvider:
+        def get_compact_schema_fragment(self) -> type[BaseModel]:
+            return MockSkillBState
+
+    registry = SkillSchemaProviderRegistry()
+    registry.register("mock_skill_a", MockSkillAProvider())
+    registry.register("mock_skill_b", MockSkillBProvider())
+    store = TaskMemoryStore(tmp_path / "task.db")
+    artifacts = ArtifactStore(tmp_path / "artifacts.db")
+    task_a = store.create_task(name="mock skill a output", current_main_session_id="s-a")
+    store.upsert_session(session_id="s-a", client_id="c1", active_task_id=task_a.task_id)
+    artifact = artifacts.create_artifact(
+        task_id=task_a.task_id,
+        session_id="s-a",
+        raw_content="out_a.md\nshared artifact body for downstream mock skill",
+        digest="shared artifact digest",
+        stable_key="out_a.md",
+    )
+    CompactSummaryService(
+        store,
+        skill_schema_registry=registry,
+        active_skill_id="mock_skill_a",
+    ).compact(
+        session_id="s-a",
+        task_id=task_a.task_id,
+        current_artifact_refs=[artifact.artifact_id],
+    )
+
+    task_b = store.create_task(name="mock skill b consumes artifact", current_main_session_id="s-b")
+    store.upsert_session(session_id="s-b", client_id="c1", active_task_id=task_b.task_id)
+    store.append_message(session_id="s-b", task_id=task_b.task_id, role="user", content="consume ref")
+    CompactSummaryService(
+        store,
+        skill_schema_registry=registry,
+        active_skill_id="mock_skill_b",
+    ).compact(
+        session_id="s-b",
+        task_id=task_b.task_id,
+        current_artifact_refs=[artifact.artifact_id],
+    )
+    calls: list[tuple[str, ResumeSessionMeta]] = []
+
+    def fake_start(prompt: str, session_meta: ResumeSessionMeta) -> StartedSession:
+        calls.append((prompt, session_meta))
+        return StartedSession(status="ok", session_id=session_meta.session_id, output_text="ok")
+
+    result = resume_task(
+        store=store,
+        task_id=task_b.task_id,
+        force_mode="fork",
+        session_id_factory=lambda: "s-b-resumed",
+        artifact_store=artifacts,
+        skill_id="mock_skill_b",
+        skill_schema_registry=registry,
+        resumed_session_starter=fake_start,
+    )
+    payload = result.to_dict()
+    diagnostics = payload["resume_diagnostics"]
+
+    assert task_a.task_id != task_b.task_id
+    assert artifact.task_id == task_a.task_id
+    assert result.status == "ok"
+    assert diagnostics["active_skill_id"] == "mock_skill_b"
+    assert diagnostics["skill_fragment_skipped"] is False
+    assert diagnostics["current_artifact_ref_count"] == 1
+    assert diagnostics["deliverable_inline_level"] == "full"
+    assert calls
+    prompt = calls[0][0]
+    assert artifact.artifact_id in prompt
+    assert "shared artifact body for downstream mock skill" in prompt
+    assert "a1" not in prompt
+    assert "b1" not in prompt
+
+
 def test_skill_schema_provider_protocol_shape() -> None:
     class SkillState(BaseModel):
         field: str = ""
