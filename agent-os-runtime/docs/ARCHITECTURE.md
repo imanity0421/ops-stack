@@ -2,15 +2,15 @@
 
 > **本文定位**：`agent-os-runtime` 的稳定架构总纲。它沉淀了 7 轮迭代、25+ 轮挑刺后**仍屹立不倒**的核心架构判断，是对外可亮相的设计图骨架。
 >
-> 阶段路线骨架 也归本文（第 4 节）。**每个 stage 的 battle 细节、GC 字段级断言、过程性辩论**等高频变更内容**不在本文**——Stage 2 battle 排序见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) D，Stage 4 battle 排序见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) F；GC 字段级断言见 [GC_SPEC.md](GC_SPEC.md)（Stage 2 GC1-3 + Stage 3 GC4-5 已落地，后续 stage 增量追加）；7 轮迭代过程见 [archive/EFFECT_FIRST_STAGE_PLAN_V2.md](archive/EFFECT_FIRST_STAGE_PLAN_V2.md)（已冻结作历史，新人无需阅读）。
+> 阶段路线骨架 也归本文（第 4 节）。**每个 stage 的 battle 细节、GC 字段级断言、过程性辩论**等高频变更内容**不在本文**——Stage 2 battle 排序见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) D，Stage 4 battle 排序见 F，Stage 5 battle 排序见 G；GC 字段级断言见 [GC_SPEC.md](GC_SPEC.md)（Stage 2 GC1-3 + Stage 3 GC4-5 + Stage 4 GC6-8 已落地，后续 stage 增量追加）；7 轮迭代过程见 [archive/EFFECT_FIRST_STAGE_PLAN_V2.md](archive/EFFECT_FIRST_STAGE_PLAN_V2.md)（已冻结作历史，新人无需阅读）。
 >
-> **未稳定 / 待回答**的问题归 [OPEN_DECISIONS.md](OPEN_DECISIONS.md)（工程验证 + 总设计师决策 + Stage 2 Battle 排序 + Stage 3 执行状态 + Stage 4 Battle 排序）。
+> **未稳定 / 待回答**的问题归 [OPEN_DECISIONS.md](OPEN_DECISIONS.md)（工程验证 + 总设计师决策 + Stage 2 Battle 排序 + Stage 3 执行状态 + Stage 4 Battle 排序 + Stage 5 Battle 排序）。
 >
 > **借鉴依据 + 源码导航**归 [CLAUDE_CODE_REFERENCE_INDEX.md](CLAUDE_CODE_REFERENCE_INDEX.md)（14 项能力差距矩阵 + 7 个能力域源码路径 + Reference Check 模板）。
 >
-> **修订门槛（关键）**：本文的架构层修订**仅当伴随 PoC 代码或 GC 失败 trace** 时才动。对架构层的口头挑刺（来自任何审计角色，包括 LLM）**默认不触发本文修订**——具体见第 6 节。
+> **修订门槛（关键）**：本文的架构层修订采用 **3 级门槛**——Level 0（默认 0 修订）/ Level 1（自完备性补丁）/ Level 2（架构演进修订，4 项硬条件 + 修订记录强制 4 字段）。架构层语义级变更必须走 Level 2；口头挑刺（来自任何审计角色，包括 LLM）默认 Level 0 不触发修订。具体见第 6 节。
 
-本文是 agent-os 架构的**唯一权威**——4 视图 / 6 不变量 / 工程规则 / 6+1 stage 路线 / 反模式抗体清单全部归本文。借鉴判断与差距矩阵的细节版归 [CLAUDE_CODE_REFERENCE_INDEX.md](CLAUDE_CODE_REFERENCE_INDEX.md)；待决策项归 [OPEN_DECISIONS.md](OPEN_DECISIONS.md)。
+本文是 agent-os 架构的**唯一权威**——4 视图 / 6 不变量 / 工程规则 / 7+1 stage 路线 / 反模式抗体清单全部归本文。借鉴判断与差距矩阵的细节版归 [CLAUDE_CODE_REFERENCE_INDEX.md](CLAUDE_CODE_REFERENCE_INDEX.md)；待决策项归 [OPEN_DECISIONS.md](OPEN_DECISIONS.md)。
 
 ---
 
@@ -24,7 +24,7 @@
 
 - **不复刻 Claude Code**——Claude Code 是参考对象，不是目标架构。
 - **不做 coding agent**——LSP / git diff / shell 安全等 coding 工具链与业务主线无关。
-- **不做企业平台**——多租户 / 计费 / 审批流 / 大型 A/B 平台等永远不做或推到 Stage 7+ 可选项。
+- **不做企业平台**——多租户 / 计费 / 审批流 / 大型 A/B 平台等永远不做或推到 Stage 8+ 可选项。
 - **目标是个人级"SOTA 体感"**——一个 skill 在一个长任务里让用户感受到"懂业务的搭档"。
 
 ### 0.2 核心判断（与 Claude Code 不对称对标）
@@ -52,7 +52,7 @@ flowchart TB
 
 - **第一层（Agno）**：保留 Agno 作为 Agent Core，负责模型接入、基础工具循环、session 持久化。**不重写 Agno**。
 - **第二层（Harness Runtime）**：自建 Harness 层，补齐 Claude Code 已验证的 context 生命周期、tool result 管理、compact、resume、commands 与 observability。本文第 1 节 4 视图（模块 / Loop / 资料层 / Task 实体）描述这一层。
-- **第三层（Business Agent OS）**：发展业务护城河——围绕 skill、memory、artifact、brand、brief、quality rubric 与 feedback learning 做商业场景能力。本文 Stage 5 起聚焦此层。
+- **第三层（Business Agent OS）**：发展业务护城河——围绕 skill、memory、artifact、brand、brief、quality rubric 与 feedback learning 做商业场景能力。本文 Stage 5 起开始构建此层基建（Stage 5 = SR Framework v0、Stage 6 = Memory Candidate Stream，均业务能力无关），Stage 7 起填具体业务能力（First Skill SOTA + Voice Pack + 反向建模）。
 
 ## 0.4 哲学锚点
 
@@ -60,10 +60,11 @@ flowchart TB
 
 这一句话决定了一切取舍：
 
-- 不追求"企业级平台覆盖度"——多租户、配额、审批流、Skill Router、Multi-Skill Composition 等**永远不做**或推到 Stage 7+ 可选项。
+- 不追求"企业级平台覆盖度"——多租户、配额、审批流、Skill Router、Multi-Skill Composition 等**永远不做**或推到 Stage 8+ 可选项。
 - 不追求"路线图美学"——stage 顺序按依赖递进而非主题分类。
 - 不追求"全自动化"——任何不可逆决策（删除资料、修改 voice、合并 memory）必须用户显式触发。
 - **追求每个 stage 都有用户可感知的体感升级**——没有体感的 stage 不存在；GC 是工程基线（CI 脚手架），**不是产品交付**。
+- **SR 框架对所有 skill family 平等承载**——任何业务能力扩展（写作 / 策划 / 数据分析 / coding 等）享有同等架构待遇，无命名偏向、无字段位特权、无解析顺序优先级。schema 层不引入"业务通用层"中间层；跨 skill 字段共享走 §1.3 artifact ref 路径而非 schema 共享层（详见 §3.6 反模式抗体）。
 
 ## 1. 核心架构（4 视图）
 
@@ -111,7 +112,7 @@ flowchart TB
 
 **4 核心模块**（业务实现的归属）：
 
-- **Execution Runtime（ER）**：每一轮 agent 怎么跑——agno `Agent.run` 外壳、context build 前置、tool execution、tool result lifecycle、post-run update、SubAgent 生命周期。
+- **Execution Runtime（ER）**：每一轮 agent 怎么跑——agno `Agent.run` 外壳、context build 前置、tool execution、tool result lifecycle、post-run update、SubAgent 生命周期。**关键入口签名**：`start_resumed_session(prompt, session_meta) -> SessionId`（Stage 5 Battle 2 起真实实现，用于 `/task resume` / `/task branch` 装配后从合成的 final state prompt 真实 spin up 新 agno session；签名见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A5）。
 - **Context & Task Engine（CTE）**：长任务怎么不断线——ContextBuilder、context diagnostics / budget / self-heal、compact、compact boundary、rehydration、task summary、task identity、attention anchor、working memory。
 - **Memory & Artifact（MA）**：什么东西应该长期沉淀、什么是任务级引用——Memory（跨任务经验）、Asset（跨任务资产）、Artifact（任务级素材与产物）。详见 1.3。
 - **Skill Runtime（SR）**：业务能力如何变专业——manifest、context pack、output contract、quality rubric、brief extractor、deliverable lifecycle 业务消费、feedback-to-signal、voice pack。
@@ -216,7 +217,7 @@ CTE 触发的 Task 级事务（`/compact` / `/task resume` / `/task branch` / re
 - **池 1：Memory 池**——沿用 Mem0 + Hindsight 现状（短规则、双时态、合并 / 升降权机制）。SQLite + 轻量向量。
 - **池 2：Asset / Artifact 池**——Stage 2 v0 已落地 SQLite 原文层（`artifact_store.py`），承载 artifact 全文与最小字段集；更复杂的跨 task asset 化与 chunk 索引层仍按本文两亚层设计演进。Asset 与 Artifact **同池区分字段**（`kind`、`pinned_for_workspace`、`subkind` / `category`、`status`、`task_id`）。**池 2 内部还有两亚层**（关键：避免 vector 引擎被高频写打爆）：
 
-> **Stage 2 v0 实现注记（不改变架构结论）**：当前 `ArtifactStore`（`../src/agent_os/knowledge/artifact_store.py`）的 DB schema **未预留** `subkind` / `previous_subkind_history` 等业务 lifecycle 字段；仅保留 `task_id` / `session_id` / `status` / `digest_status` / `stable_key` 等运行时字段，并通过 `<artifact ref>` + digest fallback 完成 prompt replacement。`/artifact finalize` 的业务字段集（`final_at` / `final_session_id` / `final_by` / 多 final 策略）与 `subkind` 的开放 string 仍归 Stage 5 通过迁移引入（见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A2）。
+> **Stage 2 v0 实现注记（不改变架构结论）**：当前 `ArtifactStore`（`../src/agent_os/knowledge/artifact_store.py`）的 DB schema **未预留** `subkind` / `previous_subkind_history` 等业务 lifecycle 字段；仅保留 `task_id` / `session_id` / `status` / `digest_status` / `stable_key` 等运行时字段，并通过 `<artifact ref>` + digest fallback 完成 prompt replacement。`/artifact finalize` 的业务字段集（`final_at` / `final_session_id` / `final_by` / 多 final 策略）与 `subkind` 的开放 string 仍归 Stage 7 通过迁移引入（见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A2）。
 
 | 亚层 | 引擎 | 承担职责 | 写入触发 |
 | --- | --- | --- | --- |
@@ -332,7 +333,7 @@ flowchart TD
 - `/task resume <task_id> --from <session_id>`：从指定 session 的 final state 开新主线 session（覆盖默认行为，用于回到过去某个分支重启）。
 - `/task branch <task_id> --from <session_id>`：从指定 session 的 final state 开**新分支 session**（主线 `current_main_session_id` 不变，分支并行）。
 - `/task archive <task_id>`：软归档（status=archived），不参与召回。
-- `/artifact finalize <artifact_id>`（**预留命令名，Stage 5 实现**）：把指定 artifact 标记为当前 task 的 final deliverable——锁定为只读 + 在召回中标 `final=true` + 在 prompt 装配中作为 deliverable 锚点。具体业务字段（subkind / final_at / final_session_id 等）见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A2。1.4 在此预留命令名是为了让 1.4 分叉图中"Final Delivery"节点有显式系统命令承接，避免交付物状态散落在各处。
+- `/artifact finalize <artifact_id>`（**预留命令名，Stage 7 实现**）：把指定 artifact 标记为当前 task 的 final deliverable——锁定为只读 + 在召回中标 `final=true` + 在 prompt 装配中作为 deliverable 锚点。具体业务字段（subkind / final_at / final_session_id 等）见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A2。1.4 在此预留命令名是为了让 1.4 分叉图中"Final Delivery"节点有显式系统命令承接，避免交付物状态散落在各处。
 
 **resume / branch 装配采用实时合成（强制，不预埋 seed）**：
 
@@ -394,7 +395,10 @@ resume_final_state(target_session) =
 3. **长会话可被 compact 并恢复目标**：compact 后系统能恢复 goal / constraints / current_artifact_refs / last_user_instruction，不漂移。
 4. **Task 跨会话不死**：用户离开后 `/task resume` **两轮以内**让 agent 回到中断时的工作面，且支持 `/task branch` 分叉对照。
 5. **Skill 是业务配方而非 prompt**：skill 必含 context pack（含 voice pack）+ output contract + quality rubric + brief + deliverable lifecycle 消费 + feedback signal。
-6. **经验沉淀显式可解释**：Memory candidate 与 Voice Runtime 必须用户确认才生效；prompt 中每条注入资料带可追溯字段。
+6. **经验沉淀显式可解释**：
+   - **Memory candidate（Stage 6 起）**：任何 candidate 必须用户 review 才入召回——自动入召回是反模式（详见 §3.6）。
+   - **Voice Runtime（Stage 7 起）**：自动学习 voice candidate 必须用户确认才生效；voice 字段集本身由真实 skill 接入时反向建模回答（详见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A10 / B7）。
+   - **prompt 中每条注入资料带可追溯字段**——memory id / asset id / artifact id / cross_task 标签等。
 
 ## 3. 关键工程规则
 
@@ -410,11 +414,11 @@ resume_final_state(target_session) =
 
 ### 3.2 CompactSummary 结构化 schema（强制，禁止散文式自由总结）
 
-schema 显式分**三层**（避免业务字段污染通用契约）：
+schema 显式分**两层**（避免业务字段污染通用契约 + 所有 skill family 平等承载）：
 
 ```text
 CompactSummary:
-  schema_version: "v1"
+  schema_version: "v2"
 
   # ── Layer 1: core ── 通用生命周期字段，CTE 解析与维护
   core:
@@ -432,16 +436,18 @@ CompactSummary:
     last_user_instruction: str           # 用户最近一次明确指令
     open_questions:        list[str]     # 仍需用户回答的问题
 
-  # ── Layer 2: business_writing_pack ── 文档创作类 skill 共用，SR 解析
-  # 当前所有 skill（商业 / 运营 / 写作 / 策划）共享此层；Stage 5 起填充
-  business_writing_pack: dict | null
-    # 典型字段（由 SR.business_writing 模块定义，CTE 不解析）：
-    # brand_voice, audience, deliverable_kind, tone_constraints ...
-
-  # ── Layer 3: skill_state ── 不透明扩展位，由对应 skill 的 SR 实现自解析
-  # 异类 skill（如未来的"数据清洗"）走这条；business 类 skill 也可补充自有状态
+  # ── Layer 2: skill_state ── 不透明扩展位，由 active skill 的 SR 实现自解析
+  # 任何 skill family（business_writing / business_strategy / data_analysis / coding / ...）
+  # 平等承载；CTE 不解析字段语义、只做不透明持久化与 size 校验。
   skill_state: dict | null
 ```
+
+**SR 框架对所有 skill family 平等承载**（强制，反"业务字段命名偏向"抗体）：
+
+- schema 字段位、命名、解析顺序对 `business_writing` / `business_strategy` / `data_analysis` / `coding` 等任何 skill family **平等**——无命名偏向、无字段位特权、无解析顺序优先级。
+- 任何 skill 通过 `SkillSchemaProvider` 注册自己的 `skill_state` schema fragment；CTE 不假设任何 skill family 的字段集形态。
+- **跨 skill 字段共享走 artifact ref + Task Loop 顺序激活**（不在 schema 层做共享层，详见 §3.6 抗体）——例如商业策划 SR 完成后 finalize artifact `strategy_brief.md`，商业文案 SR 通过 `<artifact ref>` 读它作为输入约束；不在 `core` / `skill_state` 之外加"共享层"。
+- **schema_version v1 → v2 的不可回溯升格**：v1 曾包含 `business_writing_pack` Layer 2（已在 Phase 9 删除）；v1 历史数据通过迁移脚本 `scripts/migrate_compact_v1_to_v2.py` 丢弃 `business_writing_pack` 键并 bump version；不允许通过 Level 1 自完备性补丁回退到三层结构（详见 §6 Level 2 修订门槛）。
 
 **system-state vs LLM-generated state 强制区分**：
 
@@ -468,55 +474,53 @@ core 内**两类字段维护方式不同**——这是 schema 契约层面的硬
 | 层 | 归谁解析 | CTE 行为 | 何时填充 |
 | --- | --- | --- | --- |
 | `core` | CTE | 完整解析 + 字段级断言 + compact 优化 | Stage 3 起 |
-| `business_writing_pack` | SR.business_writing | CTE 仅持久化、透传，不解析字段 | Stage 5 起 |
-| `skill_state` | 对应 skill 的 SR 实现 | CTE 仅持久化、透传，不解析字段 | 按需，默认 null |
+| `skill_state` | active skill 的 SR 实现 | CTE 仅持久化、透传，不解析字段语义 | 按需，默认 null；Stage 7 起由真实 skill 接入填充 |
 
 **Schema 合成注册接口（CTE ↔ SR 契约）**：
 
-CTE 在调用 compact LLM 时使用 structured output / JSON mode，**LLM 必须接收完整 JSON Schema**——这是 OpenAI / Anthropic API 的硬约束。但 `business_writing_pack` / `skill_state` 的 schema 不在 CTE 视野，怎么办？
+CTE 在调用 compact LLM 时使用 structured output / JSON mode，**LLM 必须接收完整 JSON Schema**——这是 OpenAI / Anthropic API 的硬约束。但 `skill_state` 的 schema 不在 CTE 视野，怎么办？
 
 **机制**：SR 通过 schema fragment 注册接口向 CTE 暴露自己解析的层的 schema，CTE 在 compact 调用前**合成**完整 JSON Schema：
 
 ```python
-# CTE 层（Stage 3 已落地的契约签名）
+# CTE 层（Stage 3 已落地、Phase 9 简化为两层的契约签名）
 class SkillSchemaProvider(Protocol):
     def get_compact_schema_fragment(self) -> Type[BaseModel]: ...
 
 # 装配时：
 core_schema = CompactSummaryCore  # CTE 自有
-biz_schema = sr.business_writing.get_compact_schema_fragment()  # 注册自 SR
 skill_state_schema = active_skill.get_compact_schema_fragment() if active_skill else None
-full_schema = compose(core_schema, biz_schema, skill_state_schema)  # 拼接
+full_schema = compose(core_schema, skill_state_schema)  # 两层合成
 llm.complete(prompt, response_format=full_schema)
 ```
 
 **契约要点**：
 
-- **谁懂业务字段，谁就负责 schema fragment**——SR.business_writing 维护 `business_writing_pack` 的 Pydantic / JSON Schema 定义；异类 skill 维护自己的 `skill_state` schema。
+- **谁懂业务字段，谁就负责 schema fragment**——任何 skill family 的 SR 实现维护自己的 `skill_state` schema；CTE 一律不解析。
 - **CTE 不解析字段**——只接收 fragment 接口实例、合成完整 schema 喂 LLM、保存 LLM 产出原文。运行时只在 SR 装配 prompt 时解析。
 - **不存在"控制权反转到 SR 主导 compact"**——compact 仍归 CTE（Task Loop 主导），SR 只通过 schema 注册接口向 CTE 提供 schema 片段。这避免了"SR 反向调 CTE"的循环依赖。
-- **Stage 3 已验证的边界**：首版强制 single-skill-active（不做多 skill 同时活跃合成）；接口签名固定为 `get_compact_schema_fragment() -> Type[BaseModel]`，schema 版本由 `schema_version` 字段承载；多 skill 合成与缓存策略作为参数级扩展留在 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A7。
+- **Stage 3 已验证 + Phase 9 简化的边界**：首版强制 single-skill-active（不做多 skill 同时活跃合成）；接口签名固定为 `get_compact_schema_fragment() -> Type[BaseModel]`，schema 版本由 `schema_version` 字段承载；多 skill 合成与缓存策略作为参数级扩展留在 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A7。
+- **缺 fragment 的 fallback**：active skill 未实现 `SkillSchemaProvider` 或返回 None 时，`compose(core_schema, None) == core_schema`——CTE 装配仅含 core 层 + trace 中记 `skill_fragment_skipped: true`；不报错、不强制 skill 必须有 fragment（与 §3.3 既有降级链同构）。
 
 **关键工程规则**：
 
-- compact LLM 调用使用 structured output / JSON mode 强约束输出格式；CTE 仅校验 `core` 字段齐全，`business_writing_pack` / `skill_state` 是否合规由对应 SR 在装配时检查。
-- compact 时 CTE 把 `business_writing_pack` / `skill_state` 作为**不透明 dict 透传**——压缩 / 重写 LLM prompt 时把它们整体作为"这是 skill 自有状态，不要改字段、不要省略"的硬约束传入。
-- **Layer 2 / Layer 3 size 约束（强制契约）**：`business_writing_pack` / `skill_state` 字段**语义不透明、size 必须透明**——CTE 在 compact 入口、resume 装配、prompt 装配三处对两层各自的序列化体积做硬校验，超阈值时**强制触发 SR 自压缩 / 警告 / 截断**（阈值与降级策略属参数级，见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A7）。SR 不能借"不透明"为由绕开预算审计——CTE 不解析字段语义，但守住总预算是 CTE 的本职职责。这条规则避免"Skill 开发者随手塞 50KB 数据进 `skill_state`，CTE 透传不告警，prompt 装配时整体爆预算"的全盘破产。
-- task summary（Stage 4）复用同一 schema 并扩展 `task_history`（`CompactSummary` 快照序列）+ `cross_run_lessons`，**沿用三层结构**。
+- compact LLM 调用使用 structured output / JSON mode 强约束输出格式；CTE 仅校验 `core` 字段齐全，`skill_state` 是否合规由对应 SR 在装配时检查。
+- compact 时 CTE 把 `skill_state` 作为**不透明 dict 透传**——压缩 / 重写 LLM prompt 时把它整体作为"这是 skill 自有状态，不要改字段、不要省略"的硬约束传入。
+- **Layer 2 size 约束（强制契约）**：`skill_state` 字段**语义不透明、size 必须透明**——CTE 在 compact 入口、resume 装配、prompt 装配三处对该层的序列化体积做硬校验，超阈值时**强制触发 SR 自压缩 / 警告 / 截断**（阈值与降级策略属参数级，见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A7）。SR 不能借"不透明"为由绕开预算审计——CTE 不解析字段语义，但守住总预算是 CTE 的本职职责。这条规则避免"Skill 开发者随手塞 50KB 数据进 `skill_state`，CTE 透传不告警，prompt 装配时整体爆预算"的全盘破产。
+- task summary（Stage 4）复用同一 schema 并扩展 `task_history`（`CompactSummary` 快照序列）+ `cross_run_lessons`，**沿用两层结构**。
 - `/task resume` 的装配从各层字段映射：
   - `core.goal` → attention anchor
   - `core.constraints` → working memory 顶部硬约束
   - `core.current_artifact_refs` → artifact ref 注入（系统状态指针，不依赖 LLM 召回）
   - `core.pinned_refs` → memory / asset 强制 inline（冷启动 Turn 1 不依赖向量召回）
   - `core.last_user_instruction` → 最近指令保留段
-  - `business_writing_pack` 全字段 → SR.business_writing 装配 voice pack 注入点
-  - `skill_state` 全字段 → 对应 skill 的 SR 实现自定义装配
+  - `skill_state` 全字段 → active skill 的 SR 实现自定义装配（如 voice pack 注入点 / 业务上下文段）
 
-**为什么保留 skill_state 扩展位**：
+**为什么 skill_state 是唯一业务扩展位**：
 
-- 当前所有 skill 都偏文档创作，`business_writing_pack` 横向通用——理论上可以暂不预留 `skill_state`。
-- 但**预留 nullable 字段是零成本的**，晚加要改 `schema_version` 并迁移历史 task 数据。
-- 真正的好处是**架构契约的纯洁性**：CTE 不需要"未来某天再决定异类 skill 怎么塞字段"——任何 skill 都有明确扩展位，CTE 永远只解析 `core`。这避免了"业务字段污染通用底座"的反复来回。
+- **核心理由**：core 通用层 + skill_state 不透明扩展位的两层结构，是"通用契约纯洁性 + 业务能力开放性"的最简切分。任何业务字段污染都被 skill_state 这层承接（CTE 永远只解析 core），任何业务能力都通过 SR 注册 fragment 平等接入（无字段位特权）。
+- **拒绝中间层（"业务通用层"）**：曾考虑过 `business_writing_pack` 类的"文档创作类 skill 通用"中间层，已在 Phase 9 删除——理由是命名偏向（`business_writing` 字面绑死单 skill family）+ 跨 skill 共享应走 artifact 路径而非 schema 层（详见 §3.6 抗体）。
+- **零成本扩展**：`skill_state` 是 nullable 字段——任何 skill 不实现 SR fragment 时该字段为 None，不引发 schema 报错；要扩展时实现 `SkillSchemaProvider` 即可，无需触发 CTE / `schema_version` 升级。
 
 ### 3.3 Resume 装配的 inline 规则（关键工程细节）
 
@@ -549,7 +553,7 @@ llm.complete(prompt, response_format=full_schema)
 **禁止裁剪的字段**：
 
 - 绝不裁剪 `CompactSummary.core` 字段（体积小、价值最高）。
-- 绝不裁剪 `business_writing_pack` / `skill_state`（语义不透明、裁剪后 SR 无法装配）。
+- 绝不裁剪 `skill_state`（语义不透明、裁剪后 SR 无法装配）。
 - 绝不裁剪 `core.pinned_refs` 指向的 memory / asset（用户已显式 pin，是冷启动关键上下文）。
 - 绝不裁剪 digest 本身。
 
@@ -563,7 +567,7 @@ llm.complete(prompt, response_format=full_schema)
 - **断言只看结构化字段命中**——schema 字段是否齐全、artifact ref 是否丢失、`cross_task_hit` 是否成立、brief 5 字段是否复述、`resume.budget` 是否达成。
 - **不允许的偷懒形态**：用"看起来还行 / 写得不错"作为通过条件、用"agent 没报错"代替"字段是否齐全"、通过条件含糊到 reviewer 之间会有分歧。
 
-**Stage 5 SGC**：业务美感（语气、品牌感、专业稿感）才作为评判维度——voice pack / output contract / rubric 真正生效后才能评判。
+**Stage 7 SGC**：业务美感（语气、品牌感、专业稿感）才作为评判维度——voice pack / output contract / rubric 真正生效后才能评判。
 
 **唯一例外**：`GC-Resume` 的"续写连贯性"是 Stage 4 唯一允许人评判的子项，但要求**具体证据**（agent 必须显式引用前段词句作为衔接证据），不是"读起来感觉连贯"。
 
@@ -571,12 +575,17 @@ llm.complete(prompt, response_format=full_schema)
 
 **关键规则**：同一条 GC（如 GC4）在不同 stage 验证时，断言条件**不同**——只断言该 stage 已存在的字段，避免"还没做 voice pack 就要求测 voice"的时空悖论。
 
-| GC | Stage 3 验证时 | Stage 5 验证时（追加）|
+| GC | Stage 3 验证时 | Stage 7 验证时（追加，第一次真实 skill 接入后）|
 | --- | --- | --- |
-| GC4 | `core.goal` / `core.current_artifact_refs` / `core.last_user_instruction` 非空；不出现"我们讨论了 X 话题"空话；`business_writing_pack` / `skill_state` 允许 null | + `business_writing_pack.brand_voice` 非空 + `core.constraints` 含品牌红线 |
+| GC4 | `core.goal` / `core.current_artifact_refs` / `core.last_user_instruction` 非空；不出现"我们讨论了 X 话题"空话；`skill_state` 允许 null | + `skill_state.<voice 字段>` 非空（具体字段集由 Stage 7 反向建模决定，详见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A10 / B7）+ `core.constraints` 含品牌红线 |
 | GC5 | `core.current_artifact_refs` 在每轮 trace 中持续指向同一组 deliverable | + 每轮 prompt 中 `<voice>` 段持续在场 |
 
-具体字段级断言口径见 [GC_SPEC.md](GC_SPEC.md)。实现路径采用参数驱动的同一断言体系：Stage 3 先落 `gc_assertion_level="stage3"` 的字段口径，Stage 5 再追加业务字段强断言（voice pack / brand redline 等）。
+**Stage 5 / 6 GC 的工程 SOTA 标准 vs Stage 7 起业务 SOTA 标准**：
+
+- Stage 5 / 6 GC 仍是工程 SOTA 标准（schema fragment 真实合成 / ER spin up 成功 / 跨 skill artifact 共享 trace / Memory candidate review 流），**不引入任何业务字段强断言**——这是 §3.6 "未做先猜业务字段" 反模式抗体在 GC 层的体现。
+- Stage 7 起 GC 升级为业务 SOTA 标准（voice pack / brand redline / 盲测可辨识品牌 / rubric 评分），具体字段集由真实 skill 接入时反向建模回答。
+
+具体字段级断言口径见 [GC_SPEC.md](GC_SPEC.md)。实现路径采用参数驱动的同一断言体系：Stage 3 先落 `gc_assertion_level="stage3"` 的字段口径，Stage 5 / 6 沿用 + 追加 SR / Memory 层工程断言，Stage 7 再追加业务字段强断言。
 
 ### 3.6 反模式：明确不做的清单
 
@@ -585,11 +594,13 @@ llm.complete(prompt, response_format=full_schema)
 - **TTL 自动清理**：所有删除必须用户显式触发。`/blob gc --orphan` 只列不删。
 - **Task ≡ Session 单轨**：会让分叉、隔天恢复、跨周持续都成为反人类体验。
 - **把 GC 包装成产品特性**：GC 是 CI 脚手架，对最终用户隐形。
-- **业务美感作为 Stage 2-4 GC 通过条件**：会让底层基建陷入"调 prompt 语气"的归因混乱泥潭。
+- **业务美感作为 Stage 2-6 GC 通过条件**：会让底层基建陷入"调 prompt 语气"的归因混乱泥潭。Stage 7 起 GC 才允许业务美感断言（详见 §3.5）。
 - **Voice / Memory 自动学习不经用户确认**：所有 candidate 必须 review 后入召回。
 - **服务端 context management**：与 Anthropic API 强绑定，永远不做。
-- **Multi-Skill Composition / Skill Router**：推到 Stage 7+，**默认不做**，除非届时出现硬证据（具体场景需求 / 真实交付瓶颈）——区别于"永远不做"清单（多租户 / 计费 / 审批流 / coding 专属能力 / 服务端 context management）。
+- **Multi-Skill Composition / Skill Router**：推到 Stage 8+，**默认不做**，除非届时出现硬证据（具体场景需求 / 真实交付瓶颈）——区别于"永远不做"清单（多租户 / 计费 / 审批流 / coding 专属能力 / 服务端 context management）。
 - **多人协作（participants）**：超出个人级范围，永远不做。
+- **未做先猜业务字段**（Phase 9 新增抗体）：SR 字段集 / 建模派系 / 第一个 skill 选择等业务决策**必须等到第一次真实接入 skill 时反向建模回答**；Stage 5 / 6 不得预先固化任何具体业务字段（包括 brand_voice / audience / deliverable_kind / KPI / market_segment 等任何业务领域字段）。区别于"Multi-Skill / Skill Router"的"默认不做、硬证据再开"——本条是**必须不做、违反即返工**：任何 Stage 5 / 6 PR 触碰具体业务字段，必须先回 Phase X 启动 §6 Level 2 修订门槛。判别准则：A9（"最小必要"4 项判别准则框架）属准则沉淀、不属业务字段固化；mock skill 字段集（用于 SR 平等性工程验证）属工程占位、不属业务建模。详见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A9 / A10 / B7。
+- **跨 skill schema 字段共享**（Phase 9 新增抗体）：跨 skill 共享的业务字段（audience / deliverable_kind / 上游交付物等）**必须通过 artifact ref + Task Loop 顺序激活实现**；不允许在 schema 层（core 或 skill_state）做共享层。具体路径：上游 skill 完成后 finalize artifact（如 `strategy_brief.md`）；下游 skill 在新 task 启动时通过 `<artifact ref>` 读取该 artifact 作为输入约束。这条规则的三重作用：① 保留 core 通用层纯洁性（不被业务字段污染）；② 充分利用 §1.3 既有 artifact 机制（CoW / 升降通道 / digest 已成熟）；③ 维持 §3.2 SR 平等承载（任何 skill 不会因"共享字段"获得 schema 字段位特权）。曾考虑过 `shared_skill_context` / `cross_skill_pack` 等共享 schema 层方案，已在 Phase 9 拒绝（详见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) Phase 9 修订记录拒绝清单）。
 
 ## 4. Stage 路线（依赖顺序）
 
@@ -598,9 +609,10 @@ flowchart LR
   S1[Stage 1<br/>Context Foundation] --> S2[Stage 2<br/>Artifact + Lifecycle + Task Entity]
   S2 --> S3[Stage 3<br/>Compact + Schema]
   S3 --> S4[Stage 4<br/>Task Recovery and Resume]
-  S4 --> S5[Stage 5<br/>First Skill SOTA + Voice Pack]
-  S5 --> S6[Stage 6<br/>Memory and Voice Runtime]
-  S6 -.-> S7[Stage 7+<br/>Optional]
+  S4 --> S5[Stage 5<br/>SR Framework v0]
+  S5 --> S6[Stage 6<br/>Memory Candidate Stream]
+  S6 --> S7[Stage 7<br/>First Skill SOTA + Voice Pack + 反向建模]
+  S7 -.-> S8[Stage 8+<br/>Optional]
 ```
 
 每个 stage 一句话承诺：
@@ -609,11 +621,12 @@ flowchart LR
 - **Stage 2**：长内容 artifact 化 + 生命周期闭环（archive / clean / 孤儿盘点，永不 TTL）+ Task 实体落地（task_table 5 字段，task ⊃ session 1:N）。Battle 拆分（6 battle 顺序、branch/CoW 推到 Stage 4 等执行细节）见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) D。
 - **Stage 3**：长会话可 compact 并以 `CompactSummary` schema 恢复目标，Task Loop 核心闭环成立。
 - **Stage 4**：用户离开后 `/task resume` 两轮内复现工作面，Task Loop 成为跨会话稳定容器；Golden Case 同步收口为贯穿基线。Battle 拆分（5 battle 顺序、Stage 4 启动前已敲定的 A4-ii / A5 / B5.c / H5 / S3 决策摘要、暂缓项）见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) F。
-- **Stage 5**：skill 是业务配方（含 voice pack 手挂层）而非 prompt，Skill Loop 站在 Task Loop 之上。盲测可辨识品牌。
-- **Stage 6**：Memory candidate + Voice Runtime（在 Pack 之上叠加自动学习层），全部需用户确认。
-- **Stage 7+**：自动化与扩展（SubAgent ContextSandbox / Auto Compact 升级 / Hook 系统化 / Resume 时点回滚），按真实痛点决定，不预设顺序。
+- **Stage 5（Phase 9 重定义）**：**SR Framework v0 — 业务能力无关的 SR 框架抽象**。schema fragment 注册接口的真实合成（两层 schema：`core_schema` + `skill_state_schema`，`business_writing_pack` Layer 2 已删）+ ER `start_resumed_session` 真实 agno spin up（A5 v0 deferred 项落地）+ CTE 装配缺失 fragment 的 fallback 行为 + SR 框架对异类 skill 平等性工程验证（用 mock skill）+ 跨 skill artifact 共享 invariant 工程验证。**不绑定任何具体 skill**——任何业务字段 / voice 字段 / 真实 skill 命名严禁出现（违反 §3.6 "未做先猜业务字段" 抗体）。Battle 拆分（5 battle 顺序、启动前已敲定决策摘要 D1-D5、暂缓项）见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) G。
+- **Stage 6（Phase 9 重定义）**：**Memory candidate 流（业务无关）+ 通用 working memory 上层**。Memory candidate review 入库由用户显式触发（与 §397 invariant 对齐）；候选源 / review UI / 入库判定属业务无关基建。**不集成 voice 字段**（voice 字段集成留 Stage 7 与真实 skill 一起做）。
+- **Stage 7（Phase 9 重定义）**：**第一个真实 skill 接入 + 业务字段反向建模 + voice runtime + 盲测可辨识品牌**。skill 选择由 Stage 7 启动前 Phase 决议（候选见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) B7：商业文案 / 商业策划 / 数据分析 / 编程辅助）；A10 建模派系 + A9 字段判别准则在此 Stage 应用反向建模。GC 升级为业务 SOTA 标准（详见 §3.5）。
+- **Stage 8+**：自动化与扩展（SubAgent ContextSandbox / Auto Compact 升级 / Hook 系统化 / Resume 时点回滚），按真实痛点决定，不预设顺序。
 
-**stage 内的 battle 拆分、命令列表、详细 DoD**：Stage 2 见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) D（结论已定的 6 battle 顺序）；其余 stage 的 battle 拆分待对应 stage 启动前在 OPEN_DECISIONS 同步落定，下次集中重写时归 `STAGE_PLAN.md`（目前不急）。7 轮架构迭代过程的详细辩论记录见 [archive/EFFECT_FIRST_STAGE_PLAN_V2.md](archive/EFFECT_FIRST_STAGE_PLAN_V2.md)（已冻结作历史）。
+**stage 内的 battle 拆分、命令列表、详细 DoD**：Stage 2 见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) D（结论已定的 6 battle 顺序）；Stage 4 见 F；Stage 5 见 G；其余 stage 的 battle 拆分待对应 stage 启动前在 OPEN_DECISIONS 同步落定，下次集中重写时归 `STAGE_PLAN.md`（目前不急）。7 轮架构迭代过程的详细辩论记录见 [archive/EFFECT_FIRST_STAGE_PLAN_V2.md](archive/EFFECT_FIRST_STAGE_PLAN_V2.md)（已冻结作历史）。
 
 ## 5. 与 Claude Code 参考的边界
 
@@ -636,8 +649,8 @@ Claude Code 是 LLM-native coding harness，agent-os 是 Agno-based business age
 - compact 流水线（`compactConversation` / `buildPostCompactMessages` / `createCompactBoundaryMessage`）。
 - tool result lifecycle（`maybePersistLargeToolResult` / `<persisted-output>` / `enforceToolResultBudget`）。
 - context diagnostics 与 budget guard。
-- subagent context sandbox（`createSubagentContext`，仅 Stage 7+）。
-- hook lifecycle（`PreCompact` / `PostCompact` / `SessionStart` / `Stop`，仅 Stage 7+）。
+- subagent context sandbox（`createSubagentContext`，仅 Stage 8+）。
+- hook lifecycle（`PreCompact` / `PostCompact` / `SessionStart` / `Stop`，仅 Stage 8+）。
 
 **不照搬**：coding 外壳、IDE 形态、企业平台能力、IDE 集成。
 
@@ -656,24 +669,49 @@ Claude Code 是 LLM-native coding harness，agent-os 是 Agno-based business age
 
 > 本文是经过 7 轮迭代、25+ 个挑刺仍屹立的核心。**它的稳定性本身是项目质量信号**——一份月度变化超过 10% 的架构总纲，本身就说明它从未真正稳定过。
 
-**架构层修订规则（强制）**：
+**架构层修订规则（强制，3 级门槛）**：
 
-1. **架构层修订仅当伴随 PoC 代码或 GC 失败 trace** 才动。来自任何审计角色（包括 LLM）的口头挑刺，**默认不触发本文修订**。
-2. **路线层修订（第 4 节）**：可月度调整 stage 顺序与 stage 一句话承诺，但 4 视图 + 不变量 + 关键工程规则仍要求 PoC 证据。
-3. **新出现的待决策项**：先入 [OPEN_DECISIONS.md](OPEN_DECISIONS.md)，等回答清晰后再考虑沉淀到本文。
-4. **不再开"逐条评估 LLM 哲学挑刺"的循环**——这是早期陷入的反模式（GPT 总能挖出下一层问题，LLM 挑刺没有自然终点）。代码与 GC 是收敛唯一来源。
-5. **改名 / 措辞修正不算架构修订**——可直接落，不走 PoC 门槛。
+修订门槛分 **Level 0 / Level 1 / Level 2** 三级，按变更性质对号入座，不可降级使用。
 
-**豁免类目（不需要 PoC 门槛，可直接落）**：
+### Level 0：0 修订（默认）
 
-- **自完备性补丁**：措辞清晰化、归属规则明文化、视图缺失补足、字段层级拆分等。这类修订是稳定层应有的精度提升，不是被挑刺牵着走。
-- **判别准则**：补丁内容必须是"语义已清楚但漏写"——即作者大脑里语义确定，只是文档没写到。如果补丁内容本身仍在辩论 / 选择 / 探索，归 [OPEN_DECISIONS.md](OPEN_DECISIONS.md)，不动总纲。
+- 来自任何审计角色（包括 LLM）的口头挑刺，**默认不触发本文修订**。
+- 改名 / 措辞修正 / typo / 链接修正等"非语义变更"——可直接落、不走任何门槛。
+- **不再开"逐条评估 LLM 哲学挑刺"的循环**——这是早期陷入的反模式（GPT 总能挖出下一层问题，LLM 挑刺没有自然终点）。代码与 GC 是收敛唯一来源。
+
+### Level 1：自完备性补丁（不需 PoC 门槛，可直接落）
+
+- **范围**：措辞清晰化、归属规则明文化、视图缺失补足、字段层级拆分、读者跳转链路修正、stage 进度同步等"语义已清楚但漏写"的精度提升。
+- **判别准则**：补丁内容必须是"语义已清楚但漏写"——即作者大脑里语义确定，只是文档没写到；补丁后正文规则 / 4 视图 / 不变量 / stage 承诺正文 / 反模式结论 0 改动。
 - **判别反例**：
-  - "要不要新增一个 Orchestrator 模块"——是架构选择，归 PoC 验证。
-  - "task ⊃ session 1:N 关系下 summary 归属"——语义已清楚（per-session 持有，task 只投影），漏写而已，属豁免。
+  - "要不要新增一个 Orchestrator 模块"——是架构选择，归 Level 2。
+  - "task ⊃ session 1:N 关系下 summary 归属"——语义已清楚（per-session 持有，task 只投影），漏写而已，属 Level 1。
 - **目的**：防止冻结规则**自我实现**地阻挡正常文档完善——LLM 挑刺是噪音源，但 LLM 挑刺命中的"表述空洞"本身仍是文档缺陷，应直接补足。
+- **典型案例**：Phase 7 stage 2 / 3 实测回填、Phase 8 Stage 4 启动前 F 章节同步引用、Phase 8 同日补丁元数据修正、Stage 4 全 battle 收口实测无回填备查——均为 Level 1。
 
-**当前节奏**：Stage 4 已 done @ 2026-04-30（详见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) F1 / [CHANGELOG.md](CHANGELOG.md) `### Stage 4`），**下一个动作是 Stage 5 启动前 Phase**（First Skill SOTA Loop——voice pack 字段消费 + ER `start_resumed_session` 真实 agno spin up + 第一个 `business_writing` skill 实现），与 Phase 8 / F 章节同模式：Stage 5 启动前再回到 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A 类做最终签名校准与启动前确认章节，不是直接开 Stage 5 代码 PR。剩余 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) 中的 A2/A3/A6/A7/A8/B1 等工程验证项与产品边界项继续由 Stage 5+ 真实代码 PR 与 GC trace 自然回答。
+### Level 2：架构演进修订（4 项硬条件 + 修订记录强制 4 字段格式）
+
+- **触发条件**：4 视图 / 不变量 / 工程规则 / stage 承诺正文 / 反模式结论中**至少有 1 处发生语义级变更**（删除 / 增加 / 替换条款），不属"漏写补足"范畴。
+- **4 项硬条件**：
+  1. **必须伴随 PoC 代码或 GC 失败 trace 或推翻原结论的硬证据**（用户提出的"未来场景已实际出现"也属硬证据，不局限于代码 / trace）。
+  2. **必须先在 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) 收口决策**（新增 A / B 类决策项 + 用户审阅确认），方可启动 ARCH 主干修订。
+  3. **修订记录必须使用 4 字段强制格式**（详见下方）。
+  4. **修订完成后，本次修订的核心条款不允许通过 Level 1 自完备性补丁回退**——若必须回退，需重新启动 Level 2 Phase 并提交新一轮 4 字段证据。
+- **修订记录 4 字段强制格式**（缺一不可）：
+  - **触发证据**：明文记录推翻原结论的硬证据（代码 / trace / 用户场景 / 推翻原拒绝论据的事实），不接受"为了完美"等抽象理由。
+  - **拒绝清单**：明文记录所有候选方案 + 拒绝理由，避免后续重复讨论；典型如"方案 A / B / C / Z / X / 路径 1-N 的拒绝理由"。
+  - **影响域评估**：列出本次修订涉及的 ARCH 主干修订处数 + OPEN_DECISIONS 新增条数 + 代码 + 测试 + GC_SPEC + CHANGELOG 同步项。
+  - **不可回溯性声明**：明文声明本修订引入的核心条款的不可回溯属性 + 后续如何再修订的路径。
+- **典型案例**：Phase 9（首个 Level 2 案例，引入本机制）——删除 Layer 2 `business_writing_pack` + Stage 路线 5/6/7/8+ 重拆 + 反模式抗体新增 2 条 + §0.4 SOTA 条款新增 + §397 invariant 拆分 + §6 本身升 3 级。详见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) Phase 9 修订记录。
+
+### 三级门槛的关系与边界
+
+- **不可降级**：Level 2 范畴的变更**严禁降级**为 Level 1 推进；若不确定属哪一级，按高级别走（宁可过度严谨）。
+- **新出现的待决策项**：先入 [OPEN_DECISIONS.md](OPEN_DECISIONS.md)，等回答清晰后再考虑是否触发 Level 2 ARCH 修订（多数情况下停在 OPEN_DECISIONS）。
+- **路线层修订（第 4 节）小调整**：stage 一句话承诺微调 + battle 排序追加 / 调整等属 Level 1；stage 重新编号 / 重新拆分 / mermaid 图重绘等属 Level 2（Phase 9 即此例）。
+- **修订记录是稳定层一部分**：Level 1 / Level 2 修订完成后，本节末尾"修订记录"区**必须**追加对应条目（Level 1 简记 1-2 行；Level 2 强制 4 字段）。
+
+**当前节奏**：Phase 9（Level 2 架构演进修订）已完成 — Layer 2 `business_writing_pack` 删除 / Stage 路线 5/6/7/8+ 重拆 / SR 平等承载抗体落地 / §6 升 3 级门槛已 commit + push（详见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) Phase 9 修订记录 + [CHANGELOG.md](CHANGELOG.md) `### 文档`）。**下一个动作是 Stage 5 (SR Framework v0) Battle 1 代码 PR**，启动前所需决策已全部固化在 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) G 章节，无需再做启动前 Phase。剩余 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) 中的 A2 / A3 / A6 / A7 / A8 / A9 / A10 / B1 / B6 / B7 等工程验证项与产品边界项继续由 Stage 5 / 6 / 7 真实代码 PR 与 GC trace 自然回答。
 
 **实现级口径（不走架构修订门槛）**：本文中出现的工程细节——CoW 事务边界、digest 异步化策略、SR→CTE schema fragment 接口签名、Turn/Task Loop Safepoint 协议、`pinned_refs` / `originating_session_id` / `compact_pending` 等字段——是**机制级契约**，**不是不可变的 API 签名**。具体字段名、接口签名、阈值参数等通过 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A 类闭环（PR + GC trace 回答）自然微调，不触发本文修订门槛；本文只为"机制是否存在 + 该机制的语义边界"负责。
 
@@ -697,3 +735,12 @@ Claude Code 是 LLM-native coding harness，agent-os 是 Agno-based business age
 - **2026-04-29（同日，Phase 8 收口同步：Stage 4 启动前 OPEN_DECISIONS F 章节落地）**：Stage 4 启动前的 5 battle 排序、A4-ii / A5 / B5.c / H5 / S3 决策摘要、暂缓项已固化在 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) F；本文 §4 Stage 4 一句话承诺末尾追加 F 引用（与 §609 Stage 2 末尾 D 引用同构，属视图缺失补足型自完备性补丁）。**主干 0 修订**——4 视图 / 不变量 / stage 承诺正文 / 反模式结论 0 改动；A4-ii Phase 8 落地修正版（扩展现有 `sessions` 表 +2 列、`task_id` / `last_active_at` / `is_main` 复用现有字段不新增）兑现 §1.4 task_table 5 字段不变承诺。
 - **2026-04-29（同日，Phase 8 同日补丁：元数据自完备性补足）**：本文顶部第 5 行 / 第 7 行元数据说明同步——line 5 加 Stage 4 (F) 排序引用、把 "GC 字段级断言将在写第一条 GC 时建 GC_SPEC.md" 过期将来时措辞改为 "见 GC_SPEC.md（Stage 2 GC1-3 + Stage 3 GC4-5 已落地）"；line 7 OPEN_DECISIONS 内容枚举补 "Stage 3 执行状态 + Stage 4 Battle 排序"。**主干 0 修订**——属"读者第一跳元数据指引"修正，正文规则 0 改动；与 Phase 8 收口同步配套，避免 ARCH 顶部读者跳转链路过期。
 - **2026-04-30（Stage 4 全 battle 收口：实测无回填备查）**：Stage 4 5/5 battle 已 done @ 2026-04-30 并 push（commits `c53ad7f` / `6c2b94c` / `fc1d240` / `a98424d` / `4a0cf90`）。按 Phase 7 同模式做实测核查，结论：**ARCH 主干 0 修订、0 处需要回填**——§1.3 `originating_session_id` / `cow_from` / digest 异步化 + CoW 事务原子性、§1.4 task_table 5 字段不变 + tail history 纯文本投影、§3.2 `pinned_refs` system-state + Layer 2/3 size 约束、§3.3 resume 装配降级链 `full → digest+tail_n` + voice_pack/pinned_refs inline 规则、§3.5 GC 分级（[GC_SPEC.md](GC_SPEC.md) 已追加 GC6-8 + Trace 3-5）等机制描述与字段名均与 Stage 4 实测代码完全一致；A5 ER `start_resumed_session` 入口 v0 不实现的范围裁剪（推到 Stage 5 真实 voice_pack 时一起落）已在 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A5 段 "Stage 4 v0 落地备注" 与 F2 同日修订记录中明文，不触发 ARCH 修订。当前节奏：**下一个动作是 Stage 5 启动前 Phase（First Skill SOTA Loop）**——Stage 5 启动前再回到 OPEN_DECISIONS A 类决策做最终签名校准与启动前确认章节（与 Phase 8 / F 章节同模式）。
+- **2026-04-30（Phase 9 — Stage 5 启动前 SR 抽象重构 / Level 2 架构演进修订，本文首个 Level 2 案例）**：本条按 §6 升级后的 **Level 2 强制 4 字段格式**记录：
+
+  - **触发证据**：用户在 Stage 4 收口、Stage 5 启动前 Phase 启动时提出 4 项深度架构疑虑——① Stage 5 重点 `SR.business_writing` 是否会将 agent-os 固化成"专门兼容写文案 skill 的 OS"，未来扩展数据分析 / 商业策划 / 编程辅助等异类 skill 时被卡死？② 即使是示例，placeholder 实现也会损害 SOTA 度。③ SR 字段制定缺失明文规则（brand_voice / audience 标签分类是否合理；商业策划 vs 商业文案是否同一 SR；SR 字段越多越好还是越少越好）。④ 当前 Stage 方案合理性受质疑——业务字段固化与基础设施抽象耦合过深。上述 4 项**推翻** §3.2 / §3.6 之前拒绝 `shared_skill_context` 改名时的论据"污染场景不存在"——污染场景已实际出现（异类 skill 候选清单 = 商业文案 / 商业策划 / 数据分析 / 编程辅助）。
+
+  - **拒绝清单**：① **方案 A（5a / 5b 拆分，命名混淆拒绝）**——保持 Stage 5 编号、内部拆 5a 基建 + 5b 业务，子号命名违反 stage 路线清晰化原则、进度状态难追踪。② **方案 C（Stage 5 / 6 合并，范围拥堵拒绝）**——把 SR 框架 + Memory candidate 揉进同一 stage，5 battle ≠ 10 battle、Memory candidate 需独立 GC 升级路径。③ **方案 Z（保留 `business_writing_pack` 命名 + 加边界注释，命名偏向不接受）**——schema 字段名本身即是 invariant 一部分（GC 字段级断言会引用字段名），注释无法消除结构性偏向。④ **方案 X（保留 Layer 2 + 通用化重命名为 `shared_skill_context`，跨 skill 共享需 schema 层会污染 core 拒绝）**——artifact ref 路径已成熟更优；schema 共享层违反 §0.4 第二条 core 通用层硬约束。⑤ **路径 2（共享字段升 core，违反 core 通用层硬约束拒绝）**——core 层任何业务字段加入即破坏 SR 平等性。
+
+  - **影响域评估**：**ARCH 主干修订 9 处**——§6 升 3 级门槛（Level 0/1/2 + Level 2 强制 4 字段）/ §3.2 删 Layer 2 + 改两层 schema + 加 SR 平等承载段 / §3.6 加 2 条新反模式抗体（"未做先猜业务字段" + "跨 skill schema 字段共享"）/ §4 stage 路线 5/6/7/8+ 重拆（mermaid 重绘 + 5/6/7 一句话承诺重写）/ §1.1 ER 模块加 `start_resumed_session(prompt, session_meta) -> SessionId` 入口签名 / §397 invariant 拆分（Memory candidate Stage 6 起 + Voice Runtime Stage 7 起解耦）/ §0.4 哲学锚点新增 SOTA 平等承载条款 / 全文 stage 编号批量替换（Stage 7+ → Stage 8+ 5 处；业务相关 Stage 5 → Stage 7 5 处）/ §3.5 GC 累积强化表 "Stage 5 验证时" → "Stage 7 验证时" + 新增 Stage 5/6 工程 SOTA vs Stage 7 业务 SOTA 区分段。**[OPEN_DECISIONS.md](OPEN_DECISIONS.md) 5 条新增**——A9（SR 字段判别准则框架）/ A10（建模派系选择推到 Stage 7）/ B6（SR 切分规则）/ B7（第一个 skill 选择推到 Stage 7）/ B1 重打开备注 + 新增 G 章节（Stage 5 5 battle 排序）。**代码 + 测试同步迁移**：[compact.py](../src/agent_os/agent/compact.py) Schema v1 → v2（删 `business_writing_pack` + bump version + prompt 同步）+ 一次性数据迁移脚本 `scripts/migrate_compact_v1_to_v2.py` + 测试更新 + [GC_SPEC.md](GC_SPEC.md) GC4 / GC5 措辞更新。**[CHANGELOG.md](CHANGELOG.md)**：新增 `### 文档` Phase 9 bullet。
+
+  - **不可回溯性声明**：① 本修订所引入的"SR 框架对所有 skill family 平等承载"（§0.4 / §3.2 / §3.6）在 Stage 7 第一次真实 skill 接入并验证后，**不允许通过 Level 1 自完备性补丁回退**——若必须修订，需重新启动 Level 2 Phase 并提交新一轮 4 字段证据。② 本修订所引入的 Stage 路线 5/6/7/8+ 编号在 Stage 5 启动后**不允许再次重编号**（保留编号视图稳定性）；如 Stage 5 内部需调整 battle 顺序，走 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) G 章节追加修订记录而非 ARCH 主干修订。③ "未做先猜业务字段"反模式抗体（§3.6）即 Stage 5 / 6 不得预先固化任何具体业务字段——Stage 5 / 6 PR 触碰即返工，无回退路径。
