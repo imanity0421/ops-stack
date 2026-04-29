@@ -25,6 +25,12 @@
 | GC7：分支对照隔离 | 从主线 session 执行 `/task branch` 后，分支继续 compact 为另一组 artifact refs | branch session `parent_session_id == source_session_id` 且 `branch_role == "branch"`；`tasks.current_main_session_id` 不变；main 与 branch 的 `CompactSummary.core.current_artifact_refs` 分别保留各自 refs，互不污染 |
 | GC8：短 session 提前 resume 走 connect 路径 | recent + under budget 的短 session 执行 `/task resume`，并将 resume payload 注入 `/context` | `resume_diagnostics.connect_or_fork == "connect"`；`source_session_id == target_session_id`；`decision_reason == ["recent_session_under_budget"]`；tail history 纯文本投影可见；`/context` JSON / Markdown 均显示 `resume_diagnostics` |
 
+## Stage 5 GC-SR Framework
+
+| GC | 输入 | Stage 5 字段级断言（一行口径） |
+| --- | --- | --- |
+| GC9：SR framework mock skill 端到端闭环 | MockSkillA fragment=`{a1,a2,a3}` 与 MockSkillB fragment=`{b1,b2}`，覆盖注册、resume/branch 装配、ER spin up、缺 fragment fallback、跨 task artifact ref 共享 | `compose_compact_summary_schema(MockSkillAState)` schema 出现 `a1/a2/a3`；`compose_compact_summary_schema(MockSkillBState)` schema 出现 `b1/b2`；resume/branch payload 中 `active_skill_id` 分别为 mock skill id 且 `skill_fragment_skipped=false`；fake ER 返回 `runtime_status=ok`；缺 fragment fallback 输出 `skill_fragment_skipped=true` 与 `skill_fragment_skip_reason`；跨 skill 共享只通过 `current_artifact_refs` / `artifact_id` 恢复 artifact 内容，不共享 A/B schema 字段 |
+
 ## Baseline Trace 口径
 
 Stage 2 Battle 6 与 Stage 4 Battle 5 分别补跑最小 observed baseline，用于确认 artifact trace / context integration / resume recovery 的字段可见性；下表数值用于回溯当次实现，不作为永久阈值：
@@ -36,10 +42,14 @@ Stage 2 Battle 6 与 Stage 4 Battle 5 分别补跑最小 observed baseline，用
 | Trace 3：隔天 resume fork 恢复 | 已 compact 主线 session 在 `now + 31min` 后 resume，compact 后追加 1 条 tail，携带 artifact ref | `connect_or_fork=fork`；`decision_reason=["session_not_recent"]`；`tail_message_count=1`；`current_artifact_ref_count=1`；`voice_pack_skipped=true`；`final_state.compact_summary != null` |
 | Trace 4：分支对照隔离 | `/task branch` 生成 branch session 后，main 与 branch 分别 compact 为 `artifact_main` / `artifact_branch` | branch `parent_session_id=s1`；`branch_role=branch`；`current_main_session_id=s1`；main refs=`["artifact_main"]`；branch refs=`["artifact_branch"]` |
 | Trace 5：短 session connect + `/context` | recent 短 session resume 走 connect，并把 `task resume --json` payload 传入 `context-diagnose --resume-diagnostics-json` | `connect_or_fork=connect`；`source_session_id == target_session_id`；`decision_reason=["recent_session_under_budget"]`；`/context` JSON 含 `resume_diagnostics`；Markdown 含 `Resume Diagnostics` |
+| Trace 6：SR fragment 合成 + ER spin up | MockSkillA 与 MockSkillB 分别注册不同 fragment，resume/branch 路径使用 fake ER starter | MockSkillA schema 含 `a1/a2/a3`；MockSkillB schema 含 `b1/b2`；resume diagnostics `active_skill_id=mock_skill_a` 且 `skill_fragment_skipped=false`；branch diagnostics `active_skill_id=mock_skill_b` 且 `skill_fragment_skipped=false`；fake ER 调用顺序为 `mock_skill_a -> mock_skill_b` |
+| Trace 7：缺 fragment fallback `/context` 可见 | active skill 无 provider 或 provider 返回 None，并将 resume payload 注入 `context-diagnose --resume-diagnostics-json` | `skill_fragment_skipped=true`；`skill_fragment_skip_reason in {"provider_missing","fragment_missing","no_active_skill_id"}`；`/context` JSON 含 `resume_diagnostics.skill_fragment_skip_reason`；Markdown 含 `skill_fragment_skipped` 与 `skill_fragment_skip_reason` |
+| Trace 8：跨 skill artifact ref 共享 | MockSkillA task 产出 `out_a.md` artifact，MockSkillB 另一个 task 将该 `artifact_id` 写入 `CompactSummary.core.current_artifact_refs` 后 resume | MockSkillB diagnostics `active_skill_id=mock_skill_b`；`current_artifact_ref_count=1`；`deliverable_inline_level=full`；resume prompt 含 `artifact_id` 与 artifact 内容；prompt 不含跨 skill schema 字段共享（不出现 `"a1"` / `"b1"` schema 字段 key） |
 
 回归验证命令：
 
 - `python -m pytest tests/core/test_task_memory.py tests/core/test_context_builder.py tests/core/test_cli.py tests/core/test_context_diagnostics.py tests/core/test_tool_result_artifactization.py tests/core/test_source_artifactization.py tests/core/test_artifact_store.py`
+- `python -m pytest tests/core/test_task_memory.py tests/core/test_cli.py tests/core/test_context_diagnostics.py`
 - `python -m ruff check src tests`
 
 真实长任务 baseline 暂不固化为数据集；Stage 3 compact 落地后再把 GC1-3 与 compact schema 断言串成跨 stage case。

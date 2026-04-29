@@ -8,6 +8,12 @@
 
 ### Stage 5
 
+- **Battle 5：GC9 字段级断言 + baseline trace**（2026-04-30，done-local）
+  - [GC_SPEC.md](GC_SPEC.md) 新增 Stage 5 GC-SR Framework 的 GC9，覆盖 mock skill fragment 合成、ER spin up、缺 fragment fallback 与跨 skill artifact ref 共享。
+  - Baseline Trace 追加 Trace 6-8：SR fragment 合成 + fake ER、缺 fragment fallback `/context` 可见性、MockSkillA → MockSkillB 跨 task artifact ref 共享。
+  - 将 Battle 4 mock e2e 测试命名并强化为 GC9 Trace 6 / Trace 8 代码锚点；`context_diagnostics` fallback 测试对齐 Trace 7。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_cli.py tests/core/test_context_diagnostics.py`；`python -m ruff check src tests`。
+
 - **Battle 4：SR 平等性 + 跨 skill artifact 共享 invariant 工程验证**（2026-04-30，commit `15b37ca`）
   - `branch_task` 的 resume final-state 合成路径支持透传 mock skill schema registry，确保 branch / resume 端到端诊断能看到 active skill fragment。
   - 用 `MockSkillA` / `MockSkillB` 异类字段集验证注册 → resume/branch 装配 → fake ER spin up 的平等路径，两个 skill 均不触发 fragment skipped。

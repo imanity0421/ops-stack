@@ -91,7 +91,7 @@ def test_context_diagnostics_budget_guard_flags_large_current_message() -> None:
     assert any("Current user message dominates" in item for item in guard["recommendations"])
 
 
-def test_context_diagnostics_normalizes_skill_fragment_fallback() -> None:
+def test_gc9_trace7_context_diagnostics_normalizes_skill_fragment_fallback() -> None:
     builder = ContextBuilder(
         timezone_name="Asia/Shanghai",
         history_max_messages=0,

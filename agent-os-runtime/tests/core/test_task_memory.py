@@ -582,7 +582,7 @@ def test_branch_task_starts_runtime_after_branch_session_creation(tmp_path: Path
     assert diagnostics["skill_fragment_skip_reason"] == "provider_missing"
 
 
-def test_stage5_battle4_mock_skills_reach_resume_and_branch_runtime(tmp_path: Path) -> None:
+def test_gc9_trace6_mock_skills_reach_resume_and_branch_runtime(tmp_path: Path) -> None:
     class MockSkillAState(BaseModel):
         a1: str
         a2: int = 0
@@ -633,10 +633,14 @@ def test_stage5_battle4_mock_skills_reach_resume_and_branch_runtime(tmp_path: Pa
     )
 
     assert resume_result.status == "ok"
+    assert resume_result.runtime_session is not None
+    assert resume_result.runtime_session.status == "ok"
     resume_diag = resume_result.to_dict()["resume_diagnostics"]
     assert resume_diag["active_skill_id"] == "mock_skill_a"
     assert resume_diag["skill_fragment_skipped"] is False
     assert branch_result.status == "ok"
+    assert branch_result.runtime_session is not None
+    assert branch_result.runtime_session.status == "ok"
     branch_diag = branch_result.to_dict()["resume_diagnostics"]
     assert branch_diag["active_skill_id"] == "mock_skill_b"
     assert branch_diag["skill_fragment_skipped"] is False
@@ -644,7 +648,7 @@ def test_stage5_battle4_mock_skills_reach_resume_and_branch_runtime(tmp_path: Pa
     assert all("<task_resume" in prompt for prompt, _meta in calls)
 
 
-def test_stage5_battle4_cross_skill_artifact_ref_shared_without_schema_coupling(
+def test_gc9_trace8_cross_skill_artifact_ref_shared_without_schema_coupling(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -724,16 +728,19 @@ def test_stage5_battle4_cross_skill_artifact_ref_shared_without_schema_coupling(
     assert task_a.task_id != task_b.task_id
     assert artifact.task_id == task_a.task_id
     assert result.status == "ok"
+    assert payload["runtime_status"] == "ok"
+    assert payload["runtime_session_id"] == "s-b-resumed"
     assert diagnostics["active_skill_id"] == "mock_skill_b"
     assert diagnostics["skill_fragment_skipped"] is False
     assert diagnostics["current_artifact_ref_count"] == 1
     assert diagnostics["deliverable_inline_level"] == "full"
+    assert payload["final_state"]["current_artifact_refs"] == [artifact.artifact_id]
     assert calls
     prompt = calls[0][0]
     assert artifact.artifact_id in prompt
     assert "shared artifact body for downstream mock skill" in prompt
-    assert "a1" not in prompt
-    assert "b1" not in prompt
+    assert '"a1"' not in prompt
+    assert '"b1"' not in prompt
 
 
 def test_skill_schema_provider_protocol_shape() -> None:
