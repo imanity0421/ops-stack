@@ -14,6 +14,7 @@ from agent_os.context_builder import (
     resolve_auto_retrieve_decision,
     should_auto_retrieve,
 )
+from agent_os.context_diagnostics import build_context_diagnostics
 from agent_os.knowledge.artifact_store import ArtifactStore
 
 
@@ -276,6 +277,9 @@ def test_context_builder_injects_artifact_refs_without_raw_content(tmp_path: Pat
     trace = bundle.trace.to_obs_log_line()
     assert "artifact_refs" in trace
     assert "refs=1" in trace
+    diagnostics = build_context_diagnostics(bundle)
+    assert diagnostics.artifact_diagnostics.artifact_ref_count == 1
+    assert diagnostics.artifact_diagnostics.artifact_chars > 0
 
 
 def test_artifact_context_ref_can_carry_explicit_purpose() -> None:
@@ -303,6 +307,36 @@ def test_artifact_context_ref_can_carry_explicit_purpose() -> None:
     )
 
     assert "当前交付物草稿" in bundle.message
+
+
+def test_context_diagnostics_counts_pending_artifact_refs() -> None:
+    builder = ContextBuilder(
+        timezone_name="Asia/Shanghai",
+        history_max_messages=0,
+        include_runtime_context=False,
+        enable_token_estimate=False,
+    )
+
+    bundle = builder.build_turn_message(
+        "请基于 artifact 继续优化",
+        entrypoint="cli",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        artifact_refs=[
+            ArtifactContextRef(
+                artifact_id="artifact_pending",
+                task_id="task_1",
+                digest="pending fallback digest",
+                digest_status="pending",
+            )
+        ],
+    )
+    diagnostics = build_context_diagnostics(bundle).to_dict()["artifact_diagnostics"]
+
+    assert diagnostics["artifact_ref_count"] == 1
+    assert diagnostics["pending_digest_count"] == 1
+    assert diagnostics["artifact_percent_of_prompt"] > 0
 
 
 def test_attention_anchor_squeezes_long_current_request_but_keeps_final_message() -> None:

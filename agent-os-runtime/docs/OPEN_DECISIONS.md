@@ -31,6 +31,8 @@
 
 **当前推荐**：参数驱动单函数 + GC_SPEC.md 表格化字段集——避免"五份近似断言文件"的复制粘贴维护代价。
 
+**Battle 6 收口备注（2026-04-29）**：Stage 2 已创建最小 [GC_SPEC.md](GC_SPEC.md)，先用 GC1-3 一行表格化断言固化 artifact trace / `/context` / lifecycle 的字段级口径。A1 的完整答案仍留到 Stage 3 第一条 compact GC 落地时补齐（届时再决定 `gc_assertion_level` 参数化断言函数的具体实现）。
+
 ### A2：Deliverable Lifecycle 字段定义归 Stage 2 还是 Stage 5
 
 **已知**：[ARCHITECTURE.md](ARCHITECTURE.md) 1.3 已定——版本控制（current / previous / final）是池 2 的字段语义，归 MA；业务消费（如 `/skill deliverable promote`）归 SR。1.4 已预留 `/artifact finalize <id>` 命令名（Stage 5 实现）。
@@ -46,6 +48,8 @@
 
 **当前推荐**：Stage 2 预留 subkind 开放 string + `previous_subkind_history` 列；Stage 5 接业务命令——`final_at` 必加、`final_session_id` 必加、`final_by` 可选；`finalize` 后 artifact 强制只读直到 `/artifact unfinalize`；单 task 默认允许多 final（用户场景常见"主方案 + 配套素材"）。
 
+**Battle 6 收口备注（2026-04-29）**：经 Stage 2 Battle 2-4 实现复核，当前 ArtifactStore 未预留 `subkind` / `previous_subkind_history` DB 字段；只在 prompt replacement 层使用 `kind="tool_result" | "source" | "deliverable"`，并用 `stable_key` 保证重复内容复用。结论：不回补 Stage 2 schema；Stage 5 `/artifact finalize` 落地时再通过迁移引入开放 string `subkind` 与 final 相关审计字段。
+
 ### A3：池 2 召回不物理隔离的具体权重 / 阈值
 
 **已知**：[ARCHITECTURE.md](ARCHITECTURE.md) 1.3 已定多级隔离规则——branch session 默认互不召回（仅当前 session 及祖先链）、跨 task 召回必带 prompt 装配层硬隔离标签（`<artifact ref task_id=... cross_task=true>` + 风险提示文本）、archived 默认排除。chunk lazy 建立时机也已上提到总纲。
@@ -59,6 +63,8 @@
 **回答方式**：Stage 2 上线 artifact registry 后跑 5-10 个 business_writing 真实 case，看跨 task 命中是否真有用；Stage 4 resume 跑通后做 A/B 对比（含 / 不含风险提示文本对 LLM 数字锚定的抑制效果）。
 
 **当前推荐**：默认仅当前 task；显式 flag 跨 task；权重系数 0.6 起步；archived 默认排除；风险提示文本英文模板优先（LLM 训练语料分布偏向英文指令）。
+
+**Battle 6 路径决策（2026-04-29）**：Battle 6 选择最小路径，只统计已进入 prompt / trace 的 artifact ref 与 artifactized signal，不主动查 ArtifactStore、不实现跨 task artifact 召回、不决策跨 task 权重公式。A3 的召回权重 / flag / 风险提示文本仍留到 Stage 4 resume 与真实 cross-task case 后回答。
 
 ### A4：task_table 是否真的够 5 字段
 
@@ -208,6 +214,8 @@
 
 **当前推荐**：B4.a 可加（轻量、用户主动填），其余全部不做。
 
+**B4.a 已落地（2026-04-29）**：Battle 1 实际实现与 [ARCHITECTURE.md](ARCHITECTURE.md) 1.4 保持一致，`tasks` 表和 `TaskEntity` 均为 5 字段：`task_id` / `name` / `status` / `created_at` / `current_main_session_id`。Stage 2 不增加 `tag`；若真实 task 列表出现分类痛点，再作为增量字段重新打开。
+
 ### B5：断线重连 vs 跨天恢复的命令分离
 
 **背景**：[ARCHITECTURE.md](ARCHITECTURE.md) 1.4 当前 `/task resume` 总是开新 session（强制 fork）。但实际场景里"短暂断线（倒杯水 / WebSocket 断开 5 分钟）"和"跨天恢复（关电脑明天再来）"是两种语义：
@@ -275,7 +283,7 @@
 | 3 | **Tool Result Artifactization** | done @ 2026-04-29 (commit `e5000cd`) | 长 tool result 自动外置为 artifact、`<artifact ref>` 替代原文进 history、prompt budget 内只保留摘要 + ref | Battle 2 |
 | 4 | **Long Source Artifactization** | done @ 2026-04-29 (commit `2e24307`) | 用户上传长文档 / agent 产出长文本自动 artifact 化、原文层 SQLite 写入 + 异步 digest 生成 | Battle 2 |
 | 5 | **Artifact Lifecycle Commands** | done @ 2026-04-29 (commit `3241da8`) | `/artifact list` / `/artifact show` / `/artifact archive` / `/blob gc --orphan` 只列不删、archive 软删除 | Battle 2-4 |
-| 6 | **Trace + `/artifact` + `/context` Integration** | todo | trace 字段持续记录 artifact 引用、`/context` 显示 artifact 占比、artifact 召回作 trace 归因 | Battle 5 |
+| 6 | **Trace + `/artifact` + `/context` Integration** | done-local @ 2026-04-29 (pytest + ruff passed, commit pending) | trace 字段持续记录 artifact 引用、`/context` 显示 artifact 占比、artifact 召回作 trace 归因 | Battle 5 |
 
 **D1 Status 维护规则**：
 
@@ -305,8 +313,8 @@
 ### D4：暂缓但不可遗忘的研发管理项
 
 - **PR template**：暂缓创建 `.github/PULL_REQUEST_TEMPLATE.md`。若开始频繁通过 PR 串行交接，或出现 Reference Check / 测试命令 / D1 Status / CHANGELOG 漏填，再创建模板；模板应包含 Battle / Scope、Claude Code Reference Check、Test Plan、CHANGELOG / D1 Status checklist。
-- **GC_SPEC.md**：暂缓创建 `docs/GC_SPEC.md` 空骨架。第一条真正 Golden Case 落地时创建；预计最晚在 Battle 6（Trace + `/artifact` + `/context` Integration）前补齐，承载字段级断言与 Stage 断言强度矩阵。
-- **Stage 2 baseline trace**：暂缓执行 baseline capture。进入 Battle 6 收口前，补跑 1-2 个真实长任务用例，记录 Stage 1/Stage 2 对照的 context 长度、预算占用、artifact/tool result 相关 trace；记录位置优先放入 `docs/GC_SPEC.md` 或测试 fixture / benchmark 记录，不写入 [CHANGELOG.md](CHANGELOG.md)。
+- **GC_SPEC.md**：已在 Battle 6 创建最小 [GC_SPEC.md](GC_SPEC.md)，承载 Stage 2 artifact trace / `/context` / lifecycle 的 GC1-3 字段级断言骨架；Stage 3 compact GC 再扩展断言强度矩阵。
+- **Stage 2 baseline trace**：已在 Battle 6 收口补跑 2 个 artifact diagnostics baseline（长 tool result artifactization、pending artifact ref `/context`），记录在 [GC_SPEC.md](GC_SPEC.md)；不写入 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 

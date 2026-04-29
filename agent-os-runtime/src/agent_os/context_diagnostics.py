@@ -11,6 +11,8 @@ _CURRENT_USER_RE = re.compile(
     r"<current_user_message>\s*(?P<body>.*?)\s*</current_user_message>",
     flags=re.DOTALL,
 )
+_ARTIFACT_TAG_RE = re.compile(r"<artifact\b[^>]*>.*?</artifact>", flags=re.DOTALL)
+_DIGEST_PENDING_RE = re.compile(r"\bdigest_status\s*=\s*['\"]pending['\"]", flags=re.IGNORECASE)
 _ESTIMATED_TOKENS_RE = re.compile(r"(?:^|,)estimated_tokens=(?P<value>\d+)")
 _MAX_TOTAL_RE = re.compile(r"(?:^|,)max_total=(?P<value>\d+)")
 
@@ -85,6 +87,28 @@ class ContextBudgetGuard:
 
 
 @dataclass(frozen=True)
+class ArtifactDiagnostics:
+    artifact_ref_count: int
+    pending_digest_count: int
+    artifact_chars: int
+    artifact_percent_of_prompt: float
+    tool_result_artifactized_count: int
+    source_artifactized_count: int
+    current_user_source_artifactized: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact_ref_count": self.artifact_ref_count,
+            "pending_digest_count": self.pending_digest_count,
+            "artifact_chars": self.artifact_chars,
+            "artifact_percent_of_prompt": round(self.artifact_percent_of_prompt, 4),
+            "tool_result_artifactized_count": self.tool_result_artifactized_count,
+            "source_artifactized_count": self.source_artifactized_count,
+            "current_user_source_artifactized": self.current_user_source_artifactized,
+        }
+
+
+@dataclass(frozen=True)
 class ContextDiagnostics:
     total_chars: int
     injected_chars: int
@@ -92,6 +116,7 @@ class ContextDiagnostics:
     max_total_chars: int | None
     budget_status: str
     budget_guard: ContextBudgetGuard
+    artifact_diagnostics: ArtifactDiagnostics
     blocks: list[ContextBlockDiagnostic] = field(default_factory=list)
     signals: list[ContextBlockDiagnostic] = field(default_factory=list)
 
@@ -103,6 +128,7 @@ class ContextDiagnostics:
             "max_total_chars": self.max_total_chars,
             "budget_status": self.budget_status,
             "budget_guard": self.budget_guard.to_dict(),
+            "artifact_diagnostics": self.artifact_diagnostics.to_dict(),
             "blocks": [b.to_dict() for b in self.blocks],
             "signals": [b.to_dict() for b in self.signals],
         }
@@ -116,6 +142,16 @@ def _parse_int(pattern: re.Pattern[str], text: str) -> int | None:
         return int(match.group("value"))
     except (TypeError, ValueError):
         return None
+
+
+def _parse_note_int(note: str, key: str) -> int:
+    match = re.search(rf"(?:^|,){re.escape(key)}=(?P<value>\d+)", note or "")
+    if not match:
+        return 0
+    try:
+        return int(match.group("value"))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _current_user_chars(message: str) -> int:
@@ -134,6 +170,33 @@ def _diagnostic_from_block(block: ContextTraceBlock, *, total_chars: int) -> Con
         source=block.source,
         note=block.note,
         percent_of_prompt=pct,
+    )
+
+
+def _build_artifact_diagnostics(
+    *,
+    message: str,
+    trace_blocks: list[ContextTraceBlock],
+    total_chars: int,
+) -> ArtifactDiagnostics:
+    artifact_tags = _ARTIFACT_TAG_RE.findall(message or "")
+    artifact_chars = sum(len(tag) for tag in artifact_tags)
+    tool_artifactized = 0
+    source_artifactized = 0
+    current_source_artifactized = False
+    for block in trace_blocks:
+        tool_artifactized += _parse_note_int(block.note, "tool_artifactized")
+        source_artifactized += _parse_note_int(block.note, "source_artifactized")
+        if block.name == "current_user_source_artifact" and block.injected:
+            current_source_artifactized = True
+    return ArtifactDiagnostics(
+        artifact_ref_count=len(artifact_tags),
+        pending_digest_count=sum(1 for tag in artifact_tags if _DIGEST_PENDING_RE.search(tag)),
+        artifact_chars=artifact_chars,
+        artifact_percent_of_prompt=(artifact_chars / max(1, total_chars)) if artifact_chars else 0.0,
+        tool_result_artifactized_count=tool_artifactized,
+        source_artifactized_count=source_artifactized,
+        current_user_source_artifactized=current_source_artifactized,
     )
 
 
@@ -270,6 +333,11 @@ def build_context_diagnostics(bundle: ContextBundle) -> ContextDiagnostics:
         max_total_chars=max_total_chars,
         current_user_chars=current_user_chars,
     )
+    artifact_diagnostics = _build_artifact_diagnostics(
+        message=message,
+        trace_blocks=bundle.trace.blocks,
+        total_chars=total_chars,
+    )
     return ContextDiagnostics(
         total_chars=total_chars,
         injected_chars=injected_chars,
@@ -277,6 +345,7 @@ def build_context_diagnostics(bundle: ContextBundle) -> ContextDiagnostics:
         max_total_chars=max_total_chars,
         budget_status=budget_guard.status,
         budget_guard=budget_guard,
+        artifact_diagnostics=artifact_diagnostics,
         blocks=blocks,
         signals=signals,
     )
@@ -305,6 +374,22 @@ def format_context_diagnostics_markdown(diag: ContextDiagnostics) -> str:
             f"| `{block.name}` | {str(block.injected).lower()} | {block.chars} | "
             f"{pct} | `{block.source or '-'}` | {block.note or '-'} |"
         )
+    artifact = diag.artifact_diagnostics
+    lines.extend(
+        [
+            "",
+            "### Artifact Diagnostics",
+            "",
+            f"- artifact_ref_count: {artifact.artifact_ref_count}",
+            f"- pending_digest_count: {artifact.pending_digest_count}",
+            f"- artifact_chars: {artifact.artifact_chars}",
+            f"- artifact_percent_of_prompt: {artifact.artifact_percent_of_prompt * 100:.1f}%",
+            f"- tool_result_artifactized_count: {artifact.tool_result_artifactized_count}",
+            f"- source_artifactized_count: {artifact.source_artifactized_count}",
+            "- current_user_source_artifactized: "
+            f"{str(artifact.current_user_source_artifactized).lower()}",
+        ]
+    )
     if diag.signals:
         lines.extend(["", "### Signals", ""])
         for signal in diag.signals:

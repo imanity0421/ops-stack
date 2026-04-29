@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_os.context_builder import ContextBuilder, clean_history_messages_with_report
+from agent_os.context_diagnostics import build_context_diagnostics
 from agent_os.knowledge.artifact_store import ArtifactStore
 from agent_os.knowledge.source_artifactizer import SourceArtifactizer
 
@@ -118,6 +119,10 @@ def test_current_user_long_source_can_be_artifactized_in_prompt(tmp_path: Path) 
     assert 'kind="source"' in bundle.message
     assert "当前用户长素材不应完整进入 prompt " * 20 not in bundle.message
     assert "current_user_source_artifact" in bundle.trace.to_obs_log_line()
+    diagnostics = build_context_diagnostics(bundle).to_dict()["artifact_diagnostics"]
+    assert diagnostics["artifact_ref_count"] == 1
+    assert diagnostics["source_artifactized_count"] == 1
+    assert diagnostics["current_user_source_artifactized"] is True
 
 
 def test_same_source_reuses_existing_artifact(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ from agent_os.context_builder import (
     ContextBuilder,
     clean_history_messages_with_report,
 )
+from agent_os.context_diagnostics import build_context_diagnostics
 from agent_os.knowledge.artifact_store import ArtifactStore
 from agent_os.knowledge.tool_result_artifactizer import ToolResultArtifactizer
 
@@ -98,6 +99,10 @@ def test_context_builder_prompt_uses_artifact_ref_and_trace_count(tmp_path: Path
     assert 'kind="tool_result"' in bundle.message
     assert "召回正文不应回灌 " * 20 not in bundle.message
     assert "tool_artifactized=1" in bundle.trace.to_obs_log_line()
+    diagnostics = build_context_diagnostics(bundle).to_dict()["artifact_diagnostics"]
+    assert diagnostics["artifact_ref_count"] == 1
+    assert diagnostics["tool_result_artifactized_count"] == 1
+    assert diagnostics["source_artifactized_count"] == 0
 
 
 def test_same_tool_result_reuses_existing_artifact(tmp_path: Path) -> None:

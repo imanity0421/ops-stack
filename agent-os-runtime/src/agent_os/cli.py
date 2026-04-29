@@ -11,6 +11,7 @@ from agent_os.agent.factory import get_agent, new_session_id
 from agent_os.agent.task_memory import TaskMemoryStore, TaskSummaryService
 from agent_os.config import Settings
 from agent_os.context_builder import (
+    ArtifactContextRef,
     ContextCharBudget,
     ContextBuilder,
     build_auto_retrieval_context,
@@ -632,6 +633,36 @@ def _load_diagnostic_history(path: Path | None) -> list[object]:
     return messages
 
 
+def _load_diagnostic_artifact_refs(path: Path | None) -> list[ArtifactContextRef]:
+    if path is None:
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"无法读取 artifact refs JSON: {exc}") from exc
+    if not isinstance(raw, list):
+        raise ValueError("artifact refs JSON 须为数组")
+    refs: list[ArtifactContextRef] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        artifact_id = str(item.get("artifact_id") or item.get("ref") or "").strip()
+        task_id = str(item.get("task_id") or "").strip()
+        digest = str(item.get("digest") or "").strip()
+        if not artifact_id or not digest:
+            continue
+        refs.append(
+            ArtifactContextRef(
+                artifact_id=artifact_id,
+                task_id=task_id,
+                digest=digest,
+                digest_status=str(item.get("digest_status") or "built"),
+                purpose=str(item.get("purpose") or ""),
+            )
+        )
+    return refs
+
+
 def _context_diagnose_main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="agent-os-runtime context-diagnose",
@@ -648,6 +679,7 @@ def _context_diagnose_main(argv: list[str]) -> int:
         help="用于 runtime_context 的入口标识",
     )
     p.add_argument("--history-json", type=Path, default=None, help="可选历史消息 JSON 数组")
+    p.add_argument("--artifact-refs-json", type=Path, default=None, help="可选 artifact refs JSON 数组")
     p.add_argument("--retrieved-context-file", type=Path, default=None, help="可选外部召回文本")
     p.add_argument("--json", action="store_true", help="输出 JSON 而不是 Markdown")
     p.add_argument(
@@ -674,6 +706,7 @@ def _context_diagnose_main(argv: list[str]) -> int:
     effective_skill_id = resolve_effective_skill_id(args.skill, settings.default_skill_id, registry)
     try:
         session_messages = _load_diagnostic_history(args.history_json)
+        artifact_refs = _load_diagnostic_artifact_refs(args.artifact_refs_json)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -691,6 +724,7 @@ def _context_diagnose_main(argv: list[str]) -> int:
         user_id=args.user_id,
         skill_id=effective_skill_id,
         session_messages=session_messages,
+        artifact_refs=artifact_refs,
         retrieved_context=retrieved_context,
     )
     diagnostics = build_context_diagnostics(bundle)

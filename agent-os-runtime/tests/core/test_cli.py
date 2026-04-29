@@ -495,6 +495,58 @@ def test_cli_artifact_show_missing_returns_nonzero(tmp_path: Path, monkeypatch, 
     assert out["reason"] == "artifact_not_found"
 
 
+def test_cli_context_outputs_artifact_diagnostics_json_and_markdown(tmp_path: Path, capsys) -> None:
+    refs = tmp_path / "refs.json"
+    refs.write_text(
+        json.dumps(
+            [
+                {
+                    "artifact_id": "artifact_1",
+                    "task_id": "task_1",
+                    "digest": "一份可复用的 artifact 摘要",
+                    "digest_status": "pending",
+                    "purpose": "source",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        cli.main(
+            [
+                "context",
+                "--message",
+                "请基于 artifact 继续写",
+                "--artifact-refs-json",
+                str(refs),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifact_diagnostics"]["artifact_ref_count"] == 1
+    assert payload["artifact_diagnostics"]["pending_digest_count"] == 1
+
+    assert (
+        cli.main(
+            [
+                "context",
+                "--message",
+                "请基于 artifact 继续写",
+                "--artifact-refs-json",
+                str(refs),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "### Artifact Diagnostics" in out
+    assert "artifact_ref_count: 1" in out
+
+
 def test_cli_graphiti_dry_run_rejects_non_list_episodes(tmp_path: Path) -> None:
     p = tmp_path / "episodes.json"
     p.write_text(json.dumps({"episodes": None}), encoding="utf-8")
