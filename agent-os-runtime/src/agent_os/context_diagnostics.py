@@ -145,6 +145,9 @@ class ResumeDiagnostics:
     current_artifact_ref_count: int = 0
     pinned_ref_count: int = 0
     deliverable_fallback_chain: str = "none"
+    active_skill_id: str | None = None
+    skill_fragment_skipped: bool = True
+    skill_fragment_skip_reason: str = "no_active_skill_id"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -166,6 +169,9 @@ class ResumeDiagnostics:
             "current_artifact_ref_count": self.current_artifact_ref_count,
             "pinned_ref_count": self.pinned_ref_count,
             "deliverable_fallback_chain": self.deliverable_fallback_chain,
+            "active_skill_id": self.active_skill_id,
+            "skill_fragment_skipped": self.skill_fragment_skipped,
+            "skill_fragment_skip_reason": self.skill_fragment_skip_reason,
         }
 
 
@@ -354,6 +360,14 @@ def normalize_resume_diagnostics(payload: dict[str, Any] | None) -> ResumeDiagno
         current_artifact_ref_count=_as_int(diagnostics.get("current_artifact_ref_count")),
         pinned_ref_count=_as_int(diagnostics.get("pinned_ref_count")),
         deliverable_fallback_chain=fallback_chain,
+        active_skill_id=str(diagnostics.get("active_skill_id") or "") or None,
+        skill_fragment_skipped=_as_bool(
+            diagnostics.get("skill_fragment_skipped"),
+            default=True,
+        ),
+        skill_fragment_skip_reason=str(
+            diagnostics.get("skill_fragment_skip_reason") or "no_active_skill_id"
+        ),
     )
 
 
@@ -620,6 +634,9 @@ def format_context_diagnostics_markdown(diag: ContextDiagnostics) -> str:
                 f"- voice_pack_skipped: {str(resume.voice_pack_skipped).lower()}",
                 f"- current_artifact_ref_count: {resume.current_artifact_ref_count}",
                 f"- pinned_ref_count: {resume.pinned_ref_count}",
+                f"- active_skill_id: {resume.active_skill_id or 'none'}",
+                f"- skill_fragment_skipped: {str(resume.skill_fragment_skipped).lower()}",
+                f"- skill_fragment_skip_reason: {resume.skill_fragment_skip_reason}",
             ]
         )
     if diag.signals:

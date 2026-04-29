@@ -17,7 +17,7 @@ class SkillSchemaProviderRegistry:
         if not skill_id:
             raise ValueError("skill_id must not be empty")
         fragment = provider.get_compact_schema_fragment()
-        if not isinstance(fragment, type) or not issubclass(fragment, BaseModel):
+        if fragment is not None and (not isinstance(fragment, type) or not issubclass(fragment, BaseModel)):
             raise TypeError("skill schema fragment must be a pydantic BaseModel type")
         self._providers[skill_id] = provider
 

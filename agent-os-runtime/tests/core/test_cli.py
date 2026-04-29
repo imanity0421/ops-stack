@@ -476,6 +476,9 @@ def test_cli_task_resume_force_fork_outputs_resume_diagnostics(
     assert payload["resume_diagnostics"]["voice_pack_skipped"] is True
     assert payload["runtime_status"] == "ok"
     assert payload["runtime_session_id"] == payload["resume_diagnostics"]["target_session_id"]
+    assert payload["resume_diagnostics"]["active_skill_id"] == "default_agent"
+    assert payload["resume_diagnostics"]["skill_fragment_skipped"] is True
+    assert payload["resume_diagnostics"]["skill_fragment_skip_reason"] == "provider_missing"
     assert payload["task"]["current_main_session_id"] != "s1"
     assert "<task_resume" in payload["final_state"]["prompt"]
 
@@ -516,6 +519,9 @@ def test_cli_task_branch_creates_branch_session_without_changing_main(
     assert payload["branch_session"]["session_id"] != "s1"
     assert payload["runtime_status"] == "ok"
     assert payload["runtime_session_id"] == payload["branch_session"]["session_id"]
+    assert payload["resume_diagnostics"]["active_skill_id"] == "default_agent"
+    assert payload["resume_diagnostics"]["skill_fragment_skipped"] is True
+    assert payload["resume_diagnostics"]["skill_fragment_skip_reason"] == "provider_missing"
     assert "<task_resume" in payload["final_state"]["prompt"]
 
 

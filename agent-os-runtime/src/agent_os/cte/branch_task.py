@@ -17,6 +17,7 @@ class BranchResult:
     branch_session: TaskSession | None = None
     final_state: ResumeFinalState | None = None
     runtime_session: StartedSession | None = None
+    resume_diagnostics: dict[str, object] | None = None
     reason: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -35,6 +36,8 @@ class BranchResult:
             data["runtime_session"] = self.runtime_session.to_dict()
             data["runtime_status"] = self.runtime_session.status
             data["runtime_session_id"] = self.runtime_session.session_id
+        if self.resume_diagnostics is not None:
+            data["resume_diagnostics"] = dict(self.resume_diagnostics)
         return data
 
 
@@ -88,6 +91,7 @@ def branch_task(
         artifact_store=artifact_store,
         context_char_budget=context_char_budget,
         max_deliverable_chars=max_deliverable_chars,
+        skill_id=skill_id,
     )
     if resume_result.status != "ok" or resume_result.final_state is None:
         return BranchResult(
@@ -127,6 +131,7 @@ def branch_task(
                 branch_session=branch_session,
                 final_state=resume_result.final_state,
                 runtime_session=runtime_session,
+                resume_diagnostics=resume_result.to_dict().get("resume_diagnostics"),
                 reason=runtime_session.reason or "runtime_start_failed",
             )
     return BranchResult(
@@ -136,4 +141,5 @@ def branch_task(
         branch_session=branch_session,
         final_state=resume_result.final_state,
         runtime_session=runtime_session,
+        resume_diagnostics=resume_result.to_dict().get("resume_diagnostics"),
     )

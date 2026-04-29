@@ -11,6 +11,12 @@ from agent_os.agent.task_memory import TaskMemoryStore, TaskMessage, _iso
 
 COMPACT_SCHEMA_VERSION = "v2"
 COMPACT_POLICY_VERSION = "compact_summary_v2"
+SkillFragmentSkipReason = Literal[
+    "none",
+    "no_active_skill_id",
+    "provider_missing",
+    "fragment_missing",
+]
 
 
 class CompactSummaryCore(BaseModel):
@@ -37,13 +43,31 @@ class CompactSummary(BaseModel):
 
 
 class SkillSchemaProvider(Protocol):
-    def get_compact_schema_fragment(self) -> type[BaseModel]:
+    def get_compact_schema_fragment(self) -> type[BaseModel] | None:
         ...
 
 
 class SkillSchemaRegistry(Protocol):
     def get_schema_fragment(self, skill_id: str) -> type[BaseModel] | None:
         ...
+
+
+@dataclass(frozen=True)
+class SkillFragmentResolution:
+    active_skill_id: str | None
+    skill_state_schema: type[BaseModel] | None
+    skill_fragment_skipped: bool
+    skill_fragment_skip_reason: SkillFragmentSkipReason = "none"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "active_skill_id": self.active_skill_id,
+            "skill_fragment_skipped": self.skill_fragment_skipped,
+            "skill_fragment_skip_reason": self.skill_fragment_skip_reason,
+            "skill_state_schema": self.skill_state_schema.__name__
+            if self.skill_state_schema is not None
+            else None,
+        }
 
 
 @dataclass(frozen=True)
@@ -94,6 +118,56 @@ def compose_compact_summary_schema(
         schema_version=(Literal["v2"], "v2"),
         core=(CompactSummaryCore, ...),
         skill_state=(skill_state_schema | None, None),
+    )
+
+
+def resolve_skill_schema_fragment(
+    *,
+    active_skill_id: str | None = None,
+    skill_schema_provider: SkillSchemaProvider | None = None,
+    skill_schema_registry: SkillSchemaRegistry | None = None,
+) -> SkillFragmentResolution:
+    skill_id = (active_skill_id or "").strip() or None
+    if skill_schema_provider is not None:
+        fragment = skill_schema_provider.get_compact_schema_fragment()
+        if fragment is None:
+            return SkillFragmentResolution(
+                active_skill_id=skill_id,
+                skill_state_schema=None,
+                skill_fragment_skipped=True,
+                skill_fragment_skip_reason="fragment_missing",
+            )
+        return SkillFragmentResolution(
+            active_skill_id=skill_id,
+            skill_state_schema=fragment,
+            skill_fragment_skipped=False,
+        )
+    if skill_id is None:
+        return SkillFragmentResolution(
+            active_skill_id=None,
+            skill_state_schema=None,
+            skill_fragment_skipped=True,
+            skill_fragment_skip_reason="no_active_skill_id",
+        )
+    if skill_schema_registry is None:
+        return SkillFragmentResolution(
+            active_skill_id=skill_id,
+            skill_state_schema=None,
+            skill_fragment_skipped=True,
+            skill_fragment_skip_reason="provider_missing",
+        )
+    fragment = skill_schema_registry.get_schema_fragment(skill_id)
+    if fragment is None:
+        return SkillFragmentResolution(
+            active_skill_id=skill_id,
+            skill_state_schema=None,
+            skill_fragment_skipped=True,
+            skill_fragment_skip_reason="provider_missing",
+        )
+    return SkillFragmentResolution(
+        active_skill_id=skill_id,
+        skill_state_schema=fragment,
+        skill_fragment_skipped=False,
     )
 
 
@@ -267,12 +341,12 @@ class CompactSummaryService:
         self._skill_schema_registry = skill_schema_registry
         self._active_skill_id = active_skill_id
 
-    def _skill_schema_fragment(self) -> type[BaseModel] | None:
-        if self._skill_schema_provider is not None:
-            return self._skill_schema_provider.get_compact_schema_fragment()
-        if self._skill_schema_registry is not None and self._active_skill_id:
-            return self._skill_schema_registry.get_schema_fragment(self._active_skill_id)
-        return None
+    def skill_fragment_resolution(self) -> SkillFragmentResolution:
+        return resolve_skill_schema_fragment(
+            active_skill_id=self._active_skill_id,
+            skill_schema_provider=self._skill_schema_provider,
+            skill_schema_registry=self._skill_schema_registry,
+        )
 
     def compact(
         self,
@@ -288,7 +362,8 @@ class CompactSummaryService:
         current_refs = list(dict.fromkeys(current_artifact_refs or []))
         pinned = list(dict.fromkeys(pinned_refs or []))
         existing = self._store.get_compact_summary(session_id=session_id, task_id=task_id)
-        response_schema = compose_compact_summary_schema(self._skill_schema_fragment())
+        resolution = self.skill_fragment_resolution()
+        response_schema = compose_compact_summary_schema(resolution.skill_state_schema)
         summary = _llm_compact_summary(
             messages=messages,
             current_artifact_refs=current_refs,

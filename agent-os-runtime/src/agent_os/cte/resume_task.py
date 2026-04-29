@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 from html import escape
 from typing import Callable, Literal, Protocol
 
-from agent_os.agent.compact import CompactSummaryRecord
+from agent_os.agent.compact import (
+    CompactSummaryRecord,
+    SkillFragmentResolution,
+    SkillSchemaProvider,
+    SkillSchemaRegistry,
+    resolve_skill_schema_fragment,
+)
 from agent_os.agent.task_memory import TaskEntity, TaskMemoryStore, TaskMessage, TaskSession
 from agent_os.er.resume_session import ResumeSessionMeta, StartedSession
 
@@ -97,6 +103,9 @@ class ResumeDiagnostics:
     current_artifact_ref_count: int = 0
     pinned_ref_count: int = 0
     deliverable_fallback_chain: DeliverableFallbackChain = "none"
+    active_skill_id: str | None = None
+    skill_fragment_skipped: bool = True
+    skill_fragment_skip_reason: str = "no_active_skill_id"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -118,6 +127,9 @@ class ResumeDiagnostics:
             "current_artifact_ref_count": self.current_artifact_ref_count,
             "pinned_ref_count": self.pinned_ref_count,
             "deliverable_fallback_chain": self.deliverable_fallback_chain,
+            "active_skill_id": self.active_skill_id,
+            "skill_fragment_skipped": self.skill_fragment_skipped,
+            "skill_fragment_skip_reason": self.skill_fragment_skip_reason,
         }
 
 
@@ -125,6 +137,7 @@ def _resume_diagnostics(
     *,
     decision: ResumeDecision,
     final_state: ResumeFinalState,
+    skill_fragment_resolution: SkillFragmentResolution,
 ) -> ResumeDiagnostics:
     return ResumeDiagnostics(
         connect_or_fork=decision.connect_or_fork,
@@ -143,6 +156,9 @@ def _resume_diagnostics(
         deliverable_fallback_chain=_deliverable_fallback_chain(
             final_state.deliverable_inline_level
         ),
+        active_skill_id=skill_fragment_resolution.active_skill_id,
+        skill_fragment_skipped=skill_fragment_resolution.skill_fragment_skipped,
+        skill_fragment_skip_reason=skill_fragment_resolution.skill_fragment_skip_reason,
     )
 
 
@@ -153,6 +169,7 @@ class ResumeResult:
     decision: ResumeDecision | None = None
     final_state: ResumeFinalState | None = None
     runtime_session: StartedSession | None = None
+    skill_fragment_resolution: SkillFragmentResolution | None = None
     reason: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -171,6 +188,8 @@ class ResumeResult:
             data["resume_diagnostics"] = _resume_diagnostics(
                 decision=self.decision,
                 final_state=self.final_state,
+                skill_fragment_resolution=self.skill_fragment_resolution
+                or resolve_skill_schema_fragment(),
             ).to_dict()
         elif self.decision is not None:
             data["resume_diagnostics"] = self.decision.to_dict()
@@ -393,6 +412,8 @@ def resume_task(
     context_char_budget: int = 12000,
     max_deliverable_chars: int = 12000,
     skill_id: str | None = None,
+    skill_schema_provider: SkillSchemaProvider | None = None,
+    skill_schema_registry: SkillSchemaRegistry | None = None,
     resumed_session_starter: Callable[[str, ResumeSessionMeta], StartedSession] | None = None,
 ) -> ResumeResult:
     task = store.get_task_entity(task_id)
@@ -400,6 +421,11 @@ def resume_task(
         return ResumeResult(status="error", reason="task_not_found")
     if task.status == "archived":
         return ResumeResult(status="error", task=task, reason="task_archived")
+    skill_fragment_resolution = resolve_skill_schema_fragment(
+        active_skill_id=skill_id,
+        skill_schema_provider=skill_schema_provider,
+        skill_schema_registry=skill_schema_registry,
+    )
 
     source_session_id = (from_session_id or task.current_main_session_id).strip()
     if not source_session_id:
@@ -493,6 +519,7 @@ def resume_task(
                 decision=decision,
                 final_state=final_state,
                 runtime_session=runtime_session,
+                skill_fragment_resolution=skill_fragment_resolution,
                 reason=runtime_session.reason or "runtime_start_failed",
             )
     return ResumeResult(
@@ -501,4 +528,5 @@ def resume_task(
         decision=decision,
         final_state=final_state,
         runtime_session=runtime_session,
+        skill_fragment_resolution=skill_fragment_resolution,
     )

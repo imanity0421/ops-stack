@@ -8,6 +8,12 @@
 
 ### Stage 5
 
+- **Battle 3：缺失 skill fragment fallback 诊断**（2026-04-30，done-local）
+  - 新增 `SkillFragmentResolution`，将无 active skill、无 provider、provider 返回 None 三类 core-only fallback 显式区分为 `no_active_skill_id` / `provider_missing` / `fragment_missing`。
+  - `resume_task` / `branch_task` 的 diagnostics 增加 `active_skill_id`、`skill_fragment_skipped`、`skill_fragment_skip_reason`；缺 fragment 不报错，仍走 core-only schema。
+  - `/context` 归一化与 Markdown 输出展示 skill fragment fallback，`task resume --json` payload 可直接作为 `context-diagnose --resume-diagnostics-json` 输入。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_cli.py tests/core/test_context_diagnostics.py`；`python -m ruff check src tests`。
+
 - **Battle 2：ER `start_resumed_session` 真实 Agno spin up**（2026-04-30，commit `6a8af17`）
   - 新增 ER resumed-session 入口，`start_resumed_session(prompt, session_meta)` 负责创建 Agent 并调用 Agno `agent.run()`，CLI 不直接持有运行细节。
   - `resume_task` / `branch_task` 从 prompt-only 升级为可委托 ER 的 CTE 路径，返回 `runtime_status` / `runtime_session_id` / `runtime_session` 诊断；runtime 失败时返回 error，不把 prompt-only 当成功兜底。

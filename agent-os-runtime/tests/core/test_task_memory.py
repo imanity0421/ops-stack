@@ -10,6 +10,7 @@ from agent_os.agent.compact import (
     CompactSummaryService,
     SkillSchemaProvider,
     compose_compact_summary_schema,
+    resolve_skill_schema_fragment,
 )
 from agent_os.agent.task_memory import (
     TaskMemoryStore,
@@ -402,6 +403,10 @@ def test_resume_task_starts_runtime_with_final_state_prompt(tmp_path: Path) -> N
     assert meta.task_id == task.task_id
     assert meta.source_session_id == "s1"
     assert meta.branch_role == "main"
+    diagnostics = result.to_dict()["resume_diagnostics"]
+    assert diagnostics["active_skill_id"] == "mock_skill"
+    assert diagnostics["skill_fragment_skipped"] is True
+    assert diagnostics["skill_fragment_skip_reason"] == "provider_missing"
 
 
 def test_gc6_resume_stale_session_forks_with_compact_tail_and_refs(
@@ -571,6 +576,10 @@ def test_branch_task_starts_runtime_after_branch_session_creation(tmp_path: Path
     assert meta.task_id == task.task_id
     assert meta.source_session_id == "s1"
     assert meta.branch_role == "branch"
+    diagnostics = result.to_dict()["resume_diagnostics"]
+    assert diagnostics["active_skill_id"] == "mock_skill"
+    assert diagnostics["skill_fragment_skipped"] is True
+    assert diagnostics["skill_fragment_skip_reason"] == "provider_missing"
 
 
 def test_skill_schema_provider_protocol_shape() -> None:
@@ -625,6 +634,27 @@ def test_compose_compact_summary_schema_accepts_mock_skill_fragments() -> None:
     assert "kpi" not in schema_b_text.lower()
 
 
+def test_skill_fragment_resolution_reports_core_only_fallback_reasons() -> None:
+    class MissingFragmentProvider:
+        def get_compact_schema_fragment(self) -> type[BaseModel] | None:
+            return None
+
+    no_active = resolve_skill_schema_fragment()
+    provider_missing = resolve_skill_schema_fragment(active_skill_id="mock_skill")
+    fragment_missing = resolve_skill_schema_fragment(
+        active_skill_id="mock_skill",
+        skill_schema_provider=MissingFragmentProvider(),
+    )
+
+    assert no_active.skill_fragment_skipped is True
+    assert no_active.skill_fragment_skip_reason == "no_active_skill_id"
+    assert provider_missing.skill_fragment_skipped is True
+    assert provider_missing.skill_fragment_skip_reason == "provider_missing"
+    assert fragment_missing.skill_fragment_skipped is True
+    assert fragment_missing.skill_fragment_skip_reason == "fragment_missing"
+    assert compose_compact_summary_schema(no_active.skill_state_schema).__name__ == "CompactSummary"
+
+
 def test_skill_schema_provider_registry_supports_heterogeneous_mock_skills() -> None:
     class MockSkillAState(BaseModel):
         a1: str
@@ -650,6 +680,17 @@ def test_skill_schema_provider_registry_supports_heterogeneous_mock_skills() -> 
     assert registry.get_schema_fragment("mock_skill_a") is MockSkillAState
     assert registry.get_schema_fragment("mock_skill_b") is MockSkillBState
     assert registry.get_schema_fragment("missing") is None
+
+
+def test_skill_schema_provider_registry_allows_missing_fragment_provider() -> None:
+    class MissingFragmentProvider:
+        def get_compact_schema_fragment(self) -> type[BaseModel] | None:
+            return None
+
+    registry = SkillSchemaProviderRegistry()
+    registry.register("mock_skill_missing", MissingFragmentProvider())
+
+    assert registry.get_schema_fragment("mock_skill_missing") is None
 
 
 def test_compact_summary_service_uses_registry_fragment_without_persisting_model_instance(

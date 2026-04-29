@@ -4,6 +4,7 @@ from agent_os.context_builder import ContextCharBudget, ContextBuilder
 from agent_os.context_diagnostics import (
     build_context_diagnostics,
     format_context_diagnostics_markdown,
+    normalize_resume_diagnostics,
 )
 
 
@@ -88,3 +89,44 @@ def test_context_diagnostics_budget_guard_flags_large_current_message() -> None:
     assert guard["current_user_high_ratio"] is True
     assert guard["current_user_chars"] > 300
     assert any("Current user message dominates" in item for item in guard["recommendations"])
+
+
+def test_context_diagnostics_normalizes_skill_fragment_fallback() -> None:
+    builder = ContextBuilder(
+        timezone_name="Asia/Shanghai",
+        history_max_messages=0,
+        include_runtime_context=False,
+        enable_token_estimate=False,
+    )
+    bundle = builder.build_turn_message(
+        "继续",
+        entrypoint="api",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+    )
+    resume = normalize_resume_diagnostics(
+        {
+            "resume_diagnostics": {
+                "connect_or_fork": "fork",
+                "decision_reason": ["forced_fork"],
+                "forced_by_flag": True,
+                "source_session_id": "s1",
+                "target_session_id": "s2",
+                "active_skill_id": "default_agent",
+                "skill_fragment_skipped": True,
+                "skill_fragment_skip_reason": "provider_missing",
+            }
+        }
+    )
+
+    diag = build_context_diagnostics(bundle, resume_diagnostics=resume)
+    data = diag.to_dict()
+    text = format_context_diagnostics_markdown(diag)
+
+    assert data["resume_diagnostics"]["active_skill_id"] == "default_agent"
+    assert data["resume_diagnostics"]["skill_fragment_skipped"] is True
+    assert data["resume_diagnostics"]["skill_fragment_skip_reason"] == "provider_missing"
+    assert "- active_skill_id: default_agent" in text
+    assert "- skill_fragment_skipped: true" in text
+    assert "- skill_fragment_skip_reason: provider_missing" in text
