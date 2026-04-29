@@ -28,7 +28,7 @@
   - 新增 `blob gc --orphan` dry-run 命令，只列出无有效 task 的 orphan artifact，不做删除或 TTL 清理。
   - `Settings` 增加 `AGENT_OS_ARTIFACT_STORE_PATH`，ArtifactStore 增加 all/orphan 列表能力。
   - 验证：`python -m pytest tests/core/test_cli.py tests/core/test_artifact_store.py tests/core/test_source_artifactization.py tests/core/test_tool_result_artifactization.py`；`python -m ruff check src tests`。
-- **Battle 6：Trace + `/artifact` + `/context` Integration**（2026-04-29，done-local）
+- **Battle 6：Trace + `/artifact` + `/context` Integration**（2026-04-29，commit `c305d16`）
   - 新增 `ArtifactDiagnostics`，从已组装 prompt / trace 统计 artifact ref 数、pending digest 数、artifact 字符占比、tool/source artifactized 计数与当前用户 source artifact 化状态。
   - `/context` JSON 输出结构化 `artifact_diagnostics`，Markdown 输出新增 `Artifact Diagnostics` 小节；`context-diagnose` 支持显式 `--artifact-refs-json` 调试入口。
   - 新增最小 `docs/GC_SPEC.md`，记录 Stage 2 artifact trace/context 字段级断言与 baseline 验证口径。
