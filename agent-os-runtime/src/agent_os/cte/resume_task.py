@@ -7,6 +7,7 @@ from typing import Callable, Literal, Protocol
 
 from agent_os.agent.compact import CompactSummaryRecord
 from agent_os.agent.task_memory import TaskEntity, TaskMemoryStore, TaskMessage, TaskSession
+from agent_os.er.resume_session import ResumeSessionMeta, StartedSession
 
 ResumeMode = Literal["connect", "fork"]
 ForceMode = Literal["connect", "fork"] | None
@@ -151,6 +152,7 @@ class ResumeResult:
     task: TaskEntity | None = None
     decision: ResumeDecision | None = None
     final_state: ResumeFinalState | None = None
+    runtime_session: StartedSession | None = None
     reason: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -161,6 +163,10 @@ class ResumeResult:
             data["task"] = self.task.__dict__
         if self.final_state is not None:
             data["final_state"] = self.final_state.to_dict()
+        if self.runtime_session is not None:
+            data["runtime_session"] = self.runtime_session.to_dict()
+            data["runtime_status"] = self.runtime_session.status
+            data["runtime_session_id"] = self.runtime_session.session_id
         if self.decision is not None and self.final_state is not None:
             data["resume_diagnostics"] = _resume_diagnostics(
                 decision=self.decision,
@@ -386,6 +392,8 @@ def resume_task(
     recent_minutes: int = 30,
     context_char_budget: int = 12000,
     max_deliverable_chars: int = 12000,
+    skill_id: str | None = None,
+    resumed_session_starter: Callable[[str, ResumeSessionMeta], StartedSession] | None = None,
 ) -> ResumeResult:
     task = store.get_task_entity(task_id)
     if task is None:
@@ -459,4 +467,38 @@ def resume_task(
         voice_pack_skipped=True,
         prompt=prompt,
     )
-    return ResumeResult(status="ok", task=task, decision=decision, final_state=final_state)
+    runtime_session = None
+    if resumed_session_starter is not None:
+        runtime_session = resumed_session_starter(
+            final_state.prompt,
+            ResumeSessionMeta(
+                session_id=decision.target_session_id,
+                client_id=client_id,
+                user_id=user_id,
+                skill_id=skill_id,
+                task_id=task.task_id,
+                source_session_id=source_session_id,
+                branch_role="main" if decision.connect_or_fork == "fork" else None,
+            ),
+        )
+        if runtime_session.status != "ok":
+            if decision.connect_or_fork == "fork":
+                task = store.set_current_main_session(
+                    task_id=task.task_id,
+                    session_id=source_session_id,
+                ) or task
+            return ResumeResult(
+                status="error",
+                task=task,
+                decision=decision,
+                final_state=final_state,
+                runtime_session=runtime_session,
+                reason=runtime_session.reason or "runtime_start_failed",
+            )
+    return ResumeResult(
+        status="ok",
+        task=task,
+        decision=decision,
+        final_state=final_state,
+        runtime_session=runtime_session,
+    )

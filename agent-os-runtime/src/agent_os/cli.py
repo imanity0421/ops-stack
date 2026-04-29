@@ -30,6 +30,7 @@ from agent_os.context_diagnostics import (
 )
 from agent_os.cte.branch_task import branch_task
 from agent_os.cte.resume_task import resume_task
+from agent_os.er.resume_session import start_resumed_session
 from agent_os.observability import log_context_management_trace
 from agent_os.knowledge.graphiti_entitlements import (
     EntitlementsRevisionConflictError,
@@ -313,6 +314,8 @@ def _task_main(argv: list[str]) -> int:
             session_id_factory=new_session_id,
             artifact_store=ArtifactStore(settings.artifact_store_path),
             context_char_budget=settings.context_max_chars,
+            skill_id=settings.default_skill_id,
+            resumed_session_starter=start_resumed_session,
         )
         payload = result.to_dict()
         if args.json:
@@ -322,6 +325,11 @@ def _task_main(argv: list[str]) -> int:
                 f"resume {result.decision.connect_or_fork} "
                 f"{result.decision.source_session_id} -> {result.decision.target_session_id}"
             )
+            if result.runtime_session is not None:
+                print(
+                    f"runtime {result.runtime_session.status} "
+                    f"session_id={result.runtime_session.session_id}"
+                )
             print(result.final_state.prompt)
         else:
             print(json.dumps(payload, ensure_ascii=False))
@@ -335,6 +343,8 @@ def _task_main(argv: list[str]) -> int:
             session_id_factory=new_session_id,
             artifact_store=ArtifactStore(settings.artifact_store_path),
             context_char_budget=settings.context_max_chars,
+            skill_id=settings.default_skill_id,
+            resumed_session_starter=start_resumed_session,
         )
         payload = result.to_dict()
         if args.json:
@@ -344,6 +354,11 @@ def _task_main(argv: list[str]) -> int:
                 f"branch {result.source_session.session_id if result.source_session else ''} "
                 f"-> {result.branch_session.session_id}"
             )
+            if result.runtime_session is not None:
+                print(
+                    f"runtime {result.runtime_session.status} "
+                    f"session_id={result.runtime_session.session_id}"
+                )
             if result.final_state is not None:
                 print(result.final_state.prompt)
         else:

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from agent_os.agent.task_memory import TaskEntity, TaskMemoryStore, TaskSession
 from agent_os.cte.resume_task import ArtifactLookupPort, ResumeFinalState, resume_task
+from agent_os.er.resume_session import ResumeSessionMeta, StartedSession
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class BranchResult:
     source_session: TaskSession | None = None
     branch_session: TaskSession | None = None
     final_state: ResumeFinalState | None = None
+    runtime_session: StartedSession | None = None
     reason: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -29,6 +31,10 @@ class BranchResult:
             data["branch_session"] = self.branch_session.__dict__
         if self.final_state is not None:
             data["final_state"] = self.final_state.to_dict()
+        if self.runtime_session is not None:
+            data["runtime_session"] = self.runtime_session.to_dict()
+            data["runtime_status"] = self.runtime_session.status
+            data["runtime_session_id"] = self.runtime_session.session_id
         return data
 
 
@@ -47,6 +53,8 @@ def branch_task(
     user_id: str | None = None,
     context_char_budget: int = 12000,
     max_deliverable_chars: int = 12000,
+    skill_id: str | None = None,
+    resumed_session_starter: Callable[[str, ResumeSessionMeta], StartedSession] | None = None,
 ) -> BranchResult:
     task = store.get_task_entity(task_id)
     if task is None:
@@ -97,10 +105,35 @@ def branch_task(
         parent_session_id=source_session_id,
         branch_role="branch",
     )
+    runtime_session = None
+    if resumed_session_starter is not None:
+        runtime_session = resumed_session_starter(
+            resume_result.final_state.prompt,
+            ResumeSessionMeta(
+                session_id=branch_session_id,
+                client_id=client_id,
+                user_id=user_id,
+                skill_id=skill_id,
+                task_id=task.task_id,
+                source_session_id=source_session_id,
+                branch_role="branch",
+            ),
+        )
+        if runtime_session.status != "ok":
+            return BranchResult(
+                status="error",
+                task=store.get_task_entity(task.task_id) or task,
+                source_session=source_session,
+                branch_session=branch_session,
+                final_state=resume_result.final_state,
+                runtime_session=runtime_session,
+                reason=runtime_session.reason or "runtime_start_failed",
+            )
     return BranchResult(
         status="ok",
         task=store.get_task_entity(task.task_id) or task,
         source_session=source_session,
         branch_session=branch_session,
         final_state=resume_result.final_state,
+        runtime_session=runtime_session,
     )

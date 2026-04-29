@@ -9,6 +9,7 @@ from typing import Any
 
 from agent_os import cli
 from agent_os.agent.task_memory import TaskMemoryStore, TaskSummary
+from agent_os.er.resume_session import ResumeSessionMeta, StartedSession
 from agent_os.knowledge import asset_ingest as asset_ingest_mod
 from agent_os.knowledge.artifact_store import ArtifactStore
 from agent_os.memory.hindsight_store import HindsightStore
@@ -457,6 +458,12 @@ def test_cli_task_resume_force_fork_outputs_resume_diagnostics(
     store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
     store.append_message(session_id="s1", task_id=task.task_id, role="user", content="继续推进方案")
 
+    def fake_start(prompt: str, session_meta: ResumeSessionMeta) -> StartedSession:
+        assert "<task_resume" in prompt
+        return StartedSession(status="ok", session_id=session_meta.session_id, output_text="started")
+
+    monkeypatch.setattr(cli, "start_resumed_session", fake_start)
+
     assert cli.main(["task", "resume", task.task_id, "--force-fork", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
 
@@ -467,6 +474,8 @@ def test_cli_task_resume_force_fork_outputs_resume_diagnostics(
     assert payload["resume_diagnostics"]["deliverable_fallback_chain"] == "none"
     assert payload["resume_diagnostics"]["tail_message_count"] == 1
     assert payload["resume_diagnostics"]["voice_pack_skipped"] is True
+    assert payload["runtime_status"] == "ok"
+    assert payload["runtime_session_id"] == payload["resume_diagnostics"]["target_session_id"]
     assert payload["task"]["current_main_session_id"] != "s1"
     assert "<task_resume" in payload["final_state"]["prompt"]
 
@@ -491,6 +500,12 @@ def test_cli_task_branch_creates_branch_session_without_changing_main(
     store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
     store.append_message(session_id="s1", task_id=task.task_id, role="user", content="做一个分支版本")
 
+    def fake_start(prompt: str, session_meta: ResumeSessionMeta) -> StartedSession:
+        assert "<task_resume" in prompt
+        return StartedSession(status="ok", session_id=session_meta.session_id, output_text="branch")
+
+    monkeypatch.setattr(cli, "start_resumed_session", fake_start)
+
     assert cli.main(["task", "branch", task.task_id, "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
 
@@ -499,7 +514,38 @@ def test_cli_task_branch_creates_branch_session_without_changing_main(
     assert payload["branch_session"]["parent_session_id"] == "s1"
     assert payload["branch_session"]["branch_role"] == "branch"
     assert payload["branch_session"]["session_id"] != "s1"
+    assert payload["runtime_status"] == "ok"
+    assert payload["runtime_session_id"] == payload["branch_session"]["session_id"]
     assert "<task_resume" in payload["final_state"]["prompt"]
+
+
+def test_cli_task_resume_runtime_error_returns_nonzero(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    task_db = tmp_path / "task.db"
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(task_db))
+    store = TaskMemoryStore(task_db)
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="继续推进方案")
+
+    def fake_start(_prompt: str, session_meta: ResumeSessionMeta) -> StartedSession:
+        return StartedSession(
+            status="error",
+            session_id=session_meta.session_id,
+            reason="fake runtime failure",
+        )
+
+    monkeypatch.setattr(cli, "start_resumed_session", fake_start)
+
+    assert cli.main(["task", "resume", task.task_id, "--force-fork", "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "error"
+    assert payload["runtime_status"] == "error"
+    assert payload["reason"] == "fake runtime failure"
+    assert payload["task"]["current_main_session_id"] == "s1"
 
 
 def test_cli_artifact_commands_list_show_archive_and_orphan_gc(

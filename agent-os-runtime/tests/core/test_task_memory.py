@@ -21,6 +21,7 @@ from agent_os.agent.task_memory import (
 )
 from agent_os.cte.branch_task import branch_task
 from agent_os.cte.resume_task import resume_task
+from agent_os.er.resume_session import ResumeSessionMeta, StartedSession
 from agent_os.knowledge.artifact_store import ArtifactStore
 from agent_os.sr.schema_registry import SkillSchemaProviderRegistry
 
@@ -366,6 +367,43 @@ def test_resume_task_force_fork_updates_current_main_session_and_projects_tail(
     assert fork_session.branch_role == "main"
 
 
+def test_resume_task_starts_runtime_with_final_state_prompt(tmp_path: Path) -> None:
+    store = TaskMemoryStore(tmp_path / "task.db")
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="继续推进")
+    calls: list[tuple[str, ResumeSessionMeta]] = []
+
+    def fake_start(prompt: str, session_meta: ResumeSessionMeta) -> StartedSession:
+        calls.append((prompt, session_meta))
+        return StartedSession(status="ok", session_id=session_meta.session_id, output_text="started")
+
+    result = resume_task(
+        store=store,
+        task_id=task.task_id,
+        force_mode="fork",
+        session_id_factory=lambda: "s2",
+        client_id="c-runtime",
+        user_id="u1",
+        skill_id="mock_skill",
+        resumed_session_starter=fake_start,
+    )
+
+    assert result.status == "ok"
+    assert result.runtime_session is not None
+    assert result.runtime_session.session_id == "s2"
+    assert calls
+    prompt, meta = calls[0]
+    assert "<task_resume" in prompt
+    assert meta.session_id == "s2"
+    assert meta.client_id == "c-runtime"
+    assert meta.user_id == "u1"
+    assert meta.skill_id == "mock_skill"
+    assert meta.task_id == task.task_id
+    assert meta.source_session_id == "s1"
+    assert meta.branch_role == "main"
+
+
 def test_gc6_resume_stale_session_forks_with_compact_tail_and_refs(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -496,6 +534,43 @@ def test_branch_task_creates_branch_session_without_polluting_main_summary(
     assert main_summary.summary.core.current_artifact_refs == ["artifact_main"]
     assert branch_summary is not None
     assert branch_summary.summary.core.current_artifact_refs == ["artifact_branch"]
+
+
+def test_branch_task_starts_runtime_after_branch_session_creation(tmp_path: Path) -> None:
+    store = TaskMemoryStore(tmp_path / "task.db")
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="做分支版本")
+    calls: list[tuple[str, ResumeSessionMeta]] = []
+
+    def fake_start(prompt: str, session_meta: ResumeSessionMeta) -> StartedSession:
+        calls.append((prompt, session_meta))
+        return StartedSession(status="ok", session_id=session_meta.session_id, output_text="branch")
+
+    result = branch_task(
+        store=store,
+        task_id=task.task_id,
+        session_id_factory=lambda: "s-branch",
+        client_id="branch-client",
+        user_id="u1",
+        skill_id="mock_skill",
+        resumed_session_starter=fake_start,
+    )
+
+    assert result.status == "ok"
+    assert result.branch_session is not None
+    assert result.runtime_session is not None
+    assert result.runtime_session.session_id == "s-branch"
+    assert calls
+    prompt, meta = calls[0]
+    assert "<task_resume" in prompt
+    assert meta.session_id == "s-branch"
+    assert meta.client_id == "branch-client"
+    assert meta.user_id == "u1"
+    assert meta.skill_id == "mock_skill"
+    assert meta.task_id == task.task_id
+    assert meta.source_session_id == "s1"
+    assert meta.branch_role == "branch"
 
 
 def test_skill_schema_provider_protocol_shape() -> None:

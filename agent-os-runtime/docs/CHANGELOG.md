@@ -8,6 +8,12 @@
 
 ### Stage 5
 
+- **Battle 2：ER `start_resumed_session` 真实 Agno spin up**（2026-04-30，done-local）
+  - 新增 ER resumed-session 入口，`start_resumed_session(prompt, session_meta)` 负责创建 Agent 并调用 Agno `agent.run()`，CLI 不直接持有运行细节。
+  - `resume_task` / `branch_task` 从 prompt-only 升级为可委托 ER 的 CTE 路径，返回 `runtime_status` / `runtime_session_id` / `runtime_session` 诊断；runtime 失败时返回 error，不把 prompt-only 当成功兜底。
+  - `/task resume` 与 `/task branch` 默认通过 CTE 触发 ER spin up；测试通过 fake runtime 覆盖 resume fork、branch session、CLI JSON 和错误路径。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_cli.py`；`python -m ruff check src tests`。
+
 - **Battle 1：SR 框架 schema fragment 真实合成**（2026-04-30，commit `d196fdc`）
   - `CompactSummary` v2 增加 `compose_compact_summary_schema()` 动态合成路径，固定 CTE-owned `core`，并按 active skill 注入 SR-owned `skill_state` fragment。
   - 新增轻量 `SkillSchemaProviderRegistry`，支持 `skill_id -> SkillSchemaProvider` 注册与 fragment 查询；`CompactSummaryService` 可通过 provider 或 registry + active skill id 获取 fragment。
