@@ -17,14 +17,25 @@
 | GC4：compact 后恢复任务目标 | 包含多轮用户约束、assistant 进展与 artifact refs 的 task/session | `CompactSummary.schema_version == "v1"`；`core.goal` / `core.constraints` / `core.progress` / `core.last_user_instruction` 非空；`business_writing_pack` / `skill_state` 允许 `null` |
 | GC5：artifact refs 在 compact 中持续可追踪 | compact 前已有 artifact refs 或 pinned refs 的 task/session | `core.current_artifact_refs` / `core.pinned_refs` 由代码层写入，不由 LLM 编造；ContextBuilder rehydration 后 `/context` 输出 `compact_diagnostics.rehydrated=true` 与正确 `summary_version` |
 
+## Stage 4 GC-Resume
+
+| GC | 输入 | Stage 4 字段级断言（一行口径） |
+| --- | --- | --- |
+| GC6：隔天 resume 恢复工作面 | 已 compact 的主线 session 隔天 resume，compact 后仍有 uncompacted tail 与 artifact refs | `resume_diagnostics.connect_or_fork == "fork"`；`decision_reason` 包含 `session_not_recent` 或 `forced_fork`；`final_state.compact_summary != null`；`tail_message_count >= 1`；`current_artifact_ref_count >= 1`；`voice_pack_skipped=true` |
+| GC7：分支对照隔离 | 从主线 session 执行 `/task branch` 后，分支继续 compact 为另一组 artifact refs | branch session `parent_session_id == source_session_id` 且 `branch_role == "branch"`；`tasks.current_main_session_id` 不变；main 与 branch 的 `CompactSummary.core.current_artifact_refs` 分别保留各自 refs，互不污染 |
+| GC8：短 session 提前 resume 走 connect 路径 | recent + under budget 的短 session 执行 `/task resume`，并将 resume payload 注入 `/context` | `resume_diagnostics.connect_or_fork == "connect"`；`source_session_id == target_session_id`；`decision_reason == ["recent_session_under_budget"]`；tail history 纯文本投影可见；`/context` JSON / Markdown 均显示 `resume_diagnostics` |
+
 ## Baseline Trace 口径
 
-Battle 6 收口已补跑 2 个最小 observed baseline，用于确认 artifact trace / context integration 的字段可见性；下表数值用于回溯当次实现，不作为永久阈值：
+Stage 2 Battle 6 与 Stage 4 Battle 5 分别补跑最小 observed baseline，用于确认 artifact trace / context integration / resume recovery 的字段可见性；下表数值用于回溯当次实现，不作为永久阈值：
 
 | Baseline | 输入 | 关键输出 |
 | --- | --- | --- |
 | Trace 1：长 tool result artifactization | history 中 1 条超过阈值的 tool result，经 `ToolResultArtifactizer` 注入 `ContextBuilder` | `artifact_ref_count=1`；`pending_digest_count=0`；`artifact_chars=395`；`artifact_percent_of_prompt=0.3802`；`tool_result_artifactized_count=1`；`source_artifactized_count=0`；`current_user_source_artifactized=false` |
 | Trace 2：pending artifact ref `/context` | 显式传入 1 条 `digest_status="pending"` 的 `ArtifactContextRef` | `artifact_ref_count=1`；`pending_digest_count=1`；`artifact_chars=152`；`artifact_percent_of_prompt=0.1546`；`tool_result_artifactized_count=0`；`source_artifactized_count=0`；`current_user_source_artifactized=false` |
+| Trace 3：隔天 resume fork 恢复 | 已 compact 主线 session 在 `now + 31min` 后 resume，compact 后追加 1 条 tail，携带 artifact ref | `connect_or_fork=fork`；`decision_reason=["session_not_recent"]`；`tail_message_count=1`；`current_artifact_ref_count=1`；`voice_pack_skipped=true`；`final_state.compact_summary != null` |
+| Trace 4：分支对照隔离 | `/task branch` 生成 branch session 后，main 与 branch 分别 compact 为 `artifact_main` / `artifact_branch` | branch `parent_session_id=s1`；`branch_role=branch`；`current_main_session_id=s1`；main refs=`["artifact_main"]`；branch refs=`["artifact_branch"]` |
+| Trace 5：短 session connect + `/context` | recent 短 session resume 走 connect，并把 `task resume --json` payload 传入 `context-diagnose --resume-diagnostics-json` | `connect_or_fork=connect`；`source_session_id == target_session_id`；`decision_reason=["recent_session_under_budget"]`；`/context` JSON 含 `resume_diagnostics`；Markdown 含 `Resume Diagnostics` |
 
 回归验证命令：
 

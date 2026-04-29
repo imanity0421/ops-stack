@@ -713,6 +713,67 @@ def test_cli_context_outputs_resume_diagnostics_json_and_markdown(
     assert "deliverable_fallback_chain: tail" in out
 
 
+def test_gc8_short_session_resume_connect_is_visible_in_context(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    task_db = tmp_path / "task.db"
+    resume_json = tmp_path / "resume.json"
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(task_db))
+    store = TaskMemoryStore(task_db)
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="继续这个短会话")
+
+    assert cli.main(["task", "resume", task.task_id, "--json"]) == 0
+    resume_payload = json.loads(capsys.readouterr().out)
+    resume_json.write_text(json.dumps(resume_payload, ensure_ascii=False), encoding="utf-8")
+
+    assert resume_payload["resume_diagnostics"]["connect_or_fork"] == "connect"
+    assert (
+        resume_payload["resume_diagnostics"]["source_session_id"]
+        == resume_payload["resume_diagnostics"]["target_session_id"]
+    )
+    assert resume_payload["resume_diagnostics"]["decision_reason"] == ["recent_session_under_budget"]
+    assert "继续这个短会话" in resume_payload["final_state"]["prompt"]
+
+    assert (
+        cli.main(
+            [
+                "context",
+                "--message",
+                "继续推进",
+                "--resume-diagnostics-json",
+                str(resume_json),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    context_payload = json.loads(capsys.readouterr().out)
+    assert context_payload["resume_diagnostics"]["connect_or_fork"] == "connect"
+    assert context_payload["resume_diagnostics"]["decision_reason"] == [
+        "recent_session_under_budget"
+    ]
+
+    assert (
+        cli.main(
+            [
+                "context",
+                "--message",
+                "继续推进",
+                "--resume-diagnostics-json",
+                str(resume_json),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "### Resume Diagnostics" in out
+    assert "connect_or_fork: connect" in out
+
+
 def test_cli_compact_run_show_and_context_rehydration(
     tmp_path: Path,
     monkeypatch,

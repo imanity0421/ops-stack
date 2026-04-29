@@ -8,6 +8,12 @@
 
 ### Stage 4
 
+- **Battle 5：Golden Case GC-Resume 收口**（2026-04-30，done-local）
+  - [GC_SPEC.md](GC_SPEC.md) 新增 Stage 4 GC6-8 字段级断言，覆盖隔天 resume fork 恢复、分支对照隔离、短 session connect + `/context` 可见性。
+  - Baseline Trace 追加 Trace 3-5：stale resume fork、branch compact refs 隔离、short session connect + `context-diagnose --resume-diagnostics-json`。
+  - 测试补齐 GC6 / GC8 防退化断言，并复用 Battle 2 的 branch isolation 测试覆盖 GC7。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_cli.py tests/core/test_context_builder.py tests/core/test_context_diagnostics.py tests/core/test_artifact_store.py`；`python -m ruff check src tests`。
+
 - **Battle 4：Resume Trace + `/context` 集成**（2026-04-30，commit `a98424d`）
   - `task resume` 的 `resume_diagnostics` 扩展为稳定结构，覆盖 connect/fork 决策路径、force flag、session age/context usage、tail message count、artifact/pinned ref count 与 `voice_pack_skipped`。
   - final_state 观测字段进入诊断：`deliverable_inline_level`、`current_deliverable_chars`、`deliverable_fallback_chain`，用于观察 `full` / `tail` / `none` 命中。

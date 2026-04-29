@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -358,6 +359,51 @@ def test_resume_task_force_fork_updates_current_main_session_and_projects_tail(
     assert fork_session is not None
     assert fork_session.parent_session_id == "s1"
     assert fork_session.branch_role == "main"
+
+
+def test_gc6_resume_stale_session_forks_with_compact_tail_and_refs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = TaskMemoryStore(tmp_path / "task.db")
+    artifacts = ArtifactStore(tmp_path / "artifacts.db")
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    session = store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="必须突出新品")
+    artifact = artifacts.create_artifact(
+        task_id=task.task_id,
+        session_id="s1",
+        raw_content="主线当前交付物",
+        digest="主线摘要",
+    )
+    compact = CompactSummaryService(store).compact(
+        session_id="s1",
+        task_id=task.task_id,
+        current_artifact_refs=[artifact.artifact_id],
+    )
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="继续优化标题")
+    now = datetime.fromisoformat(session.updated_at).astimezone(timezone.utc) + timedelta(minutes=31)
+
+    result = resume_task(
+        store=store,
+        task_id=task.task_id,
+        session_id_factory=lambda: "s2",
+        artifact_store=artifacts,
+        now=now,
+        recent_minutes=30,
+    )
+    payload = result.to_dict()
+    diagnostics = payload["resume_diagnostics"]
+
+    assert compact is not None
+    assert result.status == "ok"
+    assert diagnostics["connect_or_fork"] == "fork"
+    assert diagnostics["decision_reason"] == ["session_not_recent"]
+    assert diagnostics["tail_message_count"] == 1
+    assert diagnostics["current_artifact_ref_count"] == 1
+    assert diagnostics["voice_pack_skipped"] is True
+    assert payload["final_state"]["compact_summary"] is not None
+    assert "继续优化标题" in payload["final_state"]["prompt"]
 
 
 def test_resume_task_diagnostics_include_final_state_and_fallback_chain(
