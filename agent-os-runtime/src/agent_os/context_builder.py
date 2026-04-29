@@ -27,6 +27,7 @@ from agent_os.runtime_context import (
 if TYPE_CHECKING:
     from agent_os.knowledge.asset_store import AssetStore
     from agent_os.knowledge.graphiti_reader import GraphitiReadService
+    from agent_os.knowledge.tool_result_artifactizer import ToolResultArtifactizer
     from agent_os.memory.controller import MemoryController
 
 
@@ -205,6 +206,7 @@ class HistoryCleanReport:
     tool_outputs_kept_chars: int = 0
     tool_outputs_folded_count: int = 0
     tool_outputs_omitted_count: int = 0
+    tool_outputs_artifactized_count: int = 0
     tool_output_budget_chars: int = 0
 
 
@@ -684,6 +686,8 @@ def build_auto_retrieval_context(
 def _role_of(message: Any) -> str:
     if isinstance(message, tuple) and message:
         return str(message[0]).strip() or "unknown"
+    if isinstance(message, dict):
+        return str(message.get("role", "") or "").strip() or "unknown"
     return str(getattr(message, "role", "") or "").strip() or "unknown"
 
 
@@ -691,11 +695,19 @@ def _content_of(message: Any) -> str:
     if isinstance(message, tuple) and len(message) >= 2:
         content = message[1]
         return _text_or_empty(content)
+    if isinstance(message, dict):
+        return _text_or_empty(message.get("content", ""))
     content = getattr(message, "content", "")
     return _text_or_empty(content)
 
 
 def _tool_name_of(message: Any) -> str:
+    if isinstance(message, dict):
+        for key in ("tool_name", "name", "tool_call_name"):
+            value = message.get(key)
+            if value:
+                return str(value)
+        return "unknown_tool"
     for attr in ("tool_name", "name", "tool_call_name"):
         value = getattr(message, attr, None)
         if value:
@@ -738,6 +750,7 @@ def clean_history_messages(
     max_tool_outputs_total_chars: int = 2_000,
     max_recent_assistant_chars: int | None = None,
     recent_assistant_extended_count: int = 1,
+    tool_result_artifactizer: "ToolResultArtifactizer | None" = None,
 ) -> list[str]:
     return clean_history_messages_with_report(
         messages,
@@ -747,6 +760,7 @@ def clean_history_messages(
         max_tool_outputs_total_chars=max_tool_outputs_total_chars,
         max_recent_assistant_chars=max_recent_assistant_chars,
         recent_assistant_extended_count=recent_assistant_extended_count,
+        tool_result_artifactizer=tool_result_artifactizer,
     ).lines
 
 
@@ -759,6 +773,7 @@ def clean_history_messages_with_report(
     max_tool_outputs_total_chars: int = 2_000,
     max_recent_assistant_chars: int | None = None,
     recent_assistant_extended_count: int = 1,
+    tool_result_artifactizer: "ToolResultArtifactizer | None" = None,
 ) -> HistoryCleanReport:
     """Return compact transcript lines for ContextBuilder-managed history.
 
@@ -775,6 +790,7 @@ def clean_history_messages_with_report(
     tool_kept_chars = 0
     tool_folded_count = 0
     tool_omitted_count = 0
+    tool_artifactized_count = 0
     for msg in reversed(selected):
         role = _role_of(msg)
         content = _content_of(msg)
@@ -787,6 +803,34 @@ def clean_history_messages_with_report(
             stripped = content.strip()
             original_chars = len(stripped)
             tool_original_chars += original_chars
+            artifact_ref = None
+            if tool_result_artifactizer is not None:
+                try:
+                    artifact_ref = tool_result_artifactizer.artifactize(
+                        tool_name=tool_name,
+                        content=content,
+                        message=msg,
+                    )
+                except Exception:
+                    artifact_ref = None
+            if artifact_ref is not None:
+                kept_text = artifact_ref.replacement_text
+                if tool_budget > 0 and len(kept_text) > tool_budget_remaining:
+                    if tool_budget_remaining <= 32:
+                        tool_omitted_count += 1
+                        rendered_reversed.append(
+                            f"- tool:{tool_name}: [工具结果 artifact ref 超过历史工具预算，已省略] "
+                            f"original_chars={original_chars}"
+                        )
+                        continue
+                    kept_text = _shorten(kept_text, tool_budget_remaining)
+                    tool_folded_count += 1
+                if tool_budget > 0:
+                    tool_budget_remaining -= len(kept_text)
+                tool_kept_chars += len(kept_text)
+                tool_artifactized_count += 1
+                rendered_reversed.append(f"- tool:{tool_name}: {kept_text}")
+                continue
             if tool_budget > 0 and tool_budget_remaining <= 0:
                 tool_omitted_count += 1
                 rendered_reversed.append(
@@ -835,6 +879,7 @@ def clean_history_messages_with_report(
         tool_outputs_kept_chars=tool_kept_chars,
         tool_outputs_folded_count=tool_folded_count,
         tool_outputs_omitted_count=tool_omitted_count,
+        tool_outputs_artifactized_count=tool_artifactized_count,
         tool_output_budget_chars=tool_budget,
     )
 
@@ -889,6 +934,7 @@ class ContextBuilder:
         history_max_messages_override: int | None = None,
         auto_retrieve_reason: str | None = None,
         entrypoint_extra_lines: Sequence[str] | None = None,
+        tool_result_artifactizer: "ToolResultArtifactizer | None" = None,
     ) -> ContextBundle:
         blocks: list[tuple[str, str]] = []
         trace_blocks: list[ContextTraceBlock] = []
@@ -1055,6 +1101,7 @@ class ContextBuilder:
             max_tool_outputs_total_chars=self._max_tool_outputs_total_chars,
             max_recent_assistant_chars=self._max_recent_assistant_content_chars,
             recent_assistant_extended_count=self._recent_assistant_extended_count,
+            tool_result_artifactizer=tool_result_artifactizer,
         )
         history_lines = history_report.lines
         if history_lines:
@@ -1071,6 +1118,7 @@ class ContextBuilder:
                 f"tool_original={history_report.tool_outputs_original_chars}",
                 f"tool_folded={history_report.tool_outputs_folded_count}",
                 f"tool_omitted={history_report.tool_outputs_omitted_count}",
+                f"tool_artifactized={history_report.tool_outputs_artifactized_count}",
             ]
             if budget_note:
                 note_parts.append(budget_note)

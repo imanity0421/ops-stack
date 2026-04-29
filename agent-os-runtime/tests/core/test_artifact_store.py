@@ -56,3 +56,24 @@ def test_artifact_store_rejects_empty_raw_content(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError):
         store.create_artifact(task_id="task_1", session_id="s1", raw_content=" ")
+
+
+def test_artifact_store_reuses_record_by_stable_key(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts.db")
+
+    first = store.create_artifact(
+        task_id="task_1",
+        session_id="s1",
+        raw_content="第一次工具结果正文",
+        stable_key="tool-result-key",
+    )
+    second = store.create_artifact(
+        task_id="task_1",
+        session_id="s1",
+        raw_content="第二次不应写入",
+        stable_key="tool-result-key",
+    )
+
+    assert second == first
+    assert store.find_artifact_by_stable_key("tool-result-key") == first
+    assert [a.artifact_id for a in store.list_artifacts(task_id="task_1")] == [first.artifact_id]

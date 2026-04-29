@@ -28,7 +28,9 @@ def artifact_digest_fallback(raw_content: str, *, max_chars: int = 200) -> str:
     text = " ".join((raw_content or "").strip().split())
     if len(text) <= max_chars:
         return text
-    return text[: max(0, max_chars - 1)] + "…"
+    if max_chars <= 3:
+        return text[:max_chars]
+    return text[: max(0, max_chars - 3)] + "..."
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class ArtifactRecord:
     digest_status: DigestStatus
     created_at: str
     updated_at: str
+    stable_key: str | None = None
 
     @property
     def ref_digest(self) -> str:
@@ -63,6 +66,7 @@ def _record_from_row(row: sqlite3.Row | None) -> ArtifactRecord | None:
         digest_status=row["digest_status"],
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
+        stable_key=row["stable_key"] if "stable_key" in row.keys() else None,
     )
 
 
@@ -95,11 +99,22 @@ class ArtifactStore:
                   digest TEXT,
                   digest_status TEXT NOT NULL,
                   created_at TEXT NOT NULL,
-                  updated_at TEXT NOT NULL
+                  updated_at TEXT NOT NULL,
+                  stable_key TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_artifacts_task_status
                   ON artifacts(task_id, status, updated_at);
+                """
+            )
+            cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(artifacts)")}
+            if "stable_key" not in cols:
+                conn.execute("ALTER TABLE artifacts ADD COLUMN stable_key TEXT")
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_stable_key
+                  ON artifacts(stable_key)
+                  WHERE stable_key IS NOT NULL
                 """
             )
 
@@ -111,10 +126,16 @@ class ArtifactStore:
         raw_content: str,
         digest: str | None = None,
         artifact_id: str | None = None,
+        stable_key: str | None = None,
     ) -> ArtifactRecord:
         content = str(raw_content or "")
         if not content.strip():
             raise ValueError("raw_content must not be empty")
+        key = stable_key.strip() if isinstance(stable_key, str) and stable_key.strip() else None
+        if key:
+            existing = self.find_artifact_by_stable_key(key)
+            if existing is not None:
+                return existing
         aid = artifact_id or new_artifact_id()
         now = _iso()
         digest_text = digest.strip() if isinstance(digest, str) and digest.strip() else None
@@ -124,10 +145,10 @@ class ArtifactStore:
                 """
                 INSERT INTO artifacts
                   (artifact_id, task_id, session_id, status, raw_content, digest,
-                   digest_status, created_at, updated_at)
-                VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
+                   digest_status, created_at, updated_at, stable_key)
+                VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
                 """,
-                (aid, task_id, session_id, content, digest_text, digest_status, now, now),
+                (aid, task_id, session_id, content, digest_text, digest_status, now, now, key),
             )
         return ArtifactRecord(
             artifact_id=aid,
@@ -139,6 +160,7 @@ class ArtifactStore:
             digest_status=digest_status,
             created_at=now,
             updated_at=now,
+            stable_key=key,
         )
 
     def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
@@ -146,6 +168,17 @@ class ArtifactStore:
             row = conn.execute(
                 "SELECT * FROM artifacts WHERE artifact_id = ?",
                 (artifact_id,),
+            ).fetchone()
+        return _record_from_row(row)
+
+    def find_artifact_by_stable_key(self, stable_key: str) -> ArtifactRecord | None:
+        key = str(stable_key or "").strip()
+        if not key:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifacts WHERE stable_key = ?",
+                (key,),
             ).fetchone()
         return _record_from_row(row)
 
