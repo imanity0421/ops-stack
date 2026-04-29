@@ -270,8 +270,8 @@
 
 | # | Battle | Status | 核心交付 | 依赖前置 |
 | --- | --- | --- | --- | --- |
-| 1 | **Task Entity v0** | done-local @ 2026-04-29 (pytest + ruff passed, commit pending) | `task_table` 5 字段 schema、`/task new` / `/task archive` / `/task unarchive` / `/task list`；单 session 1:1 跑通 | 无 |
-| 2 | **Artifact Registry v0** | done-local @ 2026-04-29 (pytest + ruff passed, commit pending) | 池 2 字段扩展（`kind=artifact` 区分 + `task_id` 外键）、artifact 显式产出与引用、`<artifact ref>` prompt 装配 | Battle 1 |
+| 1 | **Task Entity v0** | done @ 2026-04-29 (commit `cca7273`) | `task_table` 5 字段 schema、`/task new` / `/task archive` / `/task unarchive` / `/task list`；单 session 1:1 跑通 | 无 |
+| 2 | **Artifact Registry v0** | done @ 2026-04-29 (commit `cca7273`) | 池 2 字段扩展（`kind=artifact` 区分 + `task_id` 外键）、artifact 显式产出与引用、`<artifact ref>` prompt 装配 | Battle 1 |
 | 3 | **Tool Result Artifactization** | todo | 长 tool result 自动外置为 artifact、`<artifact ref>` 替代原文进 history、prompt budget 内只保留摘要 + ref | Battle 2 |
 | 4 | **Long Source Artifactization** | todo | 用户上传长文档 / agent 产出长文本自动 artifact 化、原文层 SQLite 写入 + 异步 digest 生成 | Battle 2 |
 | 5 | **Artifact Lifecycle Commands** | todo | `/artifact list` / `/artifact show` / `/artifact archive` / `/blob gc --orphan` 只列不删、archive 软删除 | Battle 2-4 |

@@ -8,7 +8,7 @@
 
 ### Stage 2
 
-- **Battle 1+2：Task Entity v0 + Artifact Registry v0**（2026-04-29，done-local）
+- **Battle 1+2：Task Entity v0 + Artifact Registry v0**（2026-04-29，commit `cca7273`）
   - Task Entity v0：`tasks` 5 字段实体落地，支持 create / list / archive / unarchive，并提供 thin `task` CLI。
   - Artifact Registry v0：新增 SQLite 原文层，支持 artifact 与 task / session 绑定、digest fallback、软归档。
   - ContextBuilder 支持 `<artifact ref>` prompt 装配，模型只看到 ref / digest，不回灌 artifact 全文。
