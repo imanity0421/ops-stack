@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, create_model
 
 from agent_os.agent.task_memory import TaskMemoryStore, TaskMessage, _iso
 
@@ -38,6 +38,11 @@ class CompactSummary(BaseModel):
 
 class SkillSchemaProvider(Protocol):
     def get_compact_schema_fragment(self) -> type[BaseModel]:
+        ...
+
+
+class SkillSchemaRegistry(Protocol):
+    def get_schema_fragment(self, skill_id: str) -> type[BaseModel] | None:
         ...
 
 
@@ -74,6 +79,30 @@ class CompactSummaryRecord:
             "compact_policy_version": self.compact_policy_version,
             "status": self.status,
         }
+
+
+def compose_compact_summary_schema(
+    skill_state_schema: type[BaseModel] | None = None,
+) -> type[BaseModel]:
+    """Compose CTE-owned core with an optional SR-owned skill_state schema."""
+
+    if skill_state_schema is None:
+        return CompactSummary
+    return create_model(
+        "ComposedCompactSummary",
+        __base__=BaseModel,
+        schema_version=(Literal["v2"], "v2"),
+        core=(CompactSummaryCore, ...),
+        skill_state=(skill_state_schema | None, None),
+    )
+
+
+def _to_compact_summary(summary: BaseModel | CompactSummary) -> CompactSummary:
+    data = summary.model_dump(mode="json")
+    skill_state = data.get("skill_state")
+    if isinstance(skill_state, BaseModel):
+        data["skill_state"] = skill_state.model_dump(mode="json")
+    return CompactSummary.model_validate(data)
 
 
 def _text_or_empty(value: object) -> str:
@@ -143,10 +172,17 @@ def _compact_prompt(
     messages: list[TaskMessage],
     current_artifact_refs: list[str],
     pinned_refs: list[str],
+    response_schema: type[BaseModel] | None = None,
 ) -> str:
     transcript = "\n".join(
         f"{message.role}: {_shorten(message.content, 1200)}" for message in messages[-30:]
     )
+    schema_hint = ""
+    if response_schema is not None:
+        schema_hint = (
+            "\n\n完整 JSON Schema（用于约束输出结构；不要把 schema 本身写入输出）：\n"
+            + json.dumps(response_schema.model_json_schema(), ensure_ascii=False)
+        )
     return (
         "你是 agent-os 的 CompactSummary v2 生成器。"
         "请把当前 task/session 的对话压缩成严格 JSON，不要输出 Markdown。"
@@ -156,6 +192,7 @@ def _compact_prompt(
         f"current_artifact_refs={json.dumps(current_artifact_refs, ensure_ascii=False)}\n"
         f"pinned_refs={json.dumps(pinned_refs, ensure_ascii=False)}\n\n"
         f"对话：\n{transcript}"
+        f"{schema_hint}"
     )
 
 
@@ -165,6 +202,7 @@ def _llm_compact_summary(
     current_artifact_refs: list[str],
     pinned_refs: list[str],
     model: str | None,
+    response_schema: type[BaseModel],
 ) -> CompactSummary | None:
     if not os.getenv("OPENAI_API_KEY"):
         return None
@@ -185,6 +223,7 @@ def _llm_compact_summary(
                         messages=messages,
                         current_artifact_refs=current_artifact_refs,
                         pinned_refs=pinned_refs,
+                        response_schema=response_schema,
                     ),
                 }
             ],
@@ -192,7 +231,7 @@ def _llm_compact_summary(
             response_format={"type": "json_object"},
         )
         raw = (response.choices[0].message.content or "").strip()
-        summary = compact_summary_from_json(raw)
+        summary = _to_compact_summary(response_schema.model_validate_json(raw))
         return _with_system_state(summary, current_artifact_refs, pinned_refs)
     except Exception:
         return None
@@ -218,9 +257,22 @@ class CompactSummaryService:
         store: TaskMemoryStore,
         *,
         model: str | None = None,
+        skill_schema_provider: SkillSchemaProvider | None = None,
+        skill_schema_registry: SkillSchemaRegistry | None = None,
+        active_skill_id: str | None = None,
     ) -> None:
         self._store = store
         self._model = model
+        self._skill_schema_provider = skill_schema_provider
+        self._skill_schema_registry = skill_schema_registry
+        self._active_skill_id = active_skill_id
+
+    def _skill_schema_fragment(self) -> type[BaseModel] | None:
+        if self._skill_schema_provider is not None:
+            return self._skill_schema_provider.get_compact_schema_fragment()
+        if self._skill_schema_registry is not None and self._active_skill_id:
+            return self._skill_schema_registry.get_schema_fragment(self._active_skill_id)
+        return None
 
     def compact(
         self,
@@ -236,11 +288,13 @@ class CompactSummaryService:
         current_refs = list(dict.fromkeys(current_artifact_refs or []))
         pinned = list(dict.fromkeys(pinned_refs or []))
         existing = self._store.get_compact_summary(session_id=session_id, task_id=task_id)
+        response_schema = compose_compact_summary_schema(self._skill_schema_fragment())
         summary = _llm_compact_summary(
             messages=messages,
             current_artifact_refs=current_refs,
             pinned_refs=pinned,
             model=self._model,
+            response_schema=response_schema,
         ) or _fallback_compact_summary(
             messages=messages,
             current_artifact_refs=current_refs,

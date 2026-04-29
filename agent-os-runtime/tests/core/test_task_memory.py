@@ -6,7 +6,11 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from agent_os.agent.compact import CompactSummaryService, SkillSchemaProvider
+from agent_os.agent.compact import (
+    CompactSummaryService,
+    SkillSchemaProvider,
+    compose_compact_summary_schema,
+)
 from agent_os.agent.task_memory import (
     TaskMemoryStore,
     TaskSummary,
@@ -18,6 +22,7 @@ from agent_os.agent.task_memory import (
 from agent_os.cte.branch_task import branch_task
 from agent_os.cte.resume_task import resume_task
 from agent_os.knowledge.artifact_store import ArtifactStore
+from agent_os.sr.schema_registry import SkillSchemaProviderRegistry
 
 
 def test_new_task_id_is_human_sortable() -> None:
@@ -503,6 +508,108 @@ def test_skill_schema_provider_protocol_shape() -> None:
 
     provider: SkillSchemaProvider = Provider()
     assert provider.get_compact_schema_fragment() is SkillState
+
+
+def test_compose_compact_summary_schema_accepts_mock_skill_fragments() -> None:
+    class MockSkillAState(BaseModel):
+        a1: str
+        a2: int = 0
+        a3: list[str] = []
+
+    class MockSkillBState(BaseModel):
+        b1: bool
+        b2: dict[str, str] = {}
+
+    schema_a = compose_compact_summary_schema(MockSkillAState)
+    schema_b = compose_compact_summary_schema(MockSkillBState)
+
+    summary_a = schema_a.model_validate(
+        {
+            "schema_version": "v2",
+            "core": {"goal": "mock-a"},
+            "skill_state": {"a1": "alpha", "a2": 2, "a3": ["x"]},
+        }
+    )
+    summary_b = schema_b.model_validate(
+        {
+            "schema_version": "v2",
+            "core": {"goal": "mock-b"},
+            "skill_state": {"b1": True, "b2": {"k": "v"}},
+        }
+    )
+
+    assert summary_a.skill_state.a1 == "alpha"
+    assert summary_b.skill_state.b1 is True
+    schema_a_text = str(schema_a.model_json_schema())
+    schema_b_text = str(schema_b.model_json_schema())
+    assert "a1" in schema_a_text and "a2" in schema_a_text and "a3" in schema_a_text
+    assert "b1" in schema_b_text and "b2" in schema_b_text
+    assert "brand" not in schema_a_text.lower()
+    assert "voice" not in schema_a_text.lower()
+    assert "audience" not in schema_b_text.lower()
+    assert "kpi" not in schema_b_text.lower()
+
+
+def test_skill_schema_provider_registry_supports_heterogeneous_mock_skills() -> None:
+    class MockSkillAState(BaseModel):
+        a1: str
+        a2: int = 0
+        a3: list[str] = []
+
+    class MockSkillBState(BaseModel):
+        b1: bool
+        b2: dict[str, str] = {}
+
+    class MockSkillAProvider:
+        def get_compact_schema_fragment(self) -> type[BaseModel]:
+            return MockSkillAState
+
+    class MockSkillBProvider:
+        def get_compact_schema_fragment(self) -> type[BaseModel]:
+            return MockSkillBState
+
+    registry = SkillSchemaProviderRegistry()
+    registry.register("mock_skill_a", MockSkillAProvider())
+    registry.register("mock_skill_b", MockSkillBProvider())
+
+    assert registry.get_schema_fragment("mock_skill_a") is MockSkillAState
+    assert registry.get_schema_fragment("mock_skill_b") is MockSkillBState
+    assert registry.get_schema_fragment("missing") is None
+
+
+def test_compact_summary_service_uses_registry_fragment_without_persisting_model_instance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    class MockSkillAState(BaseModel):
+        a1: str = ""
+        a2: int = 0
+        a3: list[str] = []
+
+    class MockSkillAProvider:
+        def get_compact_schema_fragment(self) -> type[BaseModel]:
+            return MockSkillAState
+
+    registry = SkillSchemaProviderRegistry()
+    registry.register("mock_skill_a", MockSkillAProvider())
+    store = TaskMemoryStore(tmp_path / "task.db")
+    task = store.create_task(name="mock task", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="mock request")
+
+    record = CompactSummaryService(
+        store,
+        skill_schema_registry=registry,
+        active_skill_id="mock_skill_a",
+    ).compact(session_id="s1", task_id=task.task_id)
+
+    assert record is not None
+    assert record.summary.schema_version == "v2"
+    assert record.summary.skill_state is None
+    loaded = store.get_compact_summary(session_id="s1", task_id=task.task_id)
+    assert loaded is not None
+    assert loaded.summary.skill_state is None
 
 
 def test_task_memory_bad_invoked_skills_json_falls_back(tmp_path: Path) -> None:
