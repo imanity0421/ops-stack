@@ -18,6 +18,11 @@
   - `ArtifactStore` 支持 `stable_key` 去重查询，重复清洗同一 tool result 时复用同一 artifact。
   - `ContextBuilder.clean_history_messages_with_report()` 支持显式注入 artifactizer，默认不改变运行时行为；trace 增加 `tool_artifactized` 计数。
   - 验证：`python -m pytest tests/core/test_tool_result_artifactization.py tests/core/test_context_builder.py tests/core/test_artifact_store.py`；`python -m ruff check src tests`。
+- **Battle 4：Long Source Artifactization**（2026-04-29，done-local）
+  - 新增 `SourceArtifactizer`，长用户素材与长 assistant deliverable 可写入 `ArtifactStore`，prompt/history 只保留稳定 `<artifact ref>` + digest。
+  - `ContextBuilder.clean_history_messages_with_report()` 支持显式注入 source artifactizer，默认不改变 CLI/Web 主运行时行为；trace 增加 `source_artifactized` 计数。
+  - 当前用户长 source 可在显式注入时 artifact 化为 `<artifact ref>`，避免大段 source 直接进入 prompt。
+  - 验证：`python -m pytest tests/core/test_source_artifactization.py tests/core/test_context_builder.py tests/core/test_artifact_store.py`；`python -m ruff check src tests`。
 
 ### 文档
 

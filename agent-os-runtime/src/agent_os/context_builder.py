@@ -27,6 +27,7 @@ from agent_os.runtime_context import (
 if TYPE_CHECKING:
     from agent_os.knowledge.asset_store import AssetStore
     from agent_os.knowledge.graphiti_reader import GraphitiReadService
+    from agent_os.knowledge.source_artifactizer import SourceArtifactizer
     from agent_os.knowledge.tool_result_artifactizer import ToolResultArtifactizer
     from agent_os.memory.controller import MemoryController
 
@@ -207,6 +208,7 @@ class HistoryCleanReport:
     tool_outputs_folded_count: int = 0
     tool_outputs_omitted_count: int = 0
     tool_outputs_artifactized_count: int = 0
+    source_artifactized_count: int = 0
     tool_output_budget_chars: int = 0
 
 
@@ -751,6 +753,7 @@ def clean_history_messages(
     max_recent_assistant_chars: int | None = None,
     recent_assistant_extended_count: int = 1,
     tool_result_artifactizer: "ToolResultArtifactizer | None" = None,
+    source_artifactizer: "SourceArtifactizer | None" = None,
 ) -> list[str]:
     return clean_history_messages_with_report(
         messages,
@@ -761,6 +764,7 @@ def clean_history_messages(
         max_recent_assistant_chars=max_recent_assistant_chars,
         recent_assistant_extended_count=recent_assistant_extended_count,
         tool_result_artifactizer=tool_result_artifactizer,
+        source_artifactizer=source_artifactizer,
     ).lines
 
 
@@ -774,6 +778,7 @@ def clean_history_messages_with_report(
     max_recent_assistant_chars: int | None = None,
     recent_assistant_extended_count: int = 1,
     tool_result_artifactizer: "ToolResultArtifactizer | None" = None,
+    source_artifactizer: "SourceArtifactizer | None" = None,
 ) -> HistoryCleanReport:
     """Return compact transcript lines for ContextBuilder-managed history.
 
@@ -791,6 +796,7 @@ def clean_history_messages_with_report(
     tool_folded_count = 0
     tool_omitted_count = 0
     tool_artifactized_count = 0
+    source_artifactized_count = 0
     for msg in reversed(selected):
         role = _role_of(msg)
         content = _content_of(msg)
@@ -864,6 +870,20 @@ def clean_history_messages_with_report(
             continue
         if role not in {"user", "assistant", "system"}:
             role = "message"
+        if role in {"user", "assistant"} and source_artifactizer is not None:
+            try:
+                source_ref = source_artifactizer.artifactize(
+                    source_kind="deliverable" if role == "assistant" else "source",
+                    content=content,
+                    source_name=f"history_{role}",
+                    message=msg,
+                )
+            except Exception:
+                source_ref = None
+            if source_ref is not None:
+                source_artifactized_count += 1
+                rendered_reversed.append(f"- {role}: {source_ref.replacement_text}")
+                continue
         cap = max_content_chars
         if (
             role == "assistant"
@@ -880,6 +900,7 @@ def clean_history_messages_with_report(
         tool_outputs_folded_count=tool_folded_count,
         tool_outputs_omitted_count=tool_omitted_count,
         tool_outputs_artifactized_count=tool_artifactized_count,
+        source_artifactized_count=source_artifactized_count,
         tool_output_budget_chars=tool_budget,
     )
 
@@ -935,6 +956,7 @@ class ContextBuilder:
         auto_retrieve_reason: str | None = None,
         entrypoint_extra_lines: Sequence[str] | None = None,
         tool_result_artifactizer: "ToolResultArtifactizer | None" = None,
+        source_artifactizer: "SourceArtifactizer | None" = None,
     ) -> ContextBundle:
         blocks: list[tuple[str, str]] = []
         trace_blocks: list[ContextTraceBlock] = []
@@ -1102,6 +1124,7 @@ class ContextBuilder:
             max_recent_assistant_chars=self._max_recent_assistant_content_chars,
             recent_assistant_extended_count=self._recent_assistant_extended_count,
             tool_result_artifactizer=tool_result_artifactizer,
+            source_artifactizer=source_artifactizer,
         )
         history_lines = history_report.lines
         if history_lines:
@@ -1119,6 +1142,7 @@ class ContextBuilder:
                 f"tool_folded={history_report.tool_outputs_folded_count}",
                 f"tool_omitted={history_report.tool_outputs_omitted_count}",
                 f"tool_artifactized={history_report.tool_outputs_artifactized_count}",
+                f"source_artifactized={history_report.source_artifactized_count}",
             ]
             if budget_note:
                 note_parts.append(budget_note)
@@ -1143,7 +1167,20 @@ class ContextBuilder:
             )
 
         current_raw = _text_or_empty(user_message).strip()
-        current = _literal_text_for_prompt(current_raw)
+        current_source_artifactized = 0
+        if source_artifactizer is not None:
+            try:
+                current_source_ref = source_artifactizer.artifactize(
+                    source_kind="source",
+                    content=current_raw,
+                    source_name="current_user_message",
+                )
+            except Exception:
+                current_source_ref = None
+            if current_source_ref is not None:
+                current_raw = current_source_ref.replacement_text
+                current_source_artifactized = 1
+        current = current_raw if current_source_artifactized else _literal_text_for_prompt(current_raw)
         anchor_request, anchor_note = _build_attention_anchor_request(
             current_raw,
             self._attention_anchor_max_chars,
@@ -1184,6 +1221,16 @@ class ContextBuilder:
                 ),
             )
         )
+        if current_source_artifactized:
+            trace_blocks.append(
+                ContextTraceBlock(
+                    "current_user_source_artifact",
+                    len(current_raw),
+                    True,
+                    source="artifact_store",
+                    note="source_artifactized=1",
+                )
+            )
 
         if self._hard_total_budget:
             blocks, hard_budget_trace = _apply_hard_total_budget(
