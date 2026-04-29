@@ -10,6 +10,13 @@
 | GC2：artifact diagnostics 可归因 | 同一轮包含显式 artifact refs 与 artifactized history | `/context --json` 输出 `artifact_diagnostics`；`pending_digest_count` 与 prompt 中 `digest_status="pending"` 数一致；`tool_result_artifactized_count` / `source_artifactized_count` 反映对应 artifactization；Markdown 包含 `Artifact Diagnostics` |
 | GC3：lifecycle 命令不做破坏性 GC | 存在 active artifact、archived artifact 与 orphan artifact | `artifact list/show/archive` 只操作 ArtifactStore 原文层；`blob gc --orphan` 输出 `dry_run=true`；dry-run 后 orphan artifact 仍可 `get_artifact()` 读取 |
 
+## Stage 3 Compact Schema
+
+| GC | 输入 | Stage 3 字段级断言（一行口径） |
+| --- | --- | --- |
+| GC4：compact 后恢复任务目标 | 包含多轮用户约束、assistant 进展与 artifact refs 的 task/session | `CompactSummary.schema_version == "v1"`；`core.goal` / `core.constraints` / `core.progress` / `core.last_user_instruction` 非空；`business_writing_pack` / `skill_state` 允许 `null` |
+| GC5：artifact refs 在 compact 中持续可追踪 | compact 前已有 artifact refs 或 pinned refs 的 task/session | `core.current_artifact_refs` / `core.pinned_refs` 由代码层写入，不由 LLM 编造；ContextBuilder rehydration 后 `/context` 输出 `compact_diagnostics.rehydrated=true` 与正确 `summary_version` |
+
 ## Baseline Trace 口径
 
 Battle 6 收口已补跑 2 个最小 observed baseline，用于确认 artifact trace / context integration 的字段可见性；下表数值用于回溯当次实现，不作为永久阈值：
@@ -21,7 +28,7 @@ Battle 6 收口已补跑 2 个最小 observed baseline，用于确认 artifact t
 
 回归验证命令：
 
-- `python -m pytest tests/core/test_context_builder.py tests/core/test_cli.py tests/core/test_tool_result_artifactization.py tests/core/test_source_artifactization.py tests/core/test_artifact_store.py`
+- `python -m pytest tests/core/test_task_memory.py tests/core/test_context_builder.py tests/core/test_cli.py tests/core/test_context_diagnostics.py tests/core/test_tool_result_artifactization.py tests/core/test_source_artifactization.py tests/core/test_artifact_store.py`
 - `python -m ruff check src tests`
 
 真实长任务 baseline 暂不固化为数据集；Stage 3 compact 落地后再把 GC1-3 与 compact schema 断言串成跨 stage case。

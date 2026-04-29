@@ -6,6 +6,15 @@
 
 本节按 `### Stage X` / `### 文档` / `### 改进` / `### 新增` / `### 修复` / `### 破坏性变更` 分组；Stage 2 起用 `### Stage 2` 记录 battle 完成项。
 
+### Stage 3
+
+- **CompactSummary v1 + Manual Compact**（2026-04-29，commit `98f7953`）
+  - 新增结构化 `CompactSummary` / `CompactSummaryCore` 与 `SkillSchemaProvider` Protocol，按 system-state / LLM-generated state 分离维护 compact 字段。
+  - 新增 `compact_summaries` SQLite 存储与 `compact run/show` CLI；无 LLM key 时使用 deterministic fallback，保证本地可验证。
+  - `ContextBuilder` 支持注入 `<compact_summary>` rehydration block，`/context` JSON/Markdown 新增 `compact_diagnostics` 与 budget suggestion signal。
+  - [GC_SPEC.md](GC_SPEC.md) 追加 GC4 / GC5 Stage3 字段级断言；[OPEN_DECISIONS.md](OPEN_DECISIONS.md) A1 / A7 增加 Stage 3 收口备注。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_context_builder.py tests/core/test_cli.py tests/core/test_context_diagnostics.py`；`python -m ruff check src tests`。
+
 ### Stage 2
 
 - **Battle 1+2：Task Entity v0 + Artifact Registry v0**（2026-04-29，commit `cca7273`）

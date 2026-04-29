@@ -33,6 +33,8 @@
 
 **Battle 6 收口备注（2026-04-29）**：Stage 2 已创建最小 [GC_SPEC.md](GC_SPEC.md)，先用 GC1-3 一行表格化断言固化 artifact trace / `/context` / lifecycle 的字段级口径。A1 的完整答案仍留到 Stage 3 第一条 compact GC 落地时补齐（届时再决定 `gc_assertion_level` 参数化断言函数的具体实现）。
 
+**Stage 3 收口备注（2026-04-29）**：GC4/GC5 Stage3 断言已补入 [GC_SPEC.md](GC_SPEC.md)。实现口径采用用户确认的推荐路径：参数驱动单函数/同一断言体系，Stage 3 先落 `gc_assertion_level="stage3"` 的字段口径；Stage 5 再追加 business_writing / voice pack 强断言。
+
 ### A2：Deliverable Lifecycle 字段定义归 Stage 2 还是 Stage 5
 
 **已知**：[ARCHITECTURE.md](ARCHITECTURE.md) 1.3 已定——版本控制（current / previous / final）是池 2 的字段语义，归 MA；业务消费（如 `/skill deliverable promote`）归 SR。1.4 已预留 `/artifact finalize <id>` 命令名（Stage 5 实现）。
@@ -127,6 +129,8 @@
 **回答方式**：Stage 3 写第一个 compact 实现时落地；Stage 5 引入 business_writing skill 时验证接口在跨 skill 类间的复用性。
 
 **当前推荐**：启动时注册（让 DI 容器主导）；签名为 `Protocol.get_compact_schema_fragment() -> Type[BaseModel]`，schema 版本管理交给 Pydantic model 内部 `schema_version` 字段；多 skill 暂不支持（第一个实现强制 single-skill-active）。
+
+**Stage 3 收口备注（2026-04-29）**：已按用户确认的推荐路径落地 `SkillSchemaProvider` Protocol，签名为 `get_compact_schema_fragment() -> type[BaseModel]`。Stage 3 首版强制 single-skill-active；`business_writing_pack` / `skill_state` 默认 `null`，Stage 5 再由真实 skill fragment 验证复用性。
 
 ### A8：pinned_refs 填充 / 取消 pin 策略
 
@@ -315,6 +319,21 @@
 - **PR template**：暂缓创建 `.github/PULL_REQUEST_TEMPLATE.md`。若开始频繁通过 PR 串行交接，或出现 Reference Check / 测试命令 / D1 Status / CHANGELOG 漏填，再创建模板；模板应包含 Battle / Scope、Claude Code Reference Check、Test Plan、CHANGELOG / D1 Status checklist。
 - **GC_SPEC.md**：已在 Battle 6 创建最小 [GC_SPEC.md](GC_SPEC.md)，承载 Stage 2 artifact trace / `/context` / lifecycle 的 GC1-3 字段级断言骨架；Stage 3 compact GC 再扩展断言强度矩阵。
 - **Stage 2 baseline trace**：已在 Battle 6 收口补跑 2 个 artifact diagnostics baseline（长 tool result artifactization、pending artifact ref `/context`），记录在 [GC_SPEC.md](GC_SPEC.md)；不写入 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
+## E. Stage 3 Compact 执行状态
+
+> **本章性质**：Stage 3 的一句话承诺是"长会话可 compact 并以 `CompactSummary` schema 恢复目标，Task Loop 核心闭环成立"。本章只记录执行状态；架构契约仍以 [ARCHITECTURE.md](ARCHITECTURE.md) 3.2 / 3.5 为准。
+
+| # | Battle | Status | 核心交付 |
+| --- | --- | --- | --- |
+| 1 | **CompactSummary v1 Schema** | done @ 2026-04-29 (commit `98f7953`) | `CompactSummaryCore` / `CompactSummary` schema、system-state 与 LLM-generated state 分离、A7 `SkillSchemaProvider` Protocol |
+| 2 | **Compact Store + Manual CLI** | done @ 2026-04-29 (commit `98f7953`) | `compact_summaries` SQLite 表、`compact run/show` CLI、JSON/Markdown 可观测 |
+| 3 | **Compact Prompt + Fallback** | done @ 2026-04-29 (commit `98f7953`) | 有 key 时 JSON compact prompt；无 key / 失败时 deterministic fallback |
+| 4 | **Context Rehydration v0** | done @ 2026-04-29 (commit `98f7953`) | `ContextBuilder` 注入 `<compact_summary>`，`/context` 输出 `compact_diagnostics` |
+| 5 | **Budget Suggestion Mode** | done @ 2026-04-29 (commit `98f7953`) | `compact_suggested` 只作为 diagnostics signal，不自动 compact |
+| 6 | **GC4/GC5 Stage3 收口** | done @ 2026-04-29 (commit `98f7953`) | [GC_SPEC.md](GC_SPEC.md) 追加 GC4 / GC5 Stage3 字段级断言 |
 
 ---
 
