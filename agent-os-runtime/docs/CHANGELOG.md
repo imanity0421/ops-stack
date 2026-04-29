@@ -8,7 +8,7 @@
 
 ### Stage 5
 
-- **Battle 4：SR 平等性 + 跨 skill artifact 共享 invariant 工程验证**（2026-04-30，done-local）
+- **Battle 4：SR 平等性 + 跨 skill artifact 共享 invariant 工程验证**（2026-04-30，commit `15b37ca`）
   - `branch_task` 的 resume final-state 合成路径支持透传 mock skill schema registry，确保 branch / resume 端到端诊断能看到 active skill fragment。
   - 用 `MockSkillA` / `MockSkillB` 异类字段集验证注册 → resume/branch 装配 → fake ER spin up 的平等路径，两个 skill 均不触发 fragment skipped。
   - 验证跨 skill 共享只走 artifact ref：MockSkillA 产出 artifact，MockSkillB 的独立 task 通过 `current_artifact_refs` 恢复交付物内容，不共享 A/B schema 字段。

@@ -536,7 +536,7 @@
   - 当 active skill 未实现 `SkillSchemaProvider` 或返回 None 时，CTE 装配走 fallback：仅装配 core schema + 在 trace 中记 `skill_fragment_skipped: true` + decision_reason；不报错、不强制 skill 必须有 fragment。
   - 与 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 既有降级链同构。
 
-- **Battle 4：SR 平等性 + 跨 skill artifact 共享 invariant 工程验证**（done-local @ 2026-04-30，commit 待回填）
+- **Battle 4：SR 平等性 + 跨 skill artifact 共享 invariant 工程验证**（done @ 2026-04-30，commit `15b37ca`）
   - 用 2 个 mock skill（`MockSkillA` 字段集 = `{a1, a2, a3}`、`MockSkillB` 字段集 = `{b1, b2}`）跑端到端：注册 → CTE 装配 → ER spin up → resume 装配。
   - 跨 skill artifact 共享走 path：MockSkillA 完成后 finalize artifact `out_a.md`、新 task 启动 MockSkillB 通过 `artifact ref` 读 `out_a.md`——验证 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 "跨 skill schema 字段共享" 反模式抗体的实际可行性。
 
