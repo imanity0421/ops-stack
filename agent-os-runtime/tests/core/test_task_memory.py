@@ -293,7 +293,7 @@ def test_compact_summary_service_persists_structured_summary(
     )
 
     assert record is not None
-    assert record.summary.schema_version == "v1"
+    assert record.summary.schema_version == "v2"
     assert record.summary.core.current_artifact_refs == ["artifact_1"]
     assert record.summary.core.pinned_refs == ["asset_1"]
     assert record.summary.core.goal

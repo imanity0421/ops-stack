@@ -14,7 +14,7 @@
 
 | GC | 输入 | Stage 3 字段级断言（一行口径） |
 | --- | --- | --- |
-| GC4：compact 后恢复任务目标 | 包含多轮用户约束、assistant 进展与 artifact refs 的 task/session | `CompactSummary.schema_version == "v1"`；`core.goal` / `core.constraints` / `core.progress` / `core.last_user_instruction` 非空；`business_writing_pack` / `skill_state` 允许 `null` |
+| GC4：compact 后恢复任务目标 | 包含多轮用户约束、assistant 进展与 artifact refs 的 task/session | `CompactSummary.schema_version == "v2"`（Phase 9 起；v1 历史数据通过 `scripts/migrate_compact_v1_to_v2.py` 迁移）；`core.goal` / `core.constraints` / `core.progress` / `core.last_user_instruction` 非空；`skill_state` 允许 `null`（业务字段级断言推到 Stage 7 真实 skill 接入后追加，详见 [ARCHITECTURE.md](ARCHITECTURE.md) §3.5）|
 | GC5：artifact refs 在 compact 中持续可追踪 | compact 前已有 artifact refs 或 pinned refs 的 task/session | `core.current_artifact_refs` / `core.pinned_refs` 由代码层写入，不由 LLM 编造；ContextBuilder rehydration 后 `/context` 输出 `compact_diagnostics.rehydrated=true` 与正确 `summary_version` |
 
 ## Stage 4 GC-Resume

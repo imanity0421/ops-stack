@@ -815,7 +815,7 @@ def test_cli_compact_run_show_and_context_rehydration(
     )
     payload = json.loads(capsys.readouterr().out)
     record = payload["compact_summary"]
-    assert record["summary"]["schema_version"] == "v1"
+    assert record["summary"]["schema_version"] == "v2"
     assert record["summary"]["core"]["current_artifact_refs"] == ["artifact_1"]
 
     assert cli.main(["compact", "show", "--session-id", "s1", "--task-id", task.task_id, "--json"]) == 0
@@ -839,7 +839,7 @@ def test_cli_compact_run_show_and_context_rehydration(
     )
     diagnostics = json.loads(capsys.readouterr().out)
     assert diagnostics["compact_diagnostics"]["rehydrated"] is True
-    assert diagnostics["compact_diagnostics"]["schema_version"] == "v1"
+    assert diagnostics["compact_diagnostics"]["schema_version"] == "v2"
 
 
 def test_cli_graphiti_dry_run_rejects_non_list_episodes(tmp_path: Path) -> None:

@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from agent_os.agent.task_memory import TaskMemoryStore, TaskMessage, _iso
 
-COMPACT_SCHEMA_VERSION = "v1"
-COMPACT_POLICY_VERSION = "compact_summary_v1"
+COMPACT_SCHEMA_VERSION = "v2"
+COMPACT_POLICY_VERSION = "compact_summary_v2"
 
 
 class CompactSummaryCore(BaseModel):
@@ -25,9 +25,14 @@ class CompactSummaryCore(BaseModel):
 
 
 class CompactSummary(BaseModel):
-    schema_version: Literal["v1"] = "v1"
+    """CompactSummary v2 (Phase 9): two-layer schema -- core + skill_state.
+
+    v1 had an additional Layer 2 ``business_writing_pack`` field which has been
+    removed (see ARCHITECTURE.md Phase 9 revision log + scripts/migrate_compact_v1_to_v2.py).
+    """
+
+    schema_version: Literal["v2"] = "v2"
     core: CompactSummaryCore
-    business_writing_pack: dict[str, Any] | None = None
     skill_state: dict[str, Any] | None = None
 
 
@@ -143,11 +148,11 @@ def _compact_prompt(
         f"{message.role}: {_shorten(message.content, 1200)}" for message in messages[-30:]
     )
     return (
-        "你是 agent-os 的 CompactSummary v1 生成器。"
+        "你是 agent-os 的 CompactSummary v2 生成器。"
         "请把当前 task/session 的对话压缩成严格 JSON，不要输出 Markdown。"
-        "必须只输出这些字段：schema_version, core, business_writing_pack, skill_state。"
+        "必须只输出这些字段：schema_version, core, skill_state。"
         "core 里 current_artifact_refs / pinned_refs 是 system-state，请原样保留，不要编造 ID。"
-        "business_writing_pack 与 skill_state 在 Stage 3 先输出 null。\n\n"
+        "skill_state 由 active skill 的 SR 自解析；当前若无 active skill 请输出 null。\n\n"
         f"current_artifact_refs={json.dumps(current_artifact_refs, ensure_ascii=False)}\n"
         f"pinned_refs={json.dumps(pinned_refs, ensure_ascii=False)}\n\n"
         f"对话：\n{transcript}"
@@ -187,7 +192,7 @@ def _llm_compact_summary(
             response_format={"type": "json_object"},
         )
         raw = (response.choices[0].message.content or "").strip()
-        summary = CompactSummary.model_validate_json(raw)
+        summary = compact_summary_from_json(raw)
         return _with_system_state(summary, current_artifact_refs, pinned_refs)
     except Exception:
         return None
@@ -203,7 +208,6 @@ def _with_system_state(
     core["current_artifact_refs"] = current_artifact_refs
     core["pinned_refs"] = pinned_refs
     data["core"] = core
-    data["business_writing_pack"] = data.get("business_writing_pack")
     data["skill_state"] = data.get("skill_state")
     return CompactSummary.model_validate(data)
 
@@ -258,8 +262,25 @@ class CompactSummaryService:
 
 
 def compact_summary_from_json(raw: str) -> CompactSummary:
+    """Deserialize a CompactSummary JSON blob with v1 -> v2 inline migration.
+
+    v1 had ``schema_version="v1"`` and an extra ``business_writing_pack`` key.
+    Phase 9 collapsed schema to two layers; this loader transparently drops
+    ``business_writing_pack`` and bumps ``schema_version`` so that previously
+    stored v1 blobs (written by Stage 3 / Stage 4 code) keep deserializing
+    without forcing a hard offline migration. The offline migration script
+    (``scripts/migrate_compact_v1_to_v2.py``) is still preferred for SQLite
+    columns -- this fallback exists for resilience, not as primary path.
+    """
     try:
-        return CompactSummary.model_validate_json(raw)
+        data = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid compact summary json: {exc}") from exc
+    if isinstance(data, dict) and data.get("schema_version") == "v1":
+        data.pop("business_writing_pack", None)
+        data["schema_version"] = "v2"
+    try:
+        return CompactSummary.model_validate(data)
     except ValidationError as exc:
         raise ValueError(f"invalid compact summary json: {exc}") from exc
 
@@ -269,7 +290,7 @@ def build_compact_summary_instruction(record: CompactSummaryRecord | None) -> st
         return None
     core = record.summary.core
     lines = [
-        "<compact_summary schema_version=\"v1\">",
+        "<compact_summary schema_version=\"v2\">",
         "<usage_rule>这是 compact 后的 task 工作面恢复锚点；优先保持 goal / constraints / artifact refs 连贯。</usage_rule>",
         f"<task_id>{record.task_id}</task_id>",
         f"<summary_version>{record.summary_version}</summary_version>",
