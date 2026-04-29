@@ -171,6 +171,12 @@
 - task 归档不自动 unpin（保留用户语义），但 archived task 的 pin 不参与新 task 的召回。
 - pinned_refs inline 时**不再参与召回打分**（已强制在场，再打分会双倍占预算）。
 
+**Stage 4 启动前确认（2026-04-29，Phase 8 同日补丁）**：A8 填充策略仍归 Stage 6（与"回答方式"一致），Stage 4 不实现 `/memory pin` / `/asset pin` / `/memory unpin` 命令。Stage 4 Battle 1 的 `/task resume` v0 final_state 实时合成（见 F1）对 `pinned_refs` 字段**只消费不填充**：
+
+- 读取已存在的 `CompactSummaryCore.pinned_refs` 字段：默认空列表 → resume 装配跳过该 inline 段（不报错、不 trace skipped 标志，因为字段位级是默认空而非 None）；非空 → 按 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 强制 inline，不参与召回打分。
+- 不引入填充入口：Stage 4 不实现 pin / unpin 命令，不实现 agent 自动建议 pin 逻辑；Stage 6 真实 memory candidate 流稳定后再实现完整生命周期。
+- 与 S3 voice_pack=None fallback 同构：都是"Stage 4 装配只消费上游已存在字段，不强制非空、不实现填充"原则。
+
 ---
 
 ## B. 总设计师决策待回答（用户决策）
@@ -437,3 +443,4 @@
   - **A3 / A4 / A5 / A6 / B5 五条均追加 Stage 4 启动前确认 / 路径决策段**：固化 Stage 4 5 battle 实施时的方向，避免开工后再开放讨论。其中 **A4 直接采用 Phase 8 落地修正版**——经实测核查 [task_memory.py:138-146 / 425](../src/agent_os/agent/task_memory.py)，`sessions` 表已存在并已维护 `active_task_id` / `updated_at`，因此 Stage 4 仅扩展现有 `sessions` 表 +2 列（`parent_session_id` + `branch_role`），跳过中间 6 字段方案；`task_id` / `last_active_at` / `is_main` 全部复用现有字段不新增。
   - **[ARCHITECTURE.md](ARCHITECTURE.md) §4 Stage 4 一句话承诺末尾追加 F 引用**（与 §609 Stage 2 末尾 D 引用同构，属视图缺失补足型自完备性补丁）；ARCH 主干 0 修订。
   - **本次 Phase 8 不开始任何 Stage 4 代码实现**，只锁定文档层决策；Stage 4 Battle 1 由其他 coding agent 接手时按 F1 / F2 路径执行。
+- 2026-04-29（同日，Phase 8 同日补丁：A8 Stage 4 边界明文）：A8 段追加 "Stage 4 启动前确认" 段，明文 "只消费不填充" 边界——Stage 4 Battle 1 `/task resume` v0 final_state 实时合成（F1 表）虽然显式引用 `pinned_refs`，但仅消费已存在字段（默认空列表→跳过 inline；非空→按 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 强制 inline），不实现 `/memory pin` / `/asset pin` / `/memory unpin` 命令；填充策略仍归 Stage 6（与 A8 当前 "回答方式" 一致）。与 S3 voice_pack=None fallback 同构，避免 coding agent 误判 Stage 4 需要先做 pin 命令链路。配套修改：[ARCHITECTURE.md](ARCHITECTURE.md) line 5 / line 7 元数据自完备性补足（加 Stage 4 (F) 引用 + GC_SPEC 已建当前时措辞）。**所有补丁主干 0 修订**——属视图缺失补足 + 读者跳转链路修正，A1-A8 / B1-B5 / C1-C4 / D / E / F 章节正文规则 0 改动。
