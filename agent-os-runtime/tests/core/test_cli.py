@@ -546,6 +546,48 @@ def test_cli_artifact_commands_list_show_archive_and_orphan_gc(
     assert store.get_artifact(orphan.artifact_id).status == "active"
 
 
+def test_cli_artifact_update_cross_session_returns_cow_payload(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    artifact_db = tmp_path / "artifacts.db"
+    task_db = tmp_path / "task.db"
+    monkeypatch.setenv("AGENT_OS_ARTIFACT_STORE_PATH", str(artifact_db))
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(task_db))
+    task = TaskMemoryStore(task_db).create_task(name="春季宣发方案", current_main_session_id="s2")
+    artifact = ArtifactStore(artifact_db).create_artifact(
+        task_id=task.task_id,
+        session_id="s1",
+        raw_content="主线版本",
+        digest="主线摘要",
+    )
+
+    assert (
+        cli.main(
+            [
+                "artifact",
+                "update",
+                artifact.artifact_id,
+                "--session-id",
+                "s2",
+                "--raw-content",
+                "分支版本",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "cow"
+    assert payload["cow_from"] == artifact.artifact_id
+    assert payload["artifact"]["artifact_id"] != artifact.artifact_id
+    assert payload["artifact"]["session_id"] == "s2"
+    assert payload["artifact"]["originating_session_id"] == "s2"
+
+
 def test_cli_artifact_show_missing_returns_nonzero(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.setenv("AGENT_OS_ARTIFACT_STORE_PATH", str(tmp_path / "artifacts.db"))
 

@@ -8,6 +8,12 @@
 
 ### Stage 4
 
+- **Battle 3：Artifact CoW v0**（2026-04-30，done-local）
+  - `ArtifactStore` 启用 `originating_session_id` 并自动迁移旧库；新 artifact 默认以创建 session 作为 origin。
+  - 新增 `update_artifact_content` 写入口：origin session 内原地更新并重置 digest，跨 session 修改时强制复制为新 artifact，保留旧版本给原分支引用。
+  - CoW 时可在同一 SQLite 事务内更新当前 session 的 `CompactSummary.core.current_artifact_refs`，并返回 `cow_from` / `compact_refs_updated` 诊断；`artifact update` CLI 暴露该路径。
+  - 验证：`python -m pytest tests/core/test_artifact_store.py tests/core/test_cli.py tests/core/test_task_memory.py`；`python -m ruff check src tests`。
+
 - **Battle 2：`/task branch` v0**（2026-04-30，commit `6c2b94c`）
   - `sessions` 表扩展 `parent_session_id` / `branch_role`，旧库自动迁移；`task_id` 继续复用 `active_task_id`，主线判断继续由 `tasks.current_main_session_id` 反查。
   - 新增 CTE `branch_task` 平铺入口与 `task branch` CLI；分支 session 通过 source session final_state 实时合成首轮 prompt，不复制 compact summary，也不改当前主线 session。

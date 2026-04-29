@@ -394,6 +394,7 @@ def _artifact_record_dict(record: ArtifactRecord, *, include_raw: bool = False) 
         "created_at": record.created_at,
         "updated_at": record.updated_at,
         "stable_key": record.stable_key,
+        "originating_session_id": record.originating_session_id,
     }
     if include_raw:
         data["raw_content"] = record.raw_content
@@ -426,8 +427,15 @@ def _artifact_main(argv: list[str]) -> int:
     p_archive.add_argument("artifact_id")
     p_archive.add_argument("--json", action="store_true")
 
+    p_update = sub.add_parser("update", help="更新 artifact；跨 session 自动 CoW")
+    p_update.add_argument("artifact_id")
+    p_update.add_argument("--session-id", required=True)
+    p_update.add_argument("--raw-content", required=True)
+    p_update.add_argument("--json", action="store_true")
+
     args = p.parse_args(argv)
-    store = _artifact_store_from_env()
+    settings = Settings.from_env()
+    store = ArtifactStore(settings.artifact_store_path)
 
     if args.action == "list":
         records = store.list_artifacts(
@@ -471,6 +479,32 @@ def _artifact_main(argv: list[str]) -> int:
             print(f"digest: {record.ref_digest}")
             print("")
             print(record.raw_content)
+        return 0
+
+    if args.action == "update":
+        result = store.update_artifact_content(
+            artifact_id=args.artifact_id,
+            current_session_id=args.session_id,
+            raw_content=args.raw_content,
+            task_memory_db_path=settings.task_memory_sqlite_path,
+        )
+        if result is None:
+            print(json.dumps({"status": "error", "reason": "artifact_not_found"}, ensure_ascii=False))
+            return 1
+        payload = {
+            "status": "ok",
+            "mode": result.mode,
+            "cow_from": result.cow_from,
+            "compact_refs_updated": result.compact_refs_updated,
+            "artifact": _artifact_record_dict(result.artifact, include_raw=True),
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            if result.cow_from:
+                print(f"copied {result.cow_from} -> {result.artifact.artifact_id}")
+            else:
+                print(f"updated {result.artifact.artifact_id}")
         return 0
 
     record = store.archive_artifact(args.artifact_id)

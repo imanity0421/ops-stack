@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import secrets
 import sqlite3
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ class ArtifactRecord:
     created_at: str
     updated_at: str
     stable_key: str | None = None
+    originating_session_id: str | None = None
 
     @property
     def ref_digest(self) -> str:
@@ -67,7 +69,21 @@ def _record_from_row(row: sqlite3.Row | None) -> ArtifactRecord | None:
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
         stable_key=row["stable_key"] if "stable_key" in row.keys() else None,
+        originating_session_id=row["originating_session_id"]
+        if "originating_session_id" in row.keys()
+        else str(row["session_id"]),
     )
+
+
+@dataclass(frozen=True)
+class ArtifactCowResult:
+    artifact: ArtifactRecord
+    cow_from: str | None
+    compact_refs_updated: bool = False
+
+    @property
+    def mode(self) -> Literal["in_place", "cow"]:
+        return "cow" if self.cow_from else "in_place"
 
 
 class ArtifactStore:
@@ -77,6 +93,10 @@ class ArtifactStore:
         self._path = path
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
+
+    @property
+    def path(self) -> Path:
+        return self._path
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._path), timeout=10.0)
@@ -100,7 +120,8 @@ class ArtifactStore:
                   digest_status TEXT NOT NULL,
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL,
-                  stable_key TEXT
+                  stable_key TEXT,
+                  originating_session_id TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_artifacts_task_status
@@ -110,6 +131,15 @@ class ArtifactStore:
             cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(artifacts)")}
             if "stable_key" not in cols:
                 conn.execute("ALTER TABLE artifacts ADD COLUMN stable_key TEXT")
+            if "originating_session_id" not in cols:
+                conn.execute("ALTER TABLE artifacts ADD COLUMN originating_session_id TEXT")
+                conn.execute(
+                    """
+                    UPDATE artifacts
+                    SET originating_session_id = session_id
+                    WHERE originating_session_id IS NULL
+                    """
+                )
             conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_stable_key
@@ -127,6 +157,7 @@ class ArtifactStore:
         digest: str | None = None,
         artifact_id: str | None = None,
         stable_key: str | None = None,
+        originating_session_id: str | None = None,
     ) -> ArtifactRecord:
         content = str(raw_content or "")
         if not content.strip():
@@ -140,15 +171,31 @@ class ArtifactStore:
         now = _iso()
         digest_text = digest.strip() if isinstance(digest, str) and digest.strip() else None
         digest_status: DigestStatus = "built" if digest_text else "pending"
+        origin = (
+            originating_session_id.strip()
+            if isinstance(originating_session_id, str) and originating_session_id.strip()
+            else session_id
+        )
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO artifacts
                   (artifact_id, task_id, session_id, status, raw_content, digest,
-                   digest_status, created_at, updated_at, stable_key)
-                VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+                   digest_status, created_at, updated_at, stable_key, originating_session_id)
+                VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (aid, task_id, session_id, content, digest_text, digest_status, now, now, key),
+                (
+                    aid,
+                    task_id,
+                    session_id,
+                    content,
+                    digest_text,
+                    digest_status,
+                    now,
+                    now,
+                    key,
+                    origin,
+                ),
             )
         return ArtifactRecord(
             artifact_id=aid,
@@ -161,6 +208,7 @@ class ArtifactStore:
             created_at=now,
             updated_at=now,
             stable_key=key,
+            originating_session_id=origin,
         )
 
     def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
@@ -243,3 +291,141 @@ class ArtifactStore:
                 (artifact_id,),
             ).fetchone()
         return _record_from_row(row)
+
+    def update_artifact_content(
+        self,
+        *,
+        artifact_id: str,
+        current_session_id: str,
+        raw_content: str,
+        task_memory_db_path: Path | None = None,
+    ) -> ArtifactCowResult | None:
+        content = str(raw_content or "")
+        if not content.strip():
+            raise ValueError("raw_content must not be empty")
+        session_id = str(current_session_id or "").strip()
+        if not session_id:
+            raise ValueError("current_session_id must not be empty")
+
+        now = _iso()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+            record = _record_from_row(row)
+            if record is None:
+                return None
+            origin = record.originating_session_id or record.session_id
+            if session_id == origin:
+                conn.execute(
+                    """
+                    UPDATE artifacts
+                    SET raw_content = ?,
+                        digest = NULL,
+                        digest_status = 'pending',
+                        updated_at = ?
+                    WHERE artifact_id = ?
+                    """,
+                    (content, now, artifact_id),
+                )
+                updated = conn.execute(
+                    "SELECT * FROM artifacts WHERE artifact_id = ?",
+                    (artifact_id,),
+                ).fetchone()
+                artifact = _record_from_row(updated)
+                if artifact is None:
+                    raise RuntimeError("failed to update artifact")
+                return ArtifactCowResult(artifact=artifact, cow_from=None)
+
+            new_id = new_artifact_id()
+            compact_updated = False
+            attached_taskdb = False
+            if task_memory_db_path is not None:
+                escaped_path = str(task_memory_db_path).replace("'", "''")
+                conn.execute(f"ATTACH DATABASE '{escaped_path}' AS taskdb")
+                attached_taskdb = True
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO artifacts
+                      (artifact_id, task_id, session_id, status, raw_content, digest,
+                       digest_status, created_at, updated_at, stable_key, originating_session_id)
+                    VALUES (?, ?, ?, 'active', ?, NULL, 'pending', ?, ?, NULL, ?)
+                    """,
+                    (new_id, record.task_id, session_id, content, now, now, session_id),
+                )
+                if task_memory_db_path is not None:
+                    compact_updated = _replace_compact_artifact_ref(
+                        conn,
+                        session_id=session_id,
+                        task_id=record.task_id,
+                        old_artifact_id=record.artifact_id,
+                        new_artifact_id=new_id,
+                        updated_at=now,
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            finally:
+                if attached_taskdb:
+                    conn.execute("DETACH DATABASE taskdb")
+            copied = conn.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ?",
+                (new_id,),
+            ).fetchone()
+        artifact = _record_from_row(copied)
+        if artifact is None:
+            raise RuntimeError("failed to create CoW artifact")
+        return ArtifactCowResult(
+            artifact=artifact,
+            cow_from=record.artifact_id,
+            compact_refs_updated=compact_updated,
+        )
+
+
+def _replace_compact_artifact_ref(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    task_id: str,
+    old_artifact_id: str,
+    new_artifact_id: str,
+    updated_at: str,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT summary_json
+        FROM taskdb.compact_summaries
+        WHERE session_id = ? AND task_id = ?
+        """,
+        (session_id, task_id),
+    ).fetchone()
+    if row is None:
+        return False
+    data = json.loads(str(row["summary_json"]))
+    core = dict(data.get("core") or {})
+    refs = list(core.get("current_artifact_refs") or [])
+    replaced = False
+    next_refs: list[str] = []
+    for ref in refs:
+        if ref == old_artifact_id:
+            next_refs.append(new_artifact_id)
+            replaced = True
+        else:
+            next_refs.append(str(ref))
+    if not replaced:
+        return False
+    core["current_artifact_refs"] = list(dict.fromkeys(next_refs))
+    data["core"] = core
+    conn.execute(
+        """
+        UPDATE taskdb.compact_summaries
+        SET summary_json = ?, updated_at = ?
+        WHERE session_id = ? AND task_id = ?
+        """,
+        (json.dumps(data, ensure_ascii=False), updated_at, session_id, task_id),
+    )
+    return True
