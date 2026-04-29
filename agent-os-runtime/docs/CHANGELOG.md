@@ -8,6 +8,12 @@
 
 ### Stage 4
 
+- **Battle 4：Resume Trace + `/context` 集成**（2026-04-30，done-local）
+  - `task resume` 的 `resume_diagnostics` 扩展为稳定结构，覆盖 connect/fork 决策路径、force flag、session age/context usage、tail message count、artifact/pinned ref count 与 `voice_pack_skipped`。
+  - final_state 观测字段进入诊断：`deliverable_inline_level`、`current_deliverable_chars`、`deliverable_fallback_chain`，用于观察 `full` / `tail` / `none` 命中。
+  - `/context` 诊断新增 `resume_diagnostics` JSON 字段与 Markdown `### Resume Diagnostics` 段；`context-diagnose --resume-diagnostics-json` 可读取 `task resume --json` payload。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_cli.py tests/core/test_context_builder.py`；`python -m ruff check src tests`。
+
 - **Battle 3：Artifact CoW v0**（2026-04-30，commit `fc1d240`）
   - `ArtifactStore` 启用 `originating_session_id` 并自动迁移旧库；新 artifact 默认以创建 session 作为 origin。
   - 新增 `update_artifact_content` 写入口：origin session 内原地更新并重置 digest，跨 session 修改时强制复制为新 artifact，保留旧版本给原分支引用。

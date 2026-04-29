@@ -463,6 +463,10 @@ def test_cli_task_resume_force_fork_outputs_resume_diagnostics(
     assert payload["status"] == "ok"
     assert payload["resume_diagnostics"]["connect_or_fork"] == "fork"
     assert payload["resume_diagnostics"]["forced_by_flag"] is True
+    assert payload["resume_diagnostics"]["deliverable_inline_level"] == "none"
+    assert payload["resume_diagnostics"]["deliverable_fallback_chain"] == "none"
+    assert payload["resume_diagnostics"]["tail_message_count"] == 1
+    assert payload["resume_diagnostics"]["voice_pack_skipped"] is True
     assert payload["task"]["current_main_session_id"] != "s1"
     assert "<task_resume" in payload["final_state"]["prompt"]
 
@@ -646,6 +650,67 @@ def test_cli_context_outputs_artifact_diagnostics_json_and_markdown(tmp_path: Pa
     out = capsys.readouterr().out
     assert "### Artifact Diagnostics" in out
     assert "artifact_ref_count: 1" in out
+
+
+def test_cli_context_outputs_resume_diagnostics_json_and_markdown(
+    tmp_path: Path, capsys
+) -> None:
+    resume_payload = {
+        "status": "ok",
+        "resume_diagnostics": {
+            "connect_or_fork": "fork",
+            "decision_reason": ["forced_fork"],
+            "forced_by_flag": True,
+            "source_session_id": "s1",
+            "target_session_id": "s2",
+            "session_age_minutes": 12.5,
+            "context_usage_ratio": 0.42,
+            "deliverable_inline_level": "tail",
+            "current_deliverable_chars": 12000,
+            "tail_message_count": 3,
+            "voice_pack_skipped": True,
+            "current_artifact_ref_count": 1,
+            "pinned_ref_count": 1,
+            "deliverable_fallback_chain": "tail",
+        },
+    }
+    path = tmp_path / "resume.json"
+    path.write_text(json.dumps(resume_payload, ensure_ascii=False), encoding="utf-8")
+
+    assert (
+        cli.main(
+            [
+                "context",
+                "--message",
+                "继续推进",
+                "--resume-diagnostics-json",
+                str(path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["resume_diagnostics"]["connect_or_fork"] == "fork"
+    assert payload["resume_diagnostics"]["deliverable_inline_level"] == "tail"
+    assert payload["resume_diagnostics"]["voice_pack_skipped"] is True
+
+    assert (
+        cli.main(
+            [
+                "context",
+                "--message",
+                "继续推进",
+                "--resume-diagnostics-json",
+                str(path),
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "### Resume Diagnostics" in out
+    assert "connect_or_fork: fork" in out
+    assert "deliverable_fallback_chain: tail" in out
 
 
 def test_cli_compact_run_show_and_context_rehydration(

@@ -26,6 +26,7 @@ from agent_os.context_builder import (
 from agent_os.context_diagnostics import (
     build_context_diagnostics,
     format_context_diagnostics_markdown,
+    normalize_resume_diagnostics,
 )
 from agent_os.cte.branch_task import branch_task
 from agent_os.cte.resume_task import resume_task
@@ -866,6 +867,18 @@ def _load_diagnostic_compact_summary(path: Path | None) -> CompactSummaryRecord 
     )
 
 
+def _load_diagnostic_resume_diagnostics(path: Path | None) -> object | None:
+    if path is None:
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"无法读取 resume diagnostics JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("resume diagnostics JSON 须为对象")
+    return normalize_resume_diagnostics(raw)
+
+
 def _context_diagnose_main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="agent-os-runtime context-diagnose",
@@ -884,6 +897,7 @@ def _context_diagnose_main(argv: list[str]) -> int:
     p.add_argument("--history-json", type=Path, default=None, help="可选历史消息 JSON 数组")
     p.add_argument("--artifact-refs-json", type=Path, default=None, help="可选 artifact refs JSON 数组")
     p.add_argument("--compact-summary-json", type=Path, default=None, help="可选 CompactSummary JSON")
+    p.add_argument("--resume-diagnostics-json", type=Path, default=None, help="可选 task resume JSON")
     p.add_argument("--retrieved-context-file", type=Path, default=None, help="可选外部召回文本")
     p.add_argument("--json", action="store_true", help="输出 JSON 而不是 Markdown")
     p.add_argument(
@@ -912,6 +926,7 @@ def _context_diagnose_main(argv: list[str]) -> int:
         session_messages = _load_diagnostic_history(args.history_json)
         artifact_refs = _load_diagnostic_artifact_refs(args.artifact_refs_json)
         compact_summary = _load_diagnostic_compact_summary(args.compact_summary_json)
+        resume_diagnostics = _load_diagnostic_resume_diagnostics(args.resume_diagnostics_json)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -933,7 +948,7 @@ def _context_diagnose_main(argv: list[str]) -> int:
         artifact_refs=artifact_refs,
         retrieved_context=retrieved_context,
     )
-    diagnostics = build_context_diagnostics(bundle)
+    diagnostics = build_context_diagnostics(bundle, resume_diagnostics=resume_diagnostics)
     if args.json:
         print(json.dumps(diagnostics.to_dict(), ensure_ascii=False, indent=2))
     else:

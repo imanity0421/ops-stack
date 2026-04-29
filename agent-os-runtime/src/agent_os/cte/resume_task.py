@@ -10,6 +10,7 @@ from agent_os.agent.task_memory import TaskEntity, TaskMemoryStore, TaskMessage,
 
 ResumeMode = Literal["connect", "fork"]
 ForceMode = Literal["connect", "fork"] | None
+DeliverableFallbackChain = Literal["none", "full", "tail"]
 
 
 class ArtifactLookupPort(Protocol):
@@ -71,6 +72,79 @@ class ResumeFinalState:
         }
 
 
+def _deliverable_fallback_chain(inline_level: str) -> DeliverableFallbackChain:
+    if inline_level == "full":
+        return "full"
+    if inline_level == "tail":
+        return "tail"
+    return "none"
+
+
+@dataclass(frozen=True)
+class ResumeDiagnostics:
+    connect_or_fork: ResumeMode
+    decision_reason: list[str]
+    forced_by_flag: bool
+    source_session_id: str
+    target_session_id: str
+    session_age_minutes: float | None = None
+    context_usage_ratio: float | None = None
+    deliverable_inline_level: str = "none"
+    current_deliverable_chars: int = 0
+    tail_message_count: int = 0
+    voice_pack_skipped: bool = True
+    current_artifact_ref_count: int = 0
+    pinned_ref_count: int = 0
+    deliverable_fallback_chain: DeliverableFallbackChain = "none"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "connect_or_fork": self.connect_or_fork,
+            "decision_reason": list(self.decision_reason),
+            "forced_by_flag": self.forced_by_flag,
+            "source_session_id": self.source_session_id,
+            "target_session_id": self.target_session_id,
+            "session_age_minutes": round(self.session_age_minutes, 2)
+            if self.session_age_minutes is not None
+            else None,
+            "context_usage_ratio": round(self.context_usage_ratio, 4)
+            if self.context_usage_ratio is not None
+            else None,
+            "deliverable_inline_level": self.deliverable_inline_level,
+            "current_deliverable_chars": self.current_deliverable_chars,
+            "tail_message_count": self.tail_message_count,
+            "voice_pack_skipped": self.voice_pack_skipped,
+            "current_artifact_ref_count": self.current_artifact_ref_count,
+            "pinned_ref_count": self.pinned_ref_count,
+            "deliverable_fallback_chain": self.deliverable_fallback_chain,
+        }
+
+
+def _resume_diagnostics(
+    *,
+    decision: ResumeDecision,
+    final_state: ResumeFinalState,
+) -> ResumeDiagnostics:
+    return ResumeDiagnostics(
+        connect_or_fork=decision.connect_or_fork,
+        decision_reason=list(decision.decision_reason),
+        forced_by_flag=decision.forced_by_flag,
+        source_session_id=decision.source_session_id,
+        target_session_id=decision.target_session_id,
+        session_age_minutes=decision.session_age_minutes,
+        context_usage_ratio=decision.context_usage_ratio,
+        deliverable_inline_level=final_state.deliverable_inline_level,
+        current_deliverable_chars=final_state.current_deliverable_chars,
+        tail_message_count=len(final_state.tail_messages),
+        voice_pack_skipped=final_state.voice_pack_skipped,
+        current_artifact_ref_count=len(final_state.current_artifact_refs),
+        pinned_ref_count=len(final_state.pinned_refs),
+        deliverable_fallback_chain=_deliverable_fallback_chain(
+            final_state.deliverable_inline_level
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class ResumeResult:
     status: Literal["ok", "error"]
@@ -85,10 +159,15 @@ class ResumeResult:
             data["reason"] = self.reason
         if self.task is not None:
             data["task"] = self.task.__dict__
-        if self.decision is not None:
-            data["resume_diagnostics"] = self.decision.to_dict()
         if self.final_state is not None:
             data["final_state"] = self.final_state.to_dict()
+        if self.decision is not None and self.final_state is not None:
+            data["resume_diagnostics"] = _resume_diagnostics(
+                decision=self.decision,
+                final_state=self.final_state,
+            ).to_dict()
+        elif self.decision is not None:
+            data["resume_diagnostics"] = self.decision.to_dict()
         return data
 
 

@@ -130,6 +130,46 @@ class CompactDiagnostics:
 
 
 @dataclass(frozen=True)
+class ResumeDiagnostics:
+    connect_or_fork: str
+    decision_reason: list[str]
+    forced_by_flag: bool
+    source_session_id: str
+    target_session_id: str
+    session_age_minutes: float | None = None
+    context_usage_ratio: float | None = None
+    deliverable_inline_level: str = "none"
+    current_deliverable_chars: int = 0
+    tail_message_count: int = 0
+    voice_pack_skipped: bool = True
+    current_artifact_ref_count: int = 0
+    pinned_ref_count: int = 0
+    deliverable_fallback_chain: str = "none"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "connect_or_fork": self.connect_or_fork,
+            "decision_reason": list(self.decision_reason),
+            "forced_by_flag": self.forced_by_flag,
+            "source_session_id": self.source_session_id,
+            "target_session_id": self.target_session_id,
+            "session_age_minutes": round(self.session_age_minutes, 2)
+            if self.session_age_minutes is not None
+            else None,
+            "context_usage_ratio": round(self.context_usage_ratio, 4)
+            if self.context_usage_ratio is not None
+            else None,
+            "deliverable_inline_level": self.deliverable_inline_level,
+            "current_deliverable_chars": self.current_deliverable_chars,
+            "tail_message_count": self.tail_message_count,
+            "voice_pack_skipped": self.voice_pack_skipped,
+            "current_artifact_ref_count": self.current_artifact_ref_count,
+            "pinned_ref_count": self.pinned_ref_count,
+            "deliverable_fallback_chain": self.deliverable_fallback_chain,
+        }
+
+
+@dataclass(frozen=True)
 class ContextDiagnostics:
     total_chars: int
     injected_chars: int
@@ -139,6 +179,7 @@ class ContextDiagnostics:
     budget_guard: ContextBudgetGuard
     artifact_diagnostics: ArtifactDiagnostics
     compact_diagnostics: CompactDiagnostics
+    resume_diagnostics: ResumeDiagnostics | None = None
     blocks: list[ContextBlockDiagnostic] = field(default_factory=list)
     signals: list[ContextBlockDiagnostic] = field(default_factory=list)
 
@@ -152,6 +193,9 @@ class ContextDiagnostics:
             "budget_guard": self.budget_guard.to_dict(),
             "artifact_diagnostics": self.artifact_diagnostics.to_dict(),
             "compact_diagnostics": self.compact_diagnostics.to_dict(),
+            "resume_diagnostics": self.resume_diagnostics.to_dict()
+            if self.resume_diagnostics is not None
+            else None,
             "blocks": [b.to_dict() for b in self.blocks],
             "signals": [b.to_dict() for b in self.signals],
         }
@@ -228,6 +272,89 @@ def _parse_note_text(note: str, key: str) -> str | None:
     if not match:
         return None
     return match.group("value").strip() or None
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("1", "true", "yes"):
+            return True
+        if lowered in ("0", "false", "no"):
+            return False
+    return default
+
+
+def normalize_resume_diagnostics(payload: dict[str, Any] | None) -> ResumeDiagnostics | None:
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("resume_diagnostics")
+    diagnostics = dict(raw) if isinstance(raw, dict) else dict(payload)
+    final_state = payload.get("final_state")
+    if isinstance(final_state, dict):
+        diagnostics.setdefault(
+            "deliverable_inline_level",
+            final_state.get("deliverable_inline_level"),
+        )
+        diagnostics.setdefault(
+            "current_deliverable_chars",
+            final_state.get("current_deliverable_chars"),
+        )
+        diagnostics.setdefault("tail_message_count", final_state.get("tail_message_count"))
+        diagnostics.setdefault("voice_pack_skipped", final_state.get("voice_pack_skipped"))
+        current_refs = final_state.get("current_artifact_refs")
+        pinned_refs = final_state.get("pinned_refs")
+        if isinstance(current_refs, list):
+            diagnostics.setdefault("current_artifact_ref_count", len(current_refs))
+        if isinstance(pinned_refs, list):
+            diagnostics.setdefault("pinned_ref_count", len(pinned_refs))
+
+    connect_or_fork = str(diagnostics.get("connect_or_fork") or "").strip()
+    if not connect_or_fork:
+        return None
+    reasons = diagnostics.get("decision_reason")
+    if isinstance(reasons, list):
+        decision_reason = [str(reason) for reason in reasons if str(reason).strip()]
+    else:
+        decision_reason = []
+    inline_level = str(diagnostics.get("deliverable_inline_level") or "none")
+    fallback_chain = str(
+        diagnostics.get("deliverable_fallback_chain")
+        or (inline_level if inline_level in ("full", "tail") else "none")
+    )
+    return ResumeDiagnostics(
+        connect_or_fork=connect_or_fork,
+        decision_reason=decision_reason,
+        forced_by_flag=_as_bool(diagnostics.get("forced_by_flag")),
+        source_session_id=str(diagnostics.get("source_session_id") or ""),
+        target_session_id=str(diagnostics.get("target_session_id") or ""),
+        session_age_minutes=_as_float(diagnostics.get("session_age_minutes")),
+        context_usage_ratio=_as_float(diagnostics.get("context_usage_ratio")),
+        deliverable_inline_level=inline_level,
+        current_deliverable_chars=_as_int(diagnostics.get("current_deliverable_chars")),
+        tail_message_count=_as_int(diagnostics.get("tail_message_count")),
+        voice_pack_skipped=_as_bool(diagnostics.get("voice_pack_skipped"), default=True),
+        current_artifact_ref_count=_as_int(diagnostics.get("current_artifact_ref_count")),
+        pinned_ref_count=_as_int(diagnostics.get("pinned_ref_count")),
+        deliverable_fallback_chain=fallback_chain,
+    )
 
 
 def _build_compact_diagnostics(
@@ -343,7 +470,11 @@ def _build_budget_guard(
     )
 
 
-def build_context_diagnostics(bundle: ContextBundle) -> ContextDiagnostics:
+def build_context_diagnostics(
+    bundle: ContextBundle,
+    *,
+    resume_diagnostics: ResumeDiagnostics | None = None,
+) -> ContextDiagnostics:
     """Build a stable `/context`-style diagnostic payload from ContextBuilder output."""
 
     message = bundle.message or ""
@@ -409,6 +540,7 @@ def build_context_diagnostics(bundle: ContextBundle) -> ContextDiagnostics:
         budget_guard=budget_guard,
         artifact_diagnostics=artifact_diagnostics,
         compact_diagnostics=compact_diagnostics,
+        resume_diagnostics=resume_diagnostics,
         blocks=blocks,
         signals=signals,
     )
@@ -467,6 +599,29 @@ def format_context_diagnostics_markdown(diag: ContextDiagnostics) -> str:
             f"- suggestion_reason: {compact.suggestion_reason or 'none'}",
         ]
     )
+    resume = diag.resume_diagnostics
+    if resume is not None:
+        lines.extend(
+            [
+                "",
+                "### Resume Diagnostics",
+                "",
+                f"- connect_or_fork: {resume.connect_or_fork}",
+                f"- decision_reason: {', '.join(resume.decision_reason) or 'none'}",
+                f"- forced_by_flag: {str(resume.forced_by_flag).lower()}",
+                f"- source_session_id: {resume.source_session_id or 'none'}",
+                f"- target_session_id: {resume.target_session_id or 'none'}",
+                f"- session_age_minutes: {resume.session_age_minutes if resume.session_age_minutes is not None else 'unknown'}",
+                f"- context_usage_ratio: {resume.context_usage_ratio if resume.context_usage_ratio is not None else 'unknown'}",
+                f"- deliverable_inline_level: {resume.deliverable_inline_level}",
+                f"- deliverable_fallback_chain: {resume.deliverable_fallback_chain}",
+                f"- current_deliverable_chars: {resume.current_deliverable_chars}",
+                f"- tail_message_count: {resume.tail_message_count}",
+                f"- voice_pack_skipped: {str(resume.voice_pack_skipped).lower()}",
+                f"- current_artifact_ref_count: {resume.current_artifact_ref_count}",
+                f"- pinned_ref_count: {resume.pinned_ref_count}",
+            ]
+        )
     if diag.signals:
         lines.extend(["", "### Signals", ""])
         for signal in diag.signals:

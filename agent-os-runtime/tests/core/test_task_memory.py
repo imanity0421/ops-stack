@@ -16,6 +16,7 @@ from agent_os.agent.task_memory import (
 )
 from agent_os.cte.branch_task import branch_task
 from agent_os.cte.resume_task import resume_task
+from agent_os.knowledge.artifact_store import ArtifactStore
 
 
 def test_new_task_id_is_human_sortable() -> None:
@@ -357,6 +358,49 @@ def test_resume_task_force_fork_updates_current_main_session_and_projects_tail(
     assert fork_session is not None
     assert fork_session.parent_session_id == "s1"
     assert fork_session.branch_role == "main"
+
+
+def test_resume_task_diagnostics_include_final_state_and_fallback_chain(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = TaskMemoryStore(tmp_path / "task.db")
+    artifacts = ArtifactStore(tmp_path / "artifacts.db")
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="继续优化长方案")
+    artifact = artifacts.create_artifact(
+        task_id=task.task_id,
+        session_id="s1",
+        raw_content="当前交付物正文" * 20,
+        digest="交付物摘要",
+    )
+    CompactSummaryService(store).compact(
+        session_id="s1",
+        task_id=task.task_id,
+        current_artifact_refs=[artifact.artifact_id],
+        pinned_refs=["asset_1"],
+    )
+
+    result = resume_task(
+        store=store,
+        task_id=task.task_id,
+        force_mode="fork",
+        session_id_factory=lambda: "s2",
+        artifact_store=artifacts,
+        max_deliverable_chars=10,
+    )
+    diagnostics = result.to_dict()["resume_diagnostics"]
+
+    assert result.status == "ok"
+    assert diagnostics["connect_or_fork"] == "fork"
+    assert diagnostics["deliverable_inline_level"] == "tail"
+    assert diagnostics["deliverable_fallback_chain"] == "tail"
+    assert diagnostics["current_deliverable_chars"] > 10
+    assert diagnostics["tail_message_count"] == 0
+    assert diagnostics["voice_pack_skipped"] is True
+    assert diagnostics["current_artifact_ref_count"] == 1
+    assert diagnostics["pinned_ref_count"] == 1
 
 
 def test_branch_task_creates_branch_session_without_polluting_main_summary(
