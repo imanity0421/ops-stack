@@ -18,23 +18,6 @@
 
 ## A. 工程验证待回答（写代码时回答）
 
-### A1：GC 断言强度按 stage 分级的具体写法
-
-**已知**：[ARCHITECTURE.md](ARCHITECTURE.md) 3.5 已定原则——同一条 GC 在不同 stage 验证时断言条件不同；并已写出三层 schema 路径下的 Stage 3 / Stage 5 GC4 / GC5 断言矩阵。
-
-**待回答**：
-
-- 三层 schema 之外的字段级断言精确文本（如 `core.constraints` 中"含品牌红线"用关键词正则、子串、还是结构化字段）。
-- 是否在代码层用 `gc_assertion_level: "stage3" | "stage5"` 参数驱动同一断言函数，还是各 stage 独立写一份断言文件。
-
-**回答方式**：Stage 3 写第一条真实 GC（GC4-Stage3）时落地，同步建 `docs/GC_SPEC.md`；Stage 5 复用同函数追加字段时验证设计是否成立。
-
-**当前推荐**：参数驱动单函数 + GC_SPEC.md 表格化字段集——避免"五份近似断言文件"的复制粘贴维护代价。
-
-**Battle 6 收口备注（2026-04-29）**：Stage 2 已创建最小 [GC_SPEC.md](GC_SPEC.md)，先用 GC1-3 一行表格化断言固化 artifact trace / `/context` / lifecycle 的字段级口径。A1 的完整答案仍留到 Stage 3 第一条 compact GC 落地时补齐（届时再决定 `gc_assertion_level` 参数化断言函数的具体实现）。
-
-**Stage 3 收口备注（2026-04-29）**：GC4/GC5 Stage3 断言已补入 [GC_SPEC.md](GC_SPEC.md)。实现口径采用用户确认的推荐路径：参数驱动单函数/同一断言体系，Stage 3 先落 `gc_assertion_level="stage3"` 的字段口径；Stage 5 再追加 business_writing / voice pack 强断言。
-
 ### A2：Deliverable Lifecycle 字段定义归 Stage 2 还是 Stage 5
 
 **已知**：[ARCHITECTURE.md](ARCHITECTURE.md) 1.3 已定——版本控制（current / previous / final）是池 2 的字段语义，归 MA；业务消费（如 `/skill deliverable promote`）归 SR。1.4 已预留 `/artifact finalize <id>` 命令名（Stage 5 实现）。
@@ -115,22 +98,27 @@
 - `digest_only` 兜底必含 H2 标题列表 + 已出现专有名词集合（300 字内）。
 - 这些行为属于 SR.business_writing 的 deliverable lifecycle 装配，不污染 CTE 通用降级机制。
 
-### A7：SR → CTE Schema Fragment 注册接口具体签名
+### A7：compact schema fragment 契约（签名已定，参数级残留待回答）
 
 **已知**：[ARCHITECTURE.md](ARCHITECTURE.md) 3.2 已定机制——SR 通过 schema fragment 注册接口向 CTE 暴露 business_writing_pack / skill_state 的 Pydantic / JSON Schema；CTE 在 compact LLM 调用前合成完整 schema。机制级已上文档，本条只剩接口签名级。
 
-**待回答**：
+**Stage 3 已回答（已落地并沉淀回 ARCHITECTURE §3.2）**：
 
-- 注册时机：启动时一次性注册，还是 compact 调用前动态注册？
-- 接口签名：`Protocol.get_compact_schema_fragment(self) -> Type[BaseModel]` 是否够，还是需要返回 `(Pydantic Type, schema_metadata)` 二元组以支持 schema 版本管理？
-- 多 skill 同时活跃时如何合成（concat fields？嵌套字典？）——当前架构 single-skill-active 假设下不存在该场景，但接口应预留扩展位。
-- schema fragment 缓存策略——LLM API 提交 schema 较大、缓存可降首字延迟。
+- 接口签名固定为 `get_compact_schema_fragment() -> type[BaseModel]`。
+- 首版强制 single-skill-active；不支持多 skill 同时活跃合成。
+- schema 版本由 `CompactSummary.schema_version` 字段承载，不额外引入 schema metadata 二元组。
 
 **回答方式**：Stage 3 写第一个 compact 实现时落地；Stage 5 引入 business_writing skill 时验证接口在跨 skill 类间的复用性。
 
 **当前推荐**：启动时注册（让 DI 容器主导）；签名为 `Protocol.get_compact_schema_fragment() -> Type[BaseModel]`，schema 版本管理交给 Pydantic model 内部 `schema_version` 字段；多 skill 暂不支持（第一个实现强制 single-skill-active）。
 
 **Stage 3 收口备注（2026-04-29）**：已按用户确认的推荐路径落地 `SkillSchemaProvider` Protocol，签名为 `get_compact_schema_fragment() -> type[BaseModel]`。Stage 3 首版强制 single-skill-active；`business_writing_pack` / `skill_state` 默认 `null`，Stage 5 再由真实 skill fragment 验证复用性。
+
+**仍保留的参数级残留（待 Stage 5/7+ 或性能压力触发）**：
+
+- 多 skill 同时活跃时如何合成（concat fields？嵌套 dict？）——仅在出现 Multi-Skill 真实需求时再开。
+- schema fragment 缓存策略（首字延迟 vs schema 体积）——仅在 compact LLM schema 明显成为瓶颈时再开。
+- `business_writing_pack` / `skill_state` 的 size 阈值与降级策略（与 [ARCHITECTURE.md](ARCHITECTURE.md) §3.2 Layer 2/3 size 约束一致）——属于参数级，随真实 PR/GC trace 微调。
 
 ### A8：pinned_refs 填充 / 取消 pin 策略
 
@@ -191,20 +179,6 @@
 
 **反向触发条件**：Stage 5 后的真实 business_writing 任务出现"主线 agent 上下文爆炸但任务本身可拆"的硬证据时，再启 Stage 7。
 
-### B3：是否做 Multi-Skill Composition / Skill Router
-
-**背景**：原 V1 设想 skill 多到一定程度后引入 router 自动路由。
-
-**当前选择**：**默认不做（推到 Stage 7+），除非届时出现硬证据再开**——与 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 反模式清单口径一致。
-
-**理由**：
-
-- 个人级用户同时活跃的 skill 数 ≤ 3-5 个，路由价值极低。
-- Skill Router 一旦引入就要解决"路由错怎么办、用户能否覆盖、组合时上下文如何拼"——全是平台化问题。
-- 用户显式 `/skill switch` 比自动路由更可控、更不易出错。
-
-**反向触发条件（硬证据）**：用户长期同时管理 ≥ 8 个 skill 且抱怨切换成本时再考虑。当前看不到该场景。
-
 ### B4：Task 实体的产品语义边界
 
 **背景**：[ARCHITECTURE.md](ARCHITECTURE.md) 1.4 task_table 极简 5 字段。但 task 实体可以扩展的语义维度很多。
@@ -217,6 +191,15 @@
 - B4.d：是否需要 `participants`（多人协作）。**永远不做**——超出个人级范围。
 
 **当前推荐**：B4.a 可加（轻量、用户主动填），其余全部不做。
+
+**已确认并沉淀（2026-04-29）**：
+
+- B4.a：Stage 2 v0 不加 `tag`（真实分类痛点出现前不加；未来若需要按增量字段迁移加入）。
+- B4.b：不加 `parent_task_id`（task 树治理复杂度过高，超出个人级主线）。
+- B4.c：不加 `due_date`（agent 不催办，deadline 属用户外部流程）。
+- B4.d：永远不加 `participants`（多人协作超出个人级范围）。
+
+上述结论已沉淀到 [ARCHITECTURE.md](ARCHITECTURE.md) §1.4（task_table 字段集判定）与 §3.6（反模式清单）；本条仅保留作历史备查，原则上不再作为待决策项反复讨论。
 
 **B4.a 已落地（2026-04-29）**：Battle 1 实际实现与 [ARCHITECTURE.md](ARCHITECTURE.md) 1.4 保持一致，`tasks` 表和 `TaskEntity` 均为 5 字段：`task_id` / `name` / `status` / `created_at` / `current_main_session_id`。Stage 2 不增加 `tag`；若真实 task 列表出现分类痛点，再作为增量字段重新打开。
 
@@ -353,3 +336,8 @@
   - **A8 新增**：`pinned_refs` 填充 / 取消 pin 策略（字段位已上文档）。
   - **B5 新增**：断线重连 vs 跨天恢复命令分离决策（推荐 B5.c 单命令自动判断）。
 - 2026-04-29：新增 **D 章节** Stage 2 Battle 排序（结论已定、待执行）——固化 6 个 battle 顺序与依赖、branch/CoW 推到 Stage 4 的依据；与 [ARCHITECTURE.md](ARCHITECTURE.md) 第 4 节 Stage 2 一句话承诺末尾的 D 引用配套落地。
+- 2026-04-29（同日，Phase 7 收口：Stage 2/3 实测回填与出口规则执行）：
+  - **A1 移除**：GC 字段级断言口径已固化到 [GC_SPEC.md](GC_SPEC.md)，并沉淀到 [ARCHITECTURE.md](ARCHITECTURE.md) §3.5；OPEN_DECISIONS 不再承载该条目。
+  - **A7 收敛**：schema fragment 契约签名已在 Stage 3 落地并沉淀回 [ARCHITECTURE.md](ARCHITECTURE.md) §3.2；本节仅保留参数级残留（多 skill 合成 / 缓存 / size 阈值策略随 PR/GC trace 微调）。
+  - **B3 移除**：Multi-Skill / Router 已完全归 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6（默认不做，Stage 7+ 硬证据再开），OPEN_DECISIONS 不再作为待决策项承载。
+  - **B4 关闭**：task 字段集边界已确认并沉淀到 [ARCHITECTURE.md](ARCHITECTURE.md) §1.4（不加 tag / parent_task_id / due_date）与 §3.6（participants 永远不做）；本条保留历史备查，不再作为待决策项反复讨论。

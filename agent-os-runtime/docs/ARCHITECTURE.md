@@ -214,7 +214,9 @@ CTE 触发的 Task 级事务（`/compact` / `/task resume` / `/task branch` / re
 **底层两池（避免多态反模式）**：
 
 - **池 1：Memory 池**——沿用 Mem0 + Hindsight 现状（短规则、双时态、合并 / 升降权机制）。SQLite + 轻量向量。
-- **池 2：Asset / Artifact 池**——沿用 [`asset_store.py`](../src/agent_os/knowledge/asset_store.py) 后端。Asset 与 Artifact **同池区分字段**（`kind`、`pinned_for_workspace`、`subkind` / `category`、`status`、`task_id`）。**池 2 内部还有两亚层**（关键：避免 vector 引擎被高频写打爆）：
+- **池 2：Asset / Artifact 池**——Stage 2 v0 已落地 SQLite 原文层（`artifact_store.py`），承载 artifact 全文与最小字段集；更复杂的跨 task asset 化与 chunk 索引层仍按本文两亚层设计演进。Asset 与 Artifact **同池区分字段**（`kind`、`pinned_for_workspace`、`subkind` / `category`、`status`、`task_id`）。**池 2 内部还有两亚层**（关键：避免 vector 引擎被高频写打爆）：
+
+> **Stage 2 v0 实现注记（不改变架构结论）**：当前 `ArtifactStore`（`../src/agent_os/knowledge/artifact_store.py`）的 DB schema **未预留** `subkind` / `previous_subkind_history` 等业务 lifecycle 字段；仅保留 `task_id` / `session_id` / `status` / `digest_status` / `stable_key` 等运行时字段，并通过 `<artifact ref>` + digest fallback 完成 prompt replacement。`/artifact finalize` 的业务字段集（`final_at` / `final_session_id` / `final_by` / 多 final 策略）与 `subkind` 的开放 string 仍归 Stage 5 通过迁移引入（见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A2）。
 
 | 亚层 | 引擎 | 承担职责 | 写入触发 |
 | --- | --- | --- | --- |
@@ -315,6 +317,13 @@ flowchart TD
 | `status` | enum | `active` / `archived` |
 | `created_at` | datetime | 创建时间 |
 | `current_main_session_id` | str | 当前主线 session id（resume 默认从这个继续） |
+
+**字段集判定（已实测确认，Stage 2 v0 不扩展）**：
+
+- **不加 `tag`**：真实任务出现分类痛点前不加（否则是先建字段后启用的治理诱惑）；若未来需要，加作为增量字段迁移（见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A4）。
+- **不加 `parent_task_id`（task 树）**：治理复杂度过高，超出个人级主线；如未来真有硬证据再开（见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) B4）。
+- **不加 `due_date`**：agent 不催办，deadline 属用户外部流程；如未来真有硬证据再开（见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) B4）。
+- **永远不加 `participants`**：多人协作超出个人级范围（见 §3.6 反模式清单）。
 
 **关键命令语义**：
 
@@ -469,7 +478,7 @@ CTE 在调用 compact LLM 时使用 structured output / JSON mode，**LLM 必须
 **机制**：SR 通过 schema fragment 注册接口向 CTE 暴露自己解析的层的 schema，CTE 在 compact 调用前**合成**完整 JSON Schema：
 
 ```python
-# CTE 层（伪代码示意，签名见 OPEN_DECISIONS A7）
+# CTE 层（Stage 3 已落地的契约签名）
 class SkillSchemaProvider(Protocol):
     def get_compact_schema_fragment(self) -> Type[BaseModel]: ...
 
@@ -486,13 +495,13 @@ llm.complete(prompt, response_format=full_schema)
 - **谁懂业务字段，谁就负责 schema fragment**——SR.business_writing 维护 `business_writing_pack` 的 Pydantic / JSON Schema 定义；异类 skill 维护自己的 `skill_state` schema。
 - **CTE 不解析字段**——只接收 fragment 接口实例、合成完整 schema 喂 LLM、保存 LLM 产出原文。运行时只在 SR 装配 prompt 时解析。
 - **不存在"控制权反转到 SR 主导 compact"**——compact 仍归 CTE（Task Loop 主导），SR 只通过 schema 注册接口向 CTE 提供 schema 片段。这避免了"SR 反向调 CTE"的循环依赖。
-- **接口签名细节**（如何注册、是否支持多 skill 同时活跃、缓存策略等）见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A7，待 Stage 3 实现 compact 时落地。
+- **Stage 3 已验证的边界**：首版强制 single-skill-active（不做多 skill 同时活跃合成）；接口签名固定为 `get_compact_schema_fragment() -> Type[BaseModel]`，schema 版本由 `schema_version` 字段承载；多 skill 合成与缓存策略作为参数级扩展留在 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A7。
 
 **关键工程规则**：
 
 - compact LLM 调用使用 structured output / JSON mode 强约束输出格式；CTE 仅校验 `core` 字段齐全，`business_writing_pack` / `skill_state` 是否合规由对应 SR 在装配时检查。
 - compact 时 CTE 把 `business_writing_pack` / `skill_state` 作为**不透明 dict 透传**——压缩 / 重写 LLM prompt 时把它们整体作为"这是 skill 自有状态，不要改字段、不要省略"的硬约束传入。
-- **Layer 2 / Layer 3 size 约束（强制契约）**：`business_writing_pack` / `skill_state` 字段**语义不透明、size 必须透明**——CTE 在 compact 入口、resume 装配、prompt 装配三处对两层各自的序列化体积做硬校验，超阈值时**强制触发 SR 自压缩 / 警告 / 截断**（具体阈值与降级策略见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A7 扩展，待 Stage 3 实现 compact 时落地）。SR 不能借"不透明"为由绕开预算审计——CTE 不解析字段语义，但守住总预算是 CTE 的本职职责。这条规则避免"Skill 开发者随手塞 50KB 数据进 `skill_state`，CTE 透传不告警，prompt 装配时整体爆预算"的全盘破产。
+- **Layer 2 / Layer 3 size 约束（强制契约）**：`business_writing_pack` / `skill_state` 字段**语义不透明、size 必须透明**——CTE 在 compact 入口、resume 装配、prompt 装配三处对两层各自的序列化体积做硬校验，超阈值时**强制触发 SR 自压缩 / 警告 / 截断**（阈值与降级策略属参数级，见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A7）。SR 不能借"不透明"为由绕开预算审计——CTE 不解析字段语义，但守住总预算是 CTE 的本职职责。这条规则避免"Skill 开发者随手塞 50KB 数据进 `skill_state`，CTE 透传不告警，prompt 装配时整体爆预算"的全盘破产。
 - task summary（Stage 4）复用同一 schema 并扩展 `task_history`（`CompactSummary` 快照序列）+ `cross_run_lessons`，**沿用三层结构**。
 - `/task resume` 的装配从各层字段映射：
   - `core.goal` → attention anchor
@@ -567,7 +576,7 @@ llm.complete(prompt, response_format=full_schema)
 | GC4 | `core.goal` / `core.current_artifact_refs` / `core.last_user_instruction` 非空；不出现"我们讨论了 X 话题"空话；`business_writing_pack` / `skill_state` 允许 null | + `business_writing_pack.brand_voice` 非空 + `core.constraints` 含品牌红线 |
 | GC5 | `core.current_artifact_refs` 在每轮 trace 中持续指向同一组 deliverable | + 每轮 prompt 中 `<voice>` 段持续在场 |
 
-具体写法 → [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A1，待写代码时回答。
+具体字段级断言口径见 [GC_SPEC.md](GC_SPEC.md)。实现路径采用参数驱动的同一断言体系：Stage 3 先落 `gc_assertion_level="stage3"` 的字段口径，Stage 5 再追加业务字段强断言（voice pack / brand redline 等）。
 
 ### 3.6 反模式：明确不做的清单
 
@@ -580,6 +589,7 @@ llm.complete(prompt, response_format=full_schema)
 - **Voice / Memory 自动学习不经用户确认**：所有 candidate 必须 review 后入召回。
 - **服务端 context management**：与 Anthropic API 强绑定，永远不做。
 - **Multi-Skill Composition / Skill Router**：推到 Stage 7+，**默认不做**，除非届时出现硬证据（具体场景需求 / 真实交付瓶颈）——区别于"永远不做"清单（多租户 / 计费 / 审批流 / coding 专属能力 / 服务端 context management）。
+- **多人协作（participants）**：超出个人级范围，永远不做。
 
 ## 4. Stage 路线（依赖顺序）
 
@@ -663,7 +673,7 @@ Claude Code 是 LLM-native coding harness，agent-os 是 Agno-based business age
   - "task ⊃ session 1:N 关系下 summary 归属"——语义已清楚（per-session 持有，task 只投影），漏写而已，属豁免。
 - **目的**：防止冻结规则**自我实现**地阻挡正常文档完善——LLM 挑刺是噪音源，但 LLM 挑刺命中的"表述空洞"本身仍是文档缺陷，应直接补足。
 
-**当前节奏**：本文沉淀完成后，**下一个动作是 Stage 2 代码 PR**（artifact registry + asset store v0 + task entity v0 + lifecycle 命令），不是继续文档迭代。代码会自然回答 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) 中的 A1-A4 工程验证项，比哲学辩论高效 100 倍。
+**当前节奏**：本文沉淀完成后，**下一个动作是 Stage 4 代码 PR**（`/task resume` + `/task branch` + resume 装配 trace + Golden Case 收口），不是继续文档迭代。代码会自然回答 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) 中的 A3/A4/A5/A6/B5 等工程验证项与产品边界项，比哲学辩论高效 100 倍。
 
 **实现级口径（不走架构修订门槛）**：本文中出现的工程细节——CoW 事务边界、digest 异步化策略、SR→CTE schema fragment 接口签名、Turn/Task Loop Safepoint 协议、`pinned_refs` / `originating_session_id` / `compact_pending` 等字段——是**机制级契约**，**不是不可变的 API 签名**。具体字段名、接口签名、阈值参数等通过 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) A 类闭环（PR + GC trace 回答）自然微调，不触发本文修订门槛；本文只为"机制是否存在 + 该机制的语义边界"负责。
 
@@ -683,3 +693,4 @@ Claude Code 是 LLM-native coding harness，agent-os 是 Agno-based business age
 - **2026-04-29（同日，段落精修 + 修订记录浓缩）**：4 处 V2 自指措辞弱化（70/129/291/652 行）；修订记录从约 39 行浓缩到约 18 行（删除独立"设计意图"长段与重复的"为什么这样做"长论证，保留日期 / 标签 / 节号 / 拒绝清单 / 真豁免数序列 / 主干修订状态）；1.3 与 3.2 段落结构候选按"做不好宁愿不做"原则跳过（流水结构已合理，强行加子节会碎片化逻辑）。**主干 0 修订**。
 - **2026-04-29（同日，Phase 5 收尾）**：第 0 节哲学锚点编号由 0.5 改为 **0.4**（与 0.1–0.3 连续编号）；§5.2 首段补足**5 条 vs INDEX §1.2 八条**之关系说明；[CLAUDE_CODE_REFERENCE_INDEX.md](CLAUDE_CODE_REFERENCE_INDEX.md) 反模式条目一处指向更新为「第 0.4 节哲学锚点」。**主干 0 修订**——属编号与跳转澄清，不涉及 4 视图 / 不变量 / 借鉴机制条目本身。
 - **2026-04-29（同日，Phase 6 GPT 收口审核）**：4 项一致性修复——① §367 `/task branch` 起点措辞由"拷贝 source session summary"改为"§1.4 实时合成方案初始化首轮 prompt，不持久化 seed 副本"，与 §330 实时合成口径统一（修订上轮二阶副作用收敛漏改的尾巴）；② [OPEN_DECISIONS.md](OPEN_DECISIONS.md) B3 "强烈推荐永远不做" 改为 "**默认不做（推到 Stage 7+），除非硬证据再开**"，与 ARCH §3.6 / §582 措辞强度对齐；③ 修订记录里"C 取消" 改名为 "**Phase 1 C 步取消**"，明文区分本次升格计划子项 vs OPEN_DECISIONS C 类（"已暂时回答但保留挑刺空间"）；④ §6 末段加 1 段"实现级口径"明文条款——机制级契约的字段名 / 接口签名 / 阈值参数通过 OPEN_DECISIONS A 类闭环微调，不走架构修订门槛。**主干 0 修订**——纯口径统一与表达精度修订；4 视图 / 不变量 / 工程规则结论 / stage 路线 / 反模式抗体清单 0 改动。
+- **2026-04-29（同日，Phase 7 收口：Stage 2/3 实测回填）**：Stage 2/3 已实测落地后做最小回填——§1.3 增补 Stage 2 v0 `ArtifactStore` schema 的实现注记（未预留 `subkind` 等业务 lifecycle 字段，Stage 5 迁移引入）；§1.4 明文 task_table 5 字段边界与“不加 tag / parent_task_id / due_date / participants”的判定；§3.2 把 `SkillSchemaProvider` 契约签名从“伪代码示意 + A7 引用”升级为 Stage 3 已落地签名，并声明 single-skill-active 边界；§3.5 将字段级断言口径出口从 OPEN_DECISIONS A1 改为 [GC_SPEC.md](GC_SPEC.md)；§3.6 追加“participants 永远不做”。同时把“当前节奏”更新为 Stage 4 代码 PR。**主干 0 修订**——仅实测落地事实回填与过期引用修正，不改变 4 视图 / 不变量 / stage 承诺 / 反模式结论。
