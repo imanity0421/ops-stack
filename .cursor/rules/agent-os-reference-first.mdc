@@ -1,0 +1,28 @@
+---
+description: Agent OS reference-first development for Claude Code inspired runtime work
+globs: agent-os-runtime/**
+alwaysApply: false
+---
+# Agent OS Reference First
+
+For `agent-os-runtime`, treat `docs/ARCHITECTURE.md` as the sole architecture authority. Old Roadmap / Sprint / Stage planning docs are archived history, not active instructions.
+
+When implementing capabilities inspired by Claude Code Harness, read `agent-os-runtime/docs/CLAUDE_CODE_REFERENCE_INDEX.md` first, then inspect the corresponding source under `../claude_code/cc-recovered-main`.
+
+Core principle: 不纯硬造，也不无脑抄 Claude Code. Claude Code is a reference, not the target architecture. Borrow mechanisms only after translating them to the current Agno-based Agent OS architecture.
+
+Before substantive edits, summarize and persist the summary in the PR body or commit message body:
+
+- Claude Code files reviewed.
+- Mechanisms worth borrowing.
+- Parts that should not be copied because Agent OS is Agno-based.
+- The selective adaptation plan for Agent OS.
+- The intended implementation boundary.
+
+If you find a useful Claude Code source path not listed in `docs/CLAUDE_CODE_REFERENCE_INDEX.md` §4.2-§4.3, append it to the index when appropriate. If a listed path no longer matches the current Claude Code source, record the path drift in the index revision history.
+
+Borrowing decisions should fit within `docs/ARCHITECTURE.md` §5.2 core mechanisms or `docs/CLAUDE_CODE_REFERENCE_INDEX.md` §1.2 governance capabilities. Borrowing outside these lists must first be opened as a B-class decision in `docs/OPEN_DECISIONS.md`.
+
+Do not invent complex context, compact, tool-result, slash-command, resume, artifact, or subagent behavior without checking reference source when a reference likely exists.
+
+Do not copy Claude Code's coding-harness UI, Anthropic-specific message schema, permission model, query loop, or IDE-specific workflows unless `ARCHITECTURE.md` explicitly justifies that adaptation.

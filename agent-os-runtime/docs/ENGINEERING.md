@@ -131,15 +131,15 @@ agent-os-runtime/
   pyproject.toml
   README.md
   docs/
-    CLAUDE_CODE_REFERENCE_ROADMAP.md  # 业务 / Harness 架构中心：方向、模块、Stage、冻结清单
+    ARCHITECTURE.md    # 唯一架构权威：4 视图、stage 路线、工程规则
+    OPEN_DECISIONS.md  # 开放决策与 Stage 2 battle 顺序
+    CLAUDE_CODE_REFERENCE_INDEX.md # Claude Code 借鉴依据、差距矩阵、源码导航
     ENGINEERING.md    ← 本文件（阅读顺序见仓库 README §文档与阅读顺序）
-    ARCHITECTURE.md
     OPERATIONS.md
     CHANGELOG.md
     MEMORY_SYSTEM_V2.md
     CONTEXT_MANAGEMENT_V2.md         # 上下文工程专项接手手册
-    SPRINT_IMPLEMENTATION_ROADMAP.md # Sprint / DoD 执行计划
-    STAGE_EXECUTION_PLAN.md          # 当前 Stage 战役与完成历史
+    archive/                         # 旧 roadmap / sprint / stage 过程文档，仅作历史对照
   src/agent_os/
     __init__.py
     __main__.py
@@ -226,9 +226,10 @@ agent-os-runtime/
 
 ### 7.1 文档层级与执行计划
 
-- 业务架构方向、Claude Code Harness 参考边界、五大模块、Stage 节奏与冻结清单见 **[CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md)**。
-- 面向 **CLI + Web/API 对外、持续新增 Skill** 的 Sprint 级实施表、DoD、Mermaid 设计图与实现落点见 **[SPRINT_IMPLEMENTATION_ROADMAP.md](SPRINT_IMPLEMENTATION_ROADMAP.md)**。
-- 当前 Stage 的战役拆解与完成历史见 **[STAGE_EXECUTION_PLAN.md](STAGE_EXECUTION_PLAN.md)**。
+- 架构方向、模块边界、Stage 路线、工程规则与反模式清单见 **[ARCHITECTURE.md](ARCHITECTURE.md)**。
+- 开放决策、工程验证项与 Stage 2 battle 顺序见 **[OPEN_DECISIONS.md](OPEN_DECISIONS.md)**。
+- Claude Code Harness 借鉴依据、差距矩阵、源码导航与 Reference Check 模板见 **[CLAUDE_CODE_REFERENCE_INDEX.md](CLAUDE_CODE_REFERENCE_INDEX.md)**。
+- 旧 roadmap / sprint / stage 过程文档已归档到 **[archive/](archive/)**，仅作历史对照，不作为权威来源。
 - 若规划文档与实现冲突，以代码、测试与 **[CHANGELOG.md](CHANGELOG.md)** 校准事实；本文仍负责记录当前工程契约。
 
 ---

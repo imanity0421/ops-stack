@@ -18,6 +18,7 @@ _PRIMARY_CONTEXT_BLOCKS = (
     "runtime_context",
     "external_recall",
     "working_memory",
+    "artifact_refs",
     "recent_history",
     "attention_anchor",
     "current_user_message",

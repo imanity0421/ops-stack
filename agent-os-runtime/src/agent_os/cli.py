@@ -253,6 +253,60 @@ def _asset_rm_main(argv: list[str]) -> int:
     return 1
 
 
+def _task_main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="agent-os-runtime task",
+        description="Stage 2 Task Entity v0：创建、列出与软归档任务。",
+    )
+    sub = p.add_subparsers(dest="action", required=True)
+
+    p_new = sub.add_parser("new", help="创建 task，并绑定一个主线 session")
+    p_new.add_argument("name", help="用户可见任务名")
+    p_new.add_argument("--session-id", default=None, help="主线 session id；默认新建")
+
+    p_list = sub.add_parser("list", help="列出 task")
+    p_list.add_argument("--include-archived", action="store_true", help="包含 archived task")
+    p_list.add_argument("--limit", type=int, default=50, help="最大返回条数")
+
+    p_archive = sub.add_parser("archive", help="软归档 task")
+    p_archive.add_argument("task_id")
+
+    p_unarchive = sub.add_parser("unarchive", help="恢复 archived task")
+    p_unarchive.add_argument("task_id")
+
+    args = p.parse_args(argv)
+    settings = Settings.from_env()
+    store = TaskMemoryStore(settings.task_memory_sqlite_path)
+
+    if args.action == "new":
+        session_id = args.session_id or new_session_id()
+        task = store.create_task(name=args.name, current_main_session_id=session_id)
+        print(json.dumps({"status": "ok", "task": task.__dict__}, ensure_ascii=False, indent=2))
+        return 0
+    if args.action == "list":
+        tasks = store.list_task_entities(
+            include_archived=args.include_archived,
+            limit=args.limit,
+        )
+        print(
+            json.dumps(
+                {"status": "ok", "tasks": [task.__dict__ for task in tasks]},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if args.action == "archive":
+        task = store.archive_task_entity(args.task_id)
+    else:
+        task = store.unarchive_task_entity(args.task_id)
+    if task is None:
+        print(json.dumps({"status": "error", "reason": "task_not_found"}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"status": "ok", "task": task.__dict__}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _hindsight_index_main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="agent-os-runtime hindsight-index",
@@ -785,6 +839,8 @@ def main(argv: list[str] | None = None) -> int:
         return _asset_ingest_main(argv[1:])
     if argv and argv[0] == "asset-rm":
         return _asset_rm_main(argv[1:])
+    if argv and argv[0] == "task":
+        return _task_main(argv[1:])
     if argv and argv[0] == "hindsight-index":
         return _hindsight_index_main(argv[1:])
     if argv and argv[0] == "mcp-probe-server":

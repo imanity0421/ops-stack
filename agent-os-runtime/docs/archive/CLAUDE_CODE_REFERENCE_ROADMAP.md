@@ -1,8 +1,27 @@
 # Claude Code 参考架构规划
 
-本文是 `agent-os-runtime` 的**业务视角 / Harness 参考架构中心文档**。它沉淀以 Claude Code Harness 为参考对象的架构判断、差距矩阵与演进路线，用来回答“系统应该往哪里演进、哪些能力优先、哪些能力暂缓”。
+> **状态：已废弃（2026-04-29）**
+>
+> 本文是 V1 时代（2025-2026 早期）的"业务视角 / Harness 参考架构中心文档"，其核心责任已被以下文档**完全取代**：
+>
+> | 原本职责 | 新归属 |
+> | --- | --- |
+> | 5 大核心模块 / 阶段路线图 / P0-P4 优先级总表 / 最终路线总结 | [ARCHITECTURE.md](../ARCHITECTURE.md)（4 模块 + 6+1 stage + 不变量 + 工程规则） |
+> | 借鉴依据 / 不对称对标论证 / 8 条 harness 治理能力 | [ARCHITECTURE.md](../ARCHITECTURE.md) 第 0 节（项目背景与对标）+ 第 5 节（与 Claude Code 边界） |
+> | 14 项能力代码级差距矩阵 / 不借鉴清单 / 反模式具体行为 / 7 个能力域源码路径 / Reference Check 模板 | [CLAUDE_CODE_REFERENCE_INDEX.md](../CLAUDE_CODE_REFERENCE_INDEX.md)（升级为单一 reference 文档） |
+> | 待决策项（多 final / 章节切分 / Voice Pack 时机等） | [OPEN_DECISIONS.md](../OPEN_DECISIONS.md) |
+>
+> **为什么废弃**：本文 V1 时代的"5 模块设计"已被 ARCHITECTURE 4 模块（ER / CTE / MA / SR）取代；"Stage 1-4 路线图"已被 6+1 stage（Stage 1 Context Foundation → Stage 6 Memory & Voice Runtime → Stage 7+ 可选）取代；"P0-P4 优先级"已被 stage 路线 + OPEN_DECISIONS 取代。继续保留会引发架构信号矛盾。
+>
+> **不要再编辑本文**——架构修订请编辑 [ARCHITECTURE.md](../ARCHITECTURE.md)；借鉴依据 / 差距矩阵 / 源码导航请编辑 [CLAUDE_CODE_REFERENCE_INDEX.md](../CLAUDE_CODE_REFERENCE_INDEX.md)；待决策项请更新 [OPEN_DECISIONS.md](../OPEN_DECISIONS.md)。
+>
+> **本文保留作 git 历史**——V1 时代的 5 模块论证、阶段路线、4 stage DoD 等内容仍可作历史对照，但**不再作为权威来源**。新人无需阅读本文，请直接跳到 ARCHITECTURE.md。
 
-本文不替代工程契约与专项设计：当前实现事实以代码、测试、`CHANGELOG.md`、`ENGINEERING.md` 为准；Memory 与 Context 的专项细节分别以 `MEMORY_SYSTEM_V2.md`、`CONTEXT_MANAGEMENT_V2.md` 为准；Sprint/DoD 级执行拆解见 `SPRINT_IMPLEMENTATION_ROADMAP.md`。本文站在更高一层回答三个问题：
+---
+
+本文是 `agent-os-runtime` 的**业务视角 / Harness 参考架构中心文档**。它沉淀以 Claude Code Harness 为参考对象的架构判断、差距矩阵与演进路线，用来回答"系统应该往哪里演进、哪些能力优先、哪些能力暂缓"。
+
+本文不替代工程契约与专项设计：当前实现事实以代码、测试、`CHANGELOG.md`、`ENGINEERING.md` 为准；Memory 与 Context 的专项细节分别以 `MEMORY_SYSTEM_V2.md`、`CONTEXT_MANAGEMENT_V2.md` 为准；Sprint/DoD 级执行拆解见 `SPRINT_IMPLEMENTATION_ROADMAP.md`。效果优先、避免过度复杂的新阶段规划草案见 `EFFECT_FIRST_STAGE_PLAN.md`；该草案在反复校验前不替代本文。本文站在更高一层回答三个问题：
 
 1. `agent-os` 当前基于 Agno 的底座应如何拆成大模块。
 2. 哪些 Claude Code 能力值得借鉴，哪些不值得现在借鉴。

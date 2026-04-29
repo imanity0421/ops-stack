@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from agent_os.agent.task_memory import TaskSegment, TaskSummary
 from agent_os.context_builder import (
+    ArtifactContextRef,
     ContextCharBudget,
     ContextBuilder,
     clean_history_messages,
@@ -12,6 +14,7 @@ from agent_os.context_builder import (
     resolve_auto_retrieve_decision,
     should_auto_retrieve,
 )
+from agent_os.knowledge.artifact_store import ArtifactStore
 
 
 @dataclass(frozen=True)
@@ -241,6 +244,65 @@ def test_context_builder_adds_working_memory_and_attention_anchor() -> None:
     assert bundle.trace.total_chars > 0
     assert any(b.source == "task_memory" for b in bundle.trace.blocks)
     assert "retrieve_ordered_context" in bundle.trace.to_obs_log_line()
+
+
+def test_context_builder_injects_artifact_refs_without_raw_content(tmp_path: Path) -> None:
+    builder = ContextBuilder(
+        timezone_name="Asia/Shanghai",
+        history_max_messages=0,
+        include_runtime_context=False,
+        enable_token_estimate=False,
+    )
+    raw_content = "完整正文不应该进入 prompt " * 20
+    artifact = ArtifactStore(tmp_path / "artifacts.db").create_artifact(
+        task_id="task_1",
+        session_id="s1",
+        raw_content=raw_content,
+    )
+
+    bundle = builder.build_turn_message(
+        "请基于 artifact 继续优化",
+        entrypoint="cli",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        artifact_refs=[artifact],
+    )
+
+    assert "<artifact_refs>" in bundle.message
+    assert f'ref="{artifact.artifact_id}"' in bundle.message
+    assert artifact.ref_digest in bundle.message
+    assert raw_content not in bundle.message
+    trace = bundle.trace.to_obs_log_line()
+    assert "artifact_refs" in trace
+    assert "refs=1" in trace
+
+
+def test_artifact_context_ref_can_carry_explicit_purpose() -> None:
+    builder = ContextBuilder(
+        timezone_name="Asia/Shanghai",
+        history_max_messages=0,
+        include_runtime_context=False,
+        enable_token_estimate=False,
+    )
+
+    bundle = builder.build_turn_message(
+        "请基于 artifact 继续优化",
+        entrypoint="cli",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        artifact_refs=[
+            ArtifactContextRef(
+                artifact_id="artifact_20260429T000000Z_abcdef12",
+                task_id="task_1",
+                digest="这是一段 artifact 摘要",
+                purpose="当前交付物草稿",
+            )
+        ],
+    )
+
+    assert "当前交付物草稿" in bundle.message
 
 
 def test_attention_anchor_squeezes_long_current_request_but_keeps_final_message() -> None:

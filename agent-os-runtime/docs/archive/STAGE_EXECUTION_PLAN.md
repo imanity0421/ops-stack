@@ -1,8 +1,14 @@
 # Stage Execution Plan
 
+> **Deprecated / Historical Archive**
+>
+> 本文已废弃并归档，仅保留作历史参考。当前架构权威见 [../ARCHITECTURE.md](../ARCHITECTURE.md)；Stage 2 battle 顺序与完成度见 [../OPEN_DECISIONS.md](../OPEN_DECISIONS.md) D1；已完成交付见 [../CHANGELOG.md](../CHANGELOG.md)。
+>
+> 新研发不要继续编辑本文，也不要把本文作为 active stage plan。
+
 本文记录 `agent-os-runtime` 按阶段推进 Claude Code 参考架构规划的当前战役与完成历史。
 
-顶层原则见 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md)；跨阶段 Sprint/DoD 拆解见 [SPRINT_IMPLEMENTATION_ROADMAP.md](SPRINT_IMPLEMENTATION_ROADMAP.md)。本文只记录可频繁更新的 Stage 战役细节，避免顶层 roadmap 被日常研发噪声污染。
+顶层原则见 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md)；跨阶段 Sprint/DoD 拆解见 [SPRINT_IMPLEMENTATION_ROADMAP.md](SPRINT_IMPLEMENTATION_ROADMAP.md)。效果优先、避免过度复杂的新阶段规划草案见 [EFFECT_FIRST_STAGE_PLAN.md](EFFECT_FIRST_STAGE_PLAN.md)，该草案在反复校验前不替代顶层 roadmap。本文只记录可频繁更新的 Stage 战役细节，避免顶层 roadmap 被日常研发噪声污染。
 
 ## 文档使用规则
 

@@ -14,14 +14,15 @@ Agent OS Runtime：**Agno + Mem0 + Hindsight + Graphiti（只读）+ AsyncReview
 
 | 优先级 | 文档 | 作用 |
 |--------|------|------|
-| 1 | [docs/CLAUDE_CODE_REFERENCE_ROADMAP.md](docs/CLAUDE_CODE_REFERENCE_ROADMAP.md) | **业务 / Harness 架构中心**：为什么参考 Claude Code、五大模块、Stage 优先级与冻结清单 |
-| 2 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 数据流、读写路径、检索顺序（短） |
-| 3 | [docs/ENGINEERING.md](docs/ENGINEERING.md) | **工程契约主权威**：模块边界、目录、契约、环境变量、ADR |
-| 4 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 环境变量**全表**、排障、`doctor` |
-| 5 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本与行为变化；当规划文档与实现不一致时用于校准事实 |
-| 6 | [docs/MEMORY_SYSTEM_V2.md](docs/MEMORY_SYSTEM_V2.md) | 记忆系统专项：Mem0 / Hindsight / Graphiti / Asset Store 的职责与治理语义 |
-| 7 | [docs/CONTEXT_MANAGEMENT_V2.md](docs/CONTEXT_MANAGEMENT_V2.md) | 上下文工程专项：ContextBuilder、四层上下文、预算、trace 与历史接手说明 |
-| 执行计划 | [docs/SPRINT_IMPLEMENTATION_ROADMAP.md](docs/SPRINT_IMPLEMENTATION_ROADMAP.md)、[docs/STAGE_EXECUTION_PLAN.md](docs/STAGE_EXECUTION_PLAN.md) | Sprint/DoD 与当前 Stage 战役记录（**与实现可能部分不同步，以代码为准**） |
+| 1 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **唯一架构权威**：项目定位、4 视图、6 不变量、工程规则、6+1 stage 路线 |
+| 2 | [docs/OPEN_DECISIONS.md](docs/OPEN_DECISIONS.md) | **开放决策与 Stage 2 battle 顺序**：工程验证项、用户决策项、已定执行排序 |
+| 3 | [docs/CLAUDE_CODE_REFERENCE_INDEX.md](docs/CLAUDE_CODE_REFERENCE_INDEX.md) | **Claude Code 借鉴依据**：差距矩阵、源码导航、Reference Check 模板 |
+| 4 | [docs/ENGINEERING.md](docs/ENGINEERING.md) | **工程契约主权威**：当前代码事实、模块边界、目录、契约、环境变量、ADR |
+| 5 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 环境变量**全表**、排障、`doctor` |
+| 6 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本与行为变化；当规划文档与实现不一致时用于校准事实 |
+| 7 | [docs/MEMORY_SYSTEM_V2.md](docs/MEMORY_SYSTEM_V2.md) | 记忆系统专项：Mem0 / Hindsight / Graphiti / Asset Store 的职责与治理语义 |
+| 8 | [docs/CONTEXT_MANAGEMENT_V2.md](docs/CONTEXT_MANAGEMENT_V2.md) | 上下文工程专项：ContextBuilder、四层上下文、预算、trace 与历史接手说明 |
+| 历史归档 | [docs/archive/](docs/archive/) | 旧 roadmap / sprint / stage 过程文档，仅作历史对照，不作为权威来源 |
 | 按需 | [docs/ASSET_STORE.md](docs/ASSET_STORE.md)、[docs/DATA_BACKUP.md](docs/DATA_BACKUP.md)、[docs/examples/](docs/examples/) | 案例库、备份、ingest/合宪样例 |
 | 外仓无 | [../PIPELINE.md](../PIPELINE.md) | **仅**本目录在 `ops-stack` 内时存在：①→②→③ 总管线；独立检出忽略 |
 

@@ -1,0 +1,31 @@
+---
+description: Agent OS R&D management workflow for serial agents and cross-machine handoff
+globs: agent-os-runtime/**
+alwaysApply: false
+---
+# Agent OS R&D Management
+
+For `agent-os-runtime`, do not create new long-lived Stage Execution Plan or Sprint Roadmap docs unless the user explicitly asks. `docs/ARCHITECTURE.md` stays stable and must not be edited for progress tracking.
+
+Before starting substantive work, read:
+
+- `docs/ARCHITECTURE.md` for stable architecture.
+- `docs/OPEN_DECISIONS.md` D for current stage battle order and Status.
+- `docs/CLAUDE_CODE_REFERENCE_INDEX.md` when the task is Claude Code inspired.
+
+Progress tracking rules:
+
+- `docs/OPEN_DECISIONS.md` D1 is the one-hop current progress entry. Update only the relevant battle `Status`.
+- `docs/CHANGELOG.md` records completed and verified delivery only. Do not write in-progress work there.
+- Git commit / PR body records implementation details, Reference Check, and verification commands. Use the template from `docs/CLAUDE_CODE_REFERENCE_INDEX.md` §4.4 when relevant.
+- Cursor plans and TodoWrite are short-term execution state, not durable progress records.
+
+Serial-agent handoff rules:
+
+- At start: check D1 Status, recent CHANGELOG Stage entry, git status, and the tail of `docs/ARCHITECTURE.md` revision history for multi-day handoff.
+- During work: keep changes scoped to the current battle; do not reopen ARCHITECTURE unless a stage promise or invariant truly changes.
+- At battle completion: update D1 Status, add CHANGELOG entry, record tests / smoke results, then summarize remaining next battle in the commit message body or PR description tail. Do not create separate handoff docs.
+
+Status values should stay compact: `todo`, `in-progress`, `done-local @ YYYY-MM-DD (tests passed, commit pending)`, `done @ YYYY-MM-DD (commit <sha> / PR #N)`, or `blocked: <reason>`. `done-local` is not handoff-ready across machines; durable handoff requires commit, and preferably push.
+
+If a battle is rolled back after `done`, revert its D1 Status to `todo` or `in-progress` with a short reason, and add a CHANGELOG fix entry referencing the revert commit / PR.

@@ -2,7 +2,7 @@
 
 本文档约束：**在单独复制本目录、独立仓库或分支中强化 agent-os-runtime 后，合回 `ops-stack` 或其它 monorepo 时应遵守的边界**，以减少联调断裂与重复劳动。
 
-业务架构方向以 **`docs/CLAUDE_CODE_REFERENCE_ROADMAP.md`** 为中心；工程权威细节仍以 **`docs/ENGINEERING.md`**、**`docs/OPERATIONS.md`**、**`docs/CHANGELOG.md`** 为准；冲突时以代码与上述文档为准。
+架构方向以 **`docs/ARCHITECTURE.md`** 为唯一权威；开放决策见 **`docs/OPEN_DECISIONS.md`**，其中 Stage 2 battle 顺序与完成度见 **D1 Status 列**；Claude Code 借鉴依据与源码导航见 **`docs/CLAUDE_CODE_REFERENCE_INDEX.md`**。工程权威细节仍以 **`docs/ENGINEERING.md`**、**`docs/OPERATIONS.md`**、**`docs/CHANGELOG.md`** 为准；冲突时以代码与上述文档为准。
 
 ---
 
@@ -55,7 +55,7 @@
 
 1. **`pytest`**（在 `agent-os-runtime` 根，已 `pip install -e ".[dev]"`）。
 2. **`agent-os-runtime doctor`**（可选 **`--strict`**，视 CI 要求）。
-3. 若改了用户可见行为或契约：**`docs/CHANGELOG.md`** 已更新，**`pyproject.toml` 的 `version`** 与 **`agent_os.__version__`**（若存在）一致策略。
+3. 若改了用户可见行为或契约，或从 Stage 2 起完成了一个 battle：**`docs/CHANGELOG.md`** 已更新；battle 完成不要求立即改版本号，但发布时 **`pyproject.toml` 的 `version`** 与 **`agent_os.__version__`**（若存在）保持一致策略。
 4. 若改了环境变量或安装步骤：**`docs/OPERATIONS.md`**（及必要时 **ENGINEERING.md**）已更新。
 5. 未将 **`.env`**、**`.venv`**、**`data/*.json`** 等本地机密或缓存提交进 Git。
 
@@ -65,7 +65,7 @@
 
 - 文档**阅读顺序**：见仓库根 [**`README.md`**](README.md) 的 **「文档与阅读顺序」**（与 `ops-stack` 关系、未完结项入口亦在该节）。
 - **独立仓库**中 `README.md` 里的 **`../PIPELINE.md`** 会失效：可忽略、改为内部管线 URL，或注明「仅原 monorepo 内存在」。
-- 业务架构方向以 **`docs/CLAUDE_CODE_REFERENCE_ROADMAP.md`** 为中心；工程架构与边界以 **`docs/ENGINEERING.md`** 为准；操作与变量表以 **`docs/OPERATIONS.md`** 为准。
+- 架构方向以 **`docs/ARCHITECTURE.md`** 为唯一权威；开放决策见 **`docs/OPEN_DECISIONS.md`**；Claude Code 借鉴依据见 **`docs/CLAUDE_CODE_REFERENCE_INDEX.md`**；工程契约以 **`docs/ENGINEERING.md`** 为准；操作与变量表以 **`docs/OPERATIONS.md`** 为准。
 
 ---
 

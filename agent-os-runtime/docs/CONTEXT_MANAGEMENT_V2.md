@@ -2,7 +2,7 @@
 
 本文是 `agent-os-runtime` 的上下文工程专项接手手册。Memory V2 解决“记忆如何分层、写入、召回、治理”；Context Management V2 解决“每轮 Agent run 如何把静态规则、外部召回、工作记忆、recent history 与当前用户目标送进模型上下文”。
 
-全局业务架构方向、Claude Code Harness 参考边界和 Stage 节奏以 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md) 为中心；本文只负责 Context 子系统的已落地语义、接手信息、验证口径和历史追溯，不承担全局路线图职责。
+全局架构方向、Claude Code Harness 参考边界和 Stage 节奏以 [ARCHITECTURE.md](ARCHITECTURE.md) 为中心；Claude Code 源码参考与 Reference Check 见 [CLAUDE_CODE_REFERENCE_INDEX.md](CLAUDE_CODE_REFERENCE_INDEX.md)。本文只负责 Context 子系统的已落地语义、接手信息、验证口径和历史追溯，不承担全局路线图职责。
 
 本文件现在采用“主文 + 附录”结构：主文只保留新 Agent 接手必要信息；历史 P1 / P2 / P2-H 逐项说明保留在附录，避免丢失追溯能力。
 

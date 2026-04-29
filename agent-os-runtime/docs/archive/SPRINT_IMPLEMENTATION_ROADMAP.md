@@ -1,5 +1,11 @@
 # Sprint Implementation Roadmap — 实现流程与设计图
 
+> **Deprecated / Historical Archive**
+>
+> 本文已废弃并归档，仅保留作历史参考。当前架构权威见 [../ARCHITECTURE.md](../ARCHITECTURE.md)；Stage 2 battle 顺序与完成度见 [../OPEN_DECISIONS.md](../OPEN_DECISIONS.md) D1；已完成交付见 [../CHANGELOG.md](../CHANGELOG.md)。
+>
+> 新研发不要继续编辑本文，也不要把本文作为 active roadmap。
+
 **索引**：阅读顺序见仓库 [README.md](../README.md) §**文档与阅读顺序**。本文是 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md) 的 Sprint / DoD 级工程拆解：负责记录近期实施顺序、验收口径和代码落点；业务架构方向、模块边界和阶段原则以上述 Claude Code 参考架构文档为中心。本文与代码落地进度**可能部分已完成、部分仍为规划**，以 [CHANGELOG.md](CHANGELOG.md) 与代码为准。若**嫌表太长**：可只读 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md)、[ENGINEERING.md](ENGINEERING.md) 与最近 CHANGELOG，本文作 Sprint/DoD 备查即可。
 
 本文档是 **agent-os-runtime** 在「CLI + 最终 Web/API 对外、持续新增 Skill、通用任务型交付」目标下的实施蓝图，与 [ENGINEERING.md](ENGINEERING.md) 中的运行时边界一致，**不**覆盖账户/计费/多租户控制台等完整商业化（见 ENGINEERING §1.2）。

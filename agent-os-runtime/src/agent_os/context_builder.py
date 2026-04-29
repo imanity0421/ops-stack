@@ -36,6 +36,8 @@ _CONTEXT_BOUNDARY_TAGS = (
     "context_management_v2",
     "runtime_context",
     "working_memory",
+    "artifact_refs",
+    "artifact",
     "external_recall",
     "recent_history",
     "attention_anchor",
@@ -188,6 +190,15 @@ class ContextBundle:
 
 
 @dataclass(frozen=True)
+class ArtifactContextRef:
+    artifact_id: str
+    task_id: str
+    digest: str
+    digest_status: str = "built"
+    purpose: str = ""
+
+
+@dataclass(frozen=True)
 class HistoryCleanReport:
     lines: list[str]
     tool_outputs_original_chars: int = 0
@@ -254,6 +265,48 @@ def _literal_text_for_prompt(value: object) -> str:
 
 def _xml_attr(value: object) -> str:
     return escape(_text_or_empty(value), quote=True)
+
+
+def _artifact_ref_value(ref: object, name: str, default: str = "") -> str:
+    value = getattr(ref, name, default)
+    if name == "digest" and not value:
+        value = getattr(ref, "ref_digest", default)
+    return _text_or_empty(value).strip()
+
+
+def _build_artifact_refs_block(refs: Sequence[object]) -> tuple[str | None, str]:
+    lines: list[str] = []
+    pending_count = 0
+    for ref in refs:
+        artifact_id = _artifact_ref_value(ref, "artifact_id")
+        task_id = _artifact_ref_value(ref, "task_id")
+        digest = _artifact_ref_value(ref, "digest")
+        digest_status = _artifact_ref_value(ref, "digest_status", "built") or "built"
+        purpose = _artifact_ref_value(ref, "purpose")
+        if not artifact_id or not digest:
+            continue
+        if digest_status == "pending":
+            pending_count += 1
+        purpose_line = (
+            f"<purpose>{_literal_text_for_prompt(purpose)}</purpose>\n" if purpose else ""
+        )
+        lines.append(
+            f'<artifact ref="{_xml_attr(artifact_id)}" task_id="{_xml_attr(task_id)}" '
+            f'digest_status="{_xml_attr(digest_status)}">\n'
+            f"{purpose_line}"
+            f"<digest>{_literal_text_for_prompt(digest)}</digest>\n"
+            "</artifact>"
+        )
+    if not lines:
+        return None, "empty"
+    body = (
+        "<artifact_refs>\n"
+        "<usage_rule>Artifact refs are task-scoped working materials. Use the digest for orientation; "
+        "do not assume unavailable full text unless explicitly provided by a tool or command.</usage_rule>\n"
+        + "\n".join(lines)
+        + "\n</artifact_refs>"
+    )
+    return body, f"refs={len(lines)},pending={pending_count}"
 
 
 def _build_attention_anchor_request(value: object, max_chars: int) -> tuple[str, str]:
@@ -832,6 +885,7 @@ class ContextBuilder:
         retrieved_context: str | None = None,
         current_task_summary: TaskSummary | None = None,
         session_task_index: list[TaskSegment] | None = None,
+        artifact_refs: Sequence[object] = (),
         history_max_messages_override: int | None = None,
         auto_retrieve_reason: str | None = None,
         entrypoint_extra_lines: Sequence[str] | None = None,
@@ -964,6 +1018,29 @@ class ContextBuilder:
                         "working_memory", 0, False, source="task_memory", note="empty"
                     )
                 )
+
+        artifact_block, artifact_note = _build_artifact_refs_block(artifact_refs)
+        if artifact_block:
+            blocks.append(("artifact_refs", artifact_block))
+            trace_blocks.append(
+                ContextTraceBlock(
+                    "artifact_refs",
+                    len(artifact_block),
+                    True,
+                    source="artifact_store",
+                    note=artifact_note,
+                )
+            )
+        else:
+            trace_blocks.append(
+                ContextTraceBlock(
+                    "artifact_refs",
+                    0,
+                    False,
+                    source="artifact_store",
+                    note=artifact_note,
+                )
+            )
 
         hist_cap = (
             history_max_messages_override

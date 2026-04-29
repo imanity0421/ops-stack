@@ -406,6 +406,38 @@ def test_cli_task_memory_records_effective_skill_for_unknown_request(
     assert skill == "default_agent"
 
 
+def test_cli_task_commands_create_list_archive_unarchive(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    task_db = tmp_path / "task.db"
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(task_db))
+
+    rc = cli.main(["task", "new", "春季宣发方案", "--session-id", "s-main"])
+    assert rc == 0
+    created = json.loads(capsys.readouterr().out)
+    task_id = created["task"]["task_id"]
+    assert created["task"]["name"] == "春季宣发方案"
+    assert created["task"]["current_main_session_id"] == "s-main"
+
+    assert cli.main(["task", "list"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert [t["task_id"] for t in listed["tasks"]] == [task_id]
+
+    assert cli.main(["task", "archive", task_id]) == 0
+    archived = json.loads(capsys.readouterr().out)
+    assert archived["task"]["status"] == "archived"
+
+    assert cli.main(["task", "list"]) == 0
+    active_only = json.loads(capsys.readouterr().out)
+    assert active_only["tasks"] == []
+
+    assert cli.main(["task", "unarchive", task_id]) == 0
+    restored = json.loads(capsys.readouterr().out)
+    assert restored["task"]["status"] == "active"
+
+
 def test_cli_graphiti_dry_run_rejects_non_list_episodes(tmp_path: Path) -> None:
     p = tmp_path / "episodes.json"
     p.write_text(json.dumps({"episodes": None}), encoding="utf-8")

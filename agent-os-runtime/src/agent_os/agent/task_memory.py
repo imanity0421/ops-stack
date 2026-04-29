@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 TaskStatus = Literal["active", "inactive", "closed", "archived"]
+TaskEntityStatus = Literal["active", "archived"]
 BoundaryStatus = Literal["open", "confirmed", "dismissed", "expired"]
 MessageRole = Literal["user", "assistant", "system"]
 
@@ -49,6 +50,15 @@ def _decode_invoked_skills(raw: str | None, *, fallback: str) -> list[str]:
         data = []
     skills = [str(x) for x in data if isinstance(x, str) and x.strip()]
     return skills or ([fallback] if fallback else [])
+
+
+@dataclass(frozen=True)
+class TaskEntity:
+    task_id: str
+    name: str
+    status: TaskEntityStatus
+    created_at: str
+    current_main_session_id: str
 
 
 @dataclass(frozen=True)
@@ -93,6 +103,18 @@ class TaskMessage:
     sequence_no: int
 
 
+def _task_entity_from_row(row: sqlite3.Row | None) -> TaskEntity | None:
+    if row is None:
+        return None
+    return TaskEntity(
+        task_id=str(row["task_id"]),
+        name=str(row["name"]),
+        status=row["status"],
+        created_at=str(row["created_at"]),
+        current_main_session_id=str(row["current_main_session_id"]),
+    )
+
+
 class TaskMemoryStore:
     """同一 session 内的 task working memory 存储；不承载跨 session 长期记忆。"""
 
@@ -122,6 +144,17 @@ class TaskMemoryStore:
                   updated_at TEXT NOT NULL,
                   status TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS tasks (
+                  task_id TEXT PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  current_main_session_id TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_tasks_status_created
+                  ON tasks(status, created_at);
 
                 CREATE TABLE IF NOT EXISTS task_segments (
                   task_id TEXT PRIMARY KEY,
@@ -202,6 +235,69 @@ class TaskMemoryStore:
                 """
             )
 
+    def create_task(
+        self,
+        *,
+        name: str,
+        current_main_session_id: str,
+        task_id: str | None = None,
+    ) -> TaskEntity:
+        tid = task_id or new_task_id()
+        title = fallback_task_title(name, max_chars=80)
+        now = _iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO tasks
+                  (task_id, name, status, created_at, current_main_session_id)
+                VALUES (?, ?, 'active', ?, ?)
+                """,
+                (tid, title, now, current_main_session_id),
+            )
+        return TaskEntity(
+            task_id=tid,
+            name=title,
+            status="active",
+            created_at=now,
+            current_main_session_id=current_main_session_id,
+        )
+
+    def get_task_entity(self, task_id: str) -> TaskEntity | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        return _task_entity_from_row(row)
+
+    def list_task_entities(
+        self,
+        *,
+        include_archived: bool = False,
+        limit: int = 50,
+    ) -> list[TaskEntity]:
+        where = "" if include_archived else "WHERE status = 'active'"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM tasks
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [_task_entity_from_row(row) for row in rows if row is not None]
+
+    def set_task_entity_status(self, task_id: str, status: TaskEntityStatus) -> TaskEntity | None:
+        with self._connect() as conn:
+            conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", (status, task_id))
+            row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        return _task_entity_from_row(row)
+
+    def archive_task_entity(self, task_id: str) -> TaskEntity | None:
+        return self.set_task_entity_status(task_id, "archived")
+
+    def unarchive_task_entity(self, task_id: str) -> TaskEntity | None:
+        return self.set_task_entity_status(task_id, "active")
+
     def get_or_create_active_task(
         self,
         *,
@@ -250,6 +346,14 @@ class TaskMemoryStore:
                     now,
                     "session_start",
                 ),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO tasks
+                  (task_id, name, status, created_at, current_main_session_id)
+                VALUES (?, ?, 'active', ?, ?)
+                """,
+                (task_id, title, now, session_id),
             )
             return self._get_task(conn, task_id)  # type: ignore[return-value]
 

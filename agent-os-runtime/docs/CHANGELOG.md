@@ -4,9 +4,19 @@
 
 ## [Unreleased]
 
+本节按 `### Stage X` / `### 文档` / `### 改进` / `### 新增` / `### 修复` / `### 破坏性变更` 分组；Stage 2 起用 `### Stage 2` 记录 battle 完成项。
+
+### Stage 2
+
+- **Battle 1+2：Task Entity v0 + Artifact Registry v0**（2026-04-29，done-local）
+  - Task Entity v0：`tasks` 5 字段实体落地，支持 create / list / archive / unarchive，并提供 thin `task` CLI。
+  - Artifact Registry v0：新增 SQLite 原文层，支持 artifact 与 task / session 绑定、digest fallback、软归档。
+  - ContextBuilder 支持 `<artifact ref>` prompt 装配，模型只看到 ref / digest，不回灌 artifact 全文。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_context_builder.py tests/core/test_cli.py tests/core/test_artifact_store.py`；`python -m ruff check src tests`。
+
 ### 文档
 
-- **文档权威层级整理**：明确 [CLAUDE_CODE_REFERENCE_ROADMAP.md](CLAUDE_CODE_REFERENCE_ROADMAP.md) 为业务 / Claude Code Harness 参考架构中心文档；Sprint/DoD 执行拆解改为 [SPRINT_IMPLEMENTATION_ROADMAP.md](SPRINT_IMPLEMENTATION_ROADMAP.md)，并同步 README、ENGINEERING、Memory/Context/Stage 文档的关系说明与链接。
+- **文档权威层级整理**：明确 [ARCHITECTURE.md](ARCHITECTURE.md) 为唯一架构权威，[OPEN_DECISIONS.md](OPEN_DECISIONS.md) 承载开放决策与 Stage 2 battle 顺序，[CLAUDE_CODE_REFERENCE_INDEX.md](CLAUDE_CODE_REFERENCE_INDEX.md) 承载 Claude Code 借鉴依据 / 差距矩阵 / 源码导航；旧 roadmap / sprint / stage 过程文档归档至 [archive/](archive/)。
 - **文档入口合并**：原 `docs/README.md` 已撤并至仓库 [README.md](../README.md) §**文档与阅读顺序**（避免根目录与 `docs/` 双 README）；[AGENTS.md](../AGENTS.md) 与相关交叉链接已更新。
 - 统一 **Hindsight `supersedes_event_id`** 表述：**append-only 存储，召回层降权**（与 `HindsightRetrievalPolicy` 一致），修正 [ENGINEERING.md](ENGINEERING.md)、[OPERATIONS.md](OPERATIONS.md)、[MEMORY_SYSTEM_V2.md](MEMORY_SYSTEM_V2.md)、[examples/ingest_post_samples.md](examples/ingest_post_samples.md) 中旧版「从召回剔除/隐藏」等措辞。
 
@@ -49,7 +59,7 @@
 ### 文档
 
 - **Memory V2 运维**：`docs/OPERATIONS.md` 增补「Memory V2 运维」（环境变量、Graphiti legacy、`migrate_memory_v2`）；`MEMORY_SYSTEM_V2.md` 增补运维与迁移交叉说明。
-- **Sprint 实施路线图**：新增 [docs/SPRINT_IMPLEMENTATION_ROADMAP.md](SPRINT_IMPLEMENTATION_ROADMAP.md)（Sprint 1–4、DoD、Mermaid 设计图与实现落点）；`ENGINEERING.md` §7.1 引用。
+- **历史 Sprint 实施路线图**：原 [docs/SPRINT_IMPLEMENTATION_ROADMAP.md](archive/SPRINT_IMPLEMENTATION_ROADMAP.md)（Sprint 1–4、DoD、Mermaid 设计图与实现落点）已归档；当前 stage 路线以 [ARCHITECTURE.md](ARCHITECTURE.md) §4 与 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) D 为准。
 
 ### 新增
 

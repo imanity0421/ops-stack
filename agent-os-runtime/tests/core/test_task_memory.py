@@ -39,6 +39,46 @@ def test_get_or_create_active_task_reuses_same_session_task(tmp_path: Path) -> N
     assert t1.task_title == "帮我完成任务方案"
 
 
+def test_task_entity_crud_uses_five_field_schema(tmp_path: Path) -> None:
+    store = TaskMemoryStore(tmp_path / "task.db")
+
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+
+    assert task.task_id.startswith("task_")
+    assert task.name == "春季宣发方案"
+    assert task.status == "active"
+    assert task.current_main_session_id == "s1"
+    assert store.get_task_entity(task.task_id) == task
+    assert store.list_task_entities() == [task]
+
+    archived = store.archive_task_entity(task.task_id)
+    assert archived is not None
+    assert archived.status == "archived"
+    assert store.list_task_entities() == []
+    assert store.list_task_entities(include_archived=True)[0].status == "archived"
+
+    restored = store.unarchive_task_entity(task.task_id)
+    assert restored is not None
+    assert restored.status == "active"
+
+
+def test_get_or_create_active_task_backfills_task_entity(tmp_path: Path) -> None:
+    store = TaskMemoryStore(tmp_path / "task.db")
+
+    segment = store.get_or_create_active_task(
+        session_id="s1",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        seed_message="帮我完成任务方案",
+    )
+
+    entity = store.get_task_entity(segment.task_id)
+    assert entity is not None
+    assert entity.name == "帮我完成任务方案"
+    assert entity.current_main_session_id == "s1"
+
+
 def test_task_memory_sqlite_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
     db = tmp_path / "task.db"
     store = TaskMemoryStore(db)
