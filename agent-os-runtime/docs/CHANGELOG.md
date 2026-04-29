@@ -8,6 +8,12 @@
 
 ### Stage 4
 
+- **Battle 2：`/task branch` v0**（2026-04-30，done-local）
+  - `sessions` 表扩展 `parent_session_id` / `branch_role`，旧库自动迁移；`task_id` 继续复用 `active_task_id`，主线判断继续由 `tasks.current_main_session_id` 反查。
+  - 新增 CTE `branch_task` 平铺入口与 `task branch` CLI；分支 session 通过 source session final_state 实时合成首轮 prompt，不复制 compact summary，也不改当前主线 session。
+  - resume fork 新主线时写入 `branch_role=main` 与 `parent_session_id`，分支 session 写入 `branch_role=branch`，main/branch 的 CompactSummary 按 `(session_id, task_id)` 独立演化。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_cli.py`；`python -m ruff check src tests`。
+
 - **Battle 1：`/task resume` v0**（2026-04-30，commit `c53ad7f`）
   - 新增 CTE `resume_task` 平铺入口，实时合成 resume final_state（CompactSummary + uncompacted tail + artifact refs / pinned refs）并生成纯文本 resume prompt。
   - `task resume` CLI 支持 B5.c connect/fork 自动判断与 `--force-fork` / `--force-connect` override；fork 时更新 `tasks.current_main_session_id`，connect 时复用当前 session。

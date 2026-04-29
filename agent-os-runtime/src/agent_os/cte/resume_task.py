@@ -361,6 +361,8 @@ def resume_task(
             client_id=client_id,
             user_id=user_id,
             active_task_id=task.task_id,
+            parent_session_id=source_session_id,
+            branch_role="main",
         )
         task = store.set_current_main_session(
             task_id=task.task_id,

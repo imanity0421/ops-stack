@@ -11,6 +11,7 @@ from typing import Literal
 
 TaskStatus = Literal["active", "inactive", "closed", "archived"]
 TaskEntityStatus = Literal["active", "archived"]
+BranchRole = Literal["main", "branch"]
 BoundaryStatus = Literal["open", "confirmed", "dismissed", "expired"]
 MessageRole = Literal["user", "assistant", "system"]
 
@@ -70,6 +71,8 @@ class TaskSession:
     created_at: str
     updated_at: str
     status: TaskStatus
+    parent_session_id: str | None = None
+    branch_role: BranchRole | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,8 @@ def _task_session_from_row(row: sqlite3.Row | None) -> TaskSession | None:
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
         status=row["status"],
+        parent_session_id=row["parent_session_id"],
+        branch_role=row["branch_role"],
     )
 
 
@@ -167,7 +172,9 @@ class TaskMemoryStore:
                   active_task_id TEXT,
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL,
-                  status TEXT NOT NULL
+                  status TEXT NOT NULL,
+                  parent_session_id TEXT,
+                  branch_role TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -275,6 +282,14 @@ class TaskMemoryStore:
                 );
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+            }
+            if "parent_session_id" not in columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
+            if "branch_role" not in columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN branch_role TEXT")
 
     def create_task(
         self,
@@ -352,28 +367,62 @@ class TaskMemoryStore:
         user_id: str | None = None,
         active_task_id: str | None = None,
         status: TaskStatus = "active",
+        parent_session_id: str | None = None,
+        branch_role: BranchRole | None = None,
     ) -> TaskSession:
         now = _iso()
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO sessions
-                  (session_id, client_id, user_id, active_task_id, created_at, updated_at, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                  (session_id, client_id, user_id, active_task_id, created_at, updated_at, status,
+                   parent_session_id, branch_role)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                   client_id = excluded.client_id,
                   user_id = excluded.user_id,
                   active_task_id = excluded.active_task_id,
                   updated_at = excluded.updated_at,
-                  status = excluded.status
+                  status = excluded.status,
+                  parent_session_id = excluded.parent_session_id,
+                  branch_role = excluded.branch_role
                 """,
-                (session_id, client_id, user_id, active_task_id, now, now, status),
+                (
+                    session_id,
+                    client_id,
+                    user_id,
+                    active_task_id,
+                    now,
+                    now,
+                    status,
+                    parent_session_id,
+                    branch_role,
+                ),
             )
             row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
         session = _task_session_from_row(row)
         if session is None:
             raise RuntimeError("failed to upsert session")
         return session
+
+    def set_session_branch_metadata(
+        self,
+        *,
+        session_id: str,
+        parent_session_id: str | None,
+        branch_role: BranchRole | None,
+    ) -> TaskSession | None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET parent_session_id = ?, branch_role = ?, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (parent_session_id, branch_role, _iso(), session_id),
+            )
+            row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+        return _task_session_from_row(row)
 
     def set_current_main_session(self, *, task_id: str, session_id: str) -> TaskEntity | None:
         with self._connect() as conn:
@@ -408,10 +457,28 @@ class TaskMemoryStore:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO sessions
-                  (session_id, client_id, user_id, active_task_id, created_at, updated_at, status)
-                VALUES (?, ?, ?, ?, COALESCE((SELECT created_at FROM sessions WHERE session_id = ?), ?), ?, 'active')
+                  (session_id, client_id, user_id, active_task_id, created_at, updated_at, status,
+                   parent_session_id, branch_role)
+                VALUES (
+                  ?, ?, ?, ?,
+                  COALESCE((SELECT created_at FROM sessions WHERE session_id = ?), ?),
+                  ?,
+                  'active',
+                  (SELECT parent_session_id FROM sessions WHERE session_id = ?),
+                  (SELECT branch_role FROM sessions WHERE session_id = ?)
+                )
                 """,
-                (session_id, client_id, user_id, task_id, session_id, now, now),
+                (
+                    session_id,
+                    client_id,
+                    user_id,
+                    task_id,
+                    session_id,
+                    now,
+                    now,
+                    session_id,
+                    session_id,
+                ),
             )
             conn.execute(
                 """

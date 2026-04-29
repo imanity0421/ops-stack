@@ -421,6 +421,12 @@ def test_cli_task_commands_create_list_archive_unarchive(
     task_id = created["task"]["task_id"]
     assert created["task"]["name"] == "春季宣发方案"
     assert created["task"]["current_main_session_id"] == "s-main"
+    with sqlite3.connect(str(task_db)) as conn:
+        session = conn.execute(
+            "SELECT active_task_id, parent_session_id, branch_role FROM sessions WHERE session_id = ?",
+            ("s-main",),
+        ).fetchone()
+    assert session == (task_id, None, None)
 
     assert cli.main(["task", "list"]) == 0
     listed = json.loads(capsys.readouterr().out)
@@ -467,6 +473,29 @@ def test_cli_task_resume_rejects_conflicting_force_flags(tmp_path: Path, monkeyp
     assert cli.main(["task", "resume", "task_missing", "--force-fork", "--force-connect"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["reason"] == "conflicting_force_flags"
+
+
+def test_cli_task_branch_creates_branch_session_without_changing_main(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    task_db = tmp_path / "task.db"
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(task_db))
+    store = TaskMemoryStore(task_db)
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="做一个分支版本")
+
+    assert cli.main(["task", "branch", task.task_id, "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["status"] == "ok"
+    assert payload["task"]["current_main_session_id"] == "s1"
+    assert payload["branch_session"]["parent_session_id"] == "s1"
+    assert payload["branch_session"]["branch_role"] == "branch"
+    assert payload["branch_session"]["session_id"] != "s1"
+    assert "<task_resume" in payload["final_state"]["prompt"]
 
 
 def test_cli_artifact_commands_list_show_archive_and_orphan_gc(

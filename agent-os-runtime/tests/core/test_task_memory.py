@@ -14,6 +14,7 @@ from agent_os.agent.task_memory import (
     build_task_summary_instruction,
     new_task_id,
 )
+from agent_os.cte.branch_task import branch_task
 from agent_os.cte.resume_task import resume_task
 
 
@@ -80,8 +81,28 @@ def test_task_session_api_and_current_main_session_update(tmp_path: Path) -> Non
 
     assert session.active_task_id == task.task_id
     assert session.status == "active"
+    assert session.parent_session_id is None
+    assert session.branch_role is None
     assert updated is not None
     assert updated.current_main_session_id == "s2"
+
+    branch = store.upsert_session(
+        session_id="s3",
+        client_id="c1",
+        active_task_id=task.task_id,
+        parent_session_id="s1",
+        branch_role="branch",
+    )
+    main = store.set_session_branch_metadata(
+        session_id="s1",
+        parent_session_id=None,
+        branch_role="main",
+    )
+
+    assert branch.parent_session_id == "s1"
+    assert branch.branch_role == "branch"
+    assert main is not None
+    assert main.branch_role == "main"
 
 
 def test_get_or_create_active_task_backfills_task_entity(tmp_path: Path) -> None:
@@ -332,6 +353,54 @@ def test_resume_task_force_fork_updates_current_main_session_and_projects_tail(
     assert "[Previous turn" in result.final_state.prompt
     assert "继续优化标题" in result.final_state.prompt
     assert store.get_task_entity(task.task_id).current_main_session_id == "s2"
+    fork_session = store.get_session("s2")
+    assert fork_session is not None
+    assert fork_session.parent_session_id == "s1"
+    assert fork_session.branch_role == "main"
+
+
+def test_branch_task_creates_branch_session_without_polluting_main_summary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = TaskMemoryStore(tmp_path / "task.db")
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="主线强调新品")
+    main_record = CompactSummaryService(store).compact(
+        session_id="s1",
+        task_id=task.task_id,
+        current_artifact_refs=["artifact_main"],
+    )
+
+    result = branch_task(store=store, task_id=task.task_id, session_id_factory=lambda: "s-branch")
+    store.append_message(
+        session_id="s-branch",
+        task_id=task.task_id,
+        role="user",
+        content="分支改成严谨版",
+    )
+    branch_record = CompactSummaryService(store).compact(
+        session_id="s-branch",
+        task_id=task.task_id,
+        current_artifact_refs=["artifact_branch"],
+    )
+    main_summary = store.get_compact_summary(session_id="s1", task_id=task.task_id)
+    branch_summary = store.get_compact_summary(session_id="s-branch", task_id=task.task_id)
+
+    assert main_record is not None
+    assert branch_record is not None
+    assert result.status == "ok"
+    assert result.branch_session is not None
+    assert result.branch_session.parent_session_id == "s1"
+    assert result.branch_session.branch_role == "branch"
+    assert result.final_state is not None
+    assert result.final_state.current_artifact_refs == ["artifact_main"]
+    assert store.get_task_entity(task.task_id).current_main_session_id == "s1"
+    assert main_summary is not None
+    assert main_summary.summary.core.current_artifact_refs == ["artifact_main"]
+    assert branch_summary is not None
+    assert branch_summary.summary.core.current_artifact_refs == ["artifact_branch"]
 
 
 def test_skill_schema_provider_protocol_shape() -> None:

@@ -27,6 +27,7 @@ from agent_os.context_diagnostics import (
     build_context_diagnostics,
     format_context_diagnostics_markdown,
 )
+from agent_os.cte.branch_task import branch_task
 from agent_os.cte.resume_task import resume_task
 from agent_os.observability import log_context_management_trace
 from agent_os.knowledge.graphiti_entitlements import (
@@ -289,6 +290,11 @@ def _task_main(argv: list[str]) -> int:
     p_resume.add_argument("--force-connect", action="store_true")
     p_resume.add_argument("--json", action="store_true")
 
+    p_branch = sub.add_parser("branch", help="Stage 4：从 task final_state 开分支 session")
+    p_branch.add_argument("task_id")
+    p_branch.add_argument("--from-session-id", default=None)
+    p_branch.add_argument("--json", action="store_true")
+
     args = p.parse_args(argv)
     settings = Settings.from_env()
     store = TaskMemoryStore(settings.task_memory_sqlite_path)
@@ -320,9 +326,37 @@ def _task_main(argv: list[str]) -> int:
             print(json.dumps(payload, ensure_ascii=False))
         return 0 if result.status == "ok" else 1
 
+    if args.action == "branch":
+        result = branch_task(
+            store=store,
+            task_id=args.task_id,
+            from_session_id=args.from_session_id,
+            session_id_factory=new_session_id,
+            artifact_store=ArtifactStore(settings.artifact_store_path),
+            context_char_budget=settings.context_max_chars,
+        )
+        payload = result.to_dict()
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif result.status == "ok" and result.branch_session is not None:
+            print(
+                f"branch {result.source_session.session_id if result.source_session else ''} "
+                f"-> {result.branch_session.session_id}"
+            )
+            if result.final_state is not None:
+                print(result.final_state.prompt)
+        else:
+            print(json.dumps(payload, ensure_ascii=False))
+        return 0 if result.status == "ok" else 1
+
     if args.action == "new":
         session_id = args.session_id or new_session_id()
         task = store.create_task(name=args.name, current_main_session_id=session_id)
+        store.upsert_session(
+            session_id=session_id,
+            client_id="task_cli",
+            active_task_id=task.task_id,
+        )
         print(json.dumps({"status": "ok", "task": task.__dict__}, ensure_ascii=False, indent=2))
         return 0
     if args.action == "list":
