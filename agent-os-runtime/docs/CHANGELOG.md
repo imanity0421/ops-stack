@@ -8,7 +8,7 @@
 
 ### Stage 4
 
-- **Battle 4：Resume Trace + `/context` 集成**（2026-04-30，done-local）
+- **Battle 4：Resume Trace + `/context` 集成**（2026-04-30，commit `a98424d`）
   - `task resume` 的 `resume_diagnostics` 扩展为稳定结构，覆盖 connect/fork 决策路径、force flag、session age/context usage、tail message count、artifact/pinned ref count 与 `voice_pack_skipped`。
   - final_state 观测字段进入诊断：`deliverable_inline_level`、`current_deliverable_chars`、`deliverable_fallback_chain`，用于观察 `full` / `tail` / `none` 命中。
   - `/context` 诊断新增 `resume_diagnostics` JSON 字段与 Markdown `### Resume Diagnostics` 段；`context-diagnose --resume-diagnostics-json` 可读取 `task resume --json` payload。
