@@ -29,6 +29,7 @@ from agent_os.knowledge.graphiti_entitlements import (
     update_entitlements_file,
 )
 from agent_os.knowledge.asset_store import asset_store_from_settings
+from agent_os.knowledge.artifact_store import ArtifactRecord, ArtifactStore
 from agent_os.knowledge.graphiti_reader import GraphitiReadService
 from agent_os.manifest_loader import load_skill_manifest_registry, resolve_effective_skill_id
 from agent_os.memory.controller import MemoryController
@@ -304,6 +305,150 @@ def _task_main(argv: list[str]) -> int:
         print(json.dumps({"status": "error", "reason": "task_not_found"}, ensure_ascii=False))
         return 1
     print(json.dumps({"status": "ok", "task": task.__dict__}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _artifact_record_dict(record: ArtifactRecord, *, include_raw: bool = False) -> dict[str, object]:
+    data: dict[str, object] = {
+        "artifact_id": record.artifact_id,
+        "task_id": record.task_id,
+        "session_id": record.session_id,
+        "status": record.status,
+        "digest": record.ref_digest,
+        "digest_status": record.digest_status,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "stable_key": record.stable_key,
+    }
+    if include_raw:
+        data["raw_content"] = record.raw_content
+    return data
+
+
+def _artifact_store_from_env() -> ArtifactStore:
+    return ArtifactStore(Settings.from_env().artifact_store_path)
+
+
+def _artifact_main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="agent-os-runtime artifact",
+        description="Stage 2 Artifact Lifecycle：列出、查看与软归档 artifact。",
+    )
+    sub = p.add_subparsers(dest="action", required=True)
+
+    p_list = sub.add_parser("list", help="按 task_id 列出 artifact")
+    p_list.add_argument("--task-id", required=True)
+    p_list.add_argument("--include-archived", action="store_true")
+    p_list.add_argument("--limit", type=int, default=50)
+    p_list.add_argument("--json", action="store_true")
+
+    p_show = sub.add_parser("show", help="按 artifact_id 查看 artifact")
+    p_show.add_argument("artifact_id")
+    p_show.add_argument("--raw", action="store_true", help="只输出原文")
+    p_show.add_argument("--json", action="store_true")
+
+    p_archive = sub.add_parser("archive", help="软归档 artifact")
+    p_archive.add_argument("artifact_id")
+    p_archive.add_argument("--json", action="store_true")
+
+    args = p.parse_args(argv)
+    store = _artifact_store_from_env()
+
+    if args.action == "list":
+        records = store.list_artifacts(
+            task_id=args.task_id,
+            include_archived=args.include_archived,
+            limit=args.limit,
+        )
+        payload = {
+            "status": "ok",
+            "artifacts": [_artifact_record_dict(record) for record in records],
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            if not records:
+                print("No artifacts found.")
+            for record in records:
+                print(
+                    f"{record.artifact_id}\t{record.status}\t{record.task_id}\t"
+                    f"{record.digest_status}\t{record.ref_digest}"
+                )
+        return 0
+
+    if args.action == "show":
+        record = store.get_artifact(args.artifact_id)
+        if record is None:
+            print(json.dumps({"status": "error", "reason": "artifact_not_found"}, ensure_ascii=False))
+            return 1
+        if args.raw:
+            print(record.raw_content)
+            return 0
+        payload = {"status": "ok", "artifact": _artifact_record_dict(record, include_raw=True)}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(f"artifact_id: {record.artifact_id}")
+            print(f"task_id: {record.task_id}")
+            print(f"session_id: {record.session_id}")
+            print(f"status: {record.status}")
+            print(f"digest_status: {record.digest_status}")
+            print(f"digest: {record.ref_digest}")
+            print("")
+            print(record.raw_content)
+        return 0
+
+    record = store.archive_artifact(args.artifact_id)
+    if record is None:
+        print(json.dumps({"status": "error", "reason": "artifact_not_found"}, ensure_ascii=False))
+        return 1
+    payload = {"status": "ok", "artifact": _artifact_record_dict(record)}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(f"archived {record.artifact_id}")
+    return 0
+
+
+def _blob_main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="agent-os-runtime blob",
+        description="Blob maintenance helpers. Destructive GC is intentionally unavailable.",
+    )
+    sub = p.add_subparsers(dest="action", required=True)
+    p_gc = sub.add_parser("gc", help="只列出 GC 候选，不删除")
+    p_gc.add_argument("--orphan", action="store_true", required=True, help="列出无有效 task 的 artifact")
+    p_gc.add_argument("--include-archived", action="store_true")
+    p_gc.add_argument("--limit", type=int, default=200)
+    p_gc.add_argument("--json", action="store_true")
+
+    args = p.parse_args(argv)
+    settings = Settings.from_env()
+    task_store = TaskMemoryStore(settings.task_memory_sqlite_path)
+    existing_task_ids = {
+        task.task_id
+        for task in task_store.list_task_entities(include_archived=True, limit=max(1, args.limit * 2))
+    }
+    records = ArtifactStore(settings.artifact_store_path).list_orphan_artifacts(
+        existing_task_ids=existing_task_ids,
+        include_archived=args.include_archived,
+        limit=args.limit,
+    )
+    payload = {
+        "status": "ok",
+        "dry_run": True,
+        "orphan_artifacts": [_artifact_record_dict(record) for record in records],
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        if not records:
+            print("No orphan artifacts found.")
+        for record in records:
+            print(
+                f"{record.artifact_id}\t{record.status}\t{record.task_id}\t"
+                f"{record.updated_at}"
+            )
     return 0
 
 
@@ -841,6 +986,10 @@ def main(argv: list[str] | None = None) -> int:
         return _asset_rm_main(argv[1:])
     if argv and argv[0] == "task":
         return _task_main(argv[1:])
+    if argv and argv[0] == "artifact":
+        return _artifact_main(argv[1:])
+    if argv and argv[0] == "blob":
+        return _blob_main(argv[1:])
     if argv and argv[0] == "hindsight-index":
         return _hindsight_index_main(argv[1:])
     if argv and argv[0] == "mcp-probe-server":

@@ -202,6 +202,35 @@ class ArtifactStore:
             ).fetchall()
         return [_record_from_row(row) for row in rows if row is not None]
 
+    def list_all_artifacts(
+        self,
+        *,
+        include_archived: bool = True,
+        limit: int = 200,
+    ) -> list[ArtifactRecord]:
+        where = "1 = 1" if include_archived else "status = 'active'"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM artifacts
+                WHERE {where}
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [_record_from_row(row) for row in rows if row is not None]
+
+    def list_orphan_artifacts(
+        self,
+        *,
+        existing_task_ids: set[str],
+        include_archived: bool = True,
+        limit: int = 200,
+    ) -> list[ArtifactRecord]:
+        records = self.list_all_artifacts(include_archived=include_archived, limit=limit)
+        return [record for record in records if record.task_id not in existing_task_ids]
+
     def archive_artifact(self, artifact_id: str) -> ArtifactRecord | None:
         now = _iso()
         with self._connect() as conn:

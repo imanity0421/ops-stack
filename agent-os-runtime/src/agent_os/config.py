@@ -189,6 +189,8 @@ class Settings:
     enable_task_memory: bool = False
     #: Task-aware Working Memory 本地 SQLite 路径
     task_memory_sqlite_path: Path = Path("data/task_memory.db")
+    #: Stage 2 Artifact 原文层 SQLite 路径
+    artifact_store_path: Path = Path("data/artifacts.db")
     #: 当前 task summary 的最大建议长度（生成器使用；store 不强截断）
     task_summary_max_chars: int = 800
     #: 当前 task 消息数至少达到该值才生成首个 summary
@@ -363,6 +365,7 @@ class Settings:
             task_memory_sqlite_path=Path(
                 os.getenv("AGENT_OS_TASK_MEMORY_DB_PATH", "data/task_memory.db")
             ),
+            artifact_store_path=Path(os.getenv("AGENT_OS_ARTIFACT_STORE_PATH", "data/artifacts.db")),
             task_summary_max_chars=_env_int("AGENT_OS_TASK_SUMMARY_MAX_CHARS", 800, min_value=1),
             task_summary_min_messages=_env_int(
                 "AGENT_OS_TASK_SUMMARY_MIN_MESSAGES", 8, min_value=1

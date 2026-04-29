@@ -10,6 +10,7 @@ from typing import Any
 from agent_os import cli
 from agent_os.agent.task_memory import TaskMemoryStore, TaskSummary
 from agent_os.knowledge import asset_ingest as asset_ingest_mod
+from agent_os.knowledge.artifact_store import ArtifactStore
 from agent_os.memory.hindsight_store import HindsightStore
 from agent_os.memory.models import MemoryLane, UserFact
 
@@ -436,6 +437,62 @@ def test_cli_task_commands_create_list_archive_unarchive(
     assert cli.main(["task", "unarchive", task_id]) == 0
     restored = json.loads(capsys.readouterr().out)
     assert restored["task"]["status"] == "active"
+
+
+def test_cli_artifact_commands_list_show_archive_and_orphan_gc(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    artifact_db = tmp_path / "artifacts.db"
+    task_db = tmp_path / "task.db"
+    monkeypatch.setenv("AGENT_OS_ARTIFACT_STORE_PATH", str(artifact_db))
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(task_db))
+
+    task = TaskMemoryStore(task_db).create_task(
+        name="春季宣发方案",
+        current_main_session_id="s-main",
+    )
+    store = ArtifactStore(artifact_db)
+    artifact = store.create_artifact(
+        task_id=task.task_id,
+        session_id="s-main",
+        raw_content="完整 artifact 正文",
+        digest="artifact 摘要",
+    )
+    orphan = store.create_artifact(
+        task_id="missing_task",
+        session_id="s-orphan",
+        raw_content="orphan 原文",
+        digest="orphan 摘要",
+    )
+
+    assert cli.main(["artifact", "list", "--task-id", task.task_id, "--json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert [a["artifact_id"] for a in listed["artifacts"]] == [artifact.artifact_id]
+    assert "raw_content" not in listed["artifacts"][0]
+
+    assert cli.main(["artifact", "show", artifact.artifact_id, "--raw"]) == 0
+    assert capsys.readouterr().out.strip() == "完整 artifact 正文"
+
+    assert cli.main(["artifact", "archive", artifact.artifact_id, "--json"]) == 0
+    archived = json.loads(capsys.readouterr().out)
+    assert archived["artifact"]["status"] == "archived"
+    assert store.get_artifact(artifact.artifact_id).status == "archived"
+
+    assert cli.main(["blob", "gc", "--orphan", "--json"]) == 0
+    gc = json.loads(capsys.readouterr().out)
+    assert gc["dry_run"] is True
+    assert [a["artifact_id"] for a in gc["orphan_artifacts"]] == [orphan.artifact_id]
+    assert store.get_artifact(orphan.artifact_id).status == "active"
+
+
+def test_cli_artifact_show_missing_returns_nonzero(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("AGENT_OS_ARTIFACT_STORE_PATH", str(tmp_path / "artifacts.db"))
+
+    assert cli.main(["artifact", "show", "missing_artifact", "--json"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["reason"] == "artifact_not_found"
 
 
 def test_cli_graphiti_dry_run_rejects_non_list_episodes(tmp_path: Path) -> None:

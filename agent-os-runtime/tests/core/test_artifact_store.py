@@ -77,3 +77,15 @@ def test_artifact_store_reuses_record_by_stable_key(tmp_path: Path) -> None:
     assert second == first
     assert store.find_artifact_by_stable_key("tool-result-key") == first
     assert [a.artifact_id for a in store.list_artifacts(task_id="task_1")] == [first.artifact_id]
+
+
+def test_artifact_store_lists_orphans_without_deleting(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts.db")
+    active = store.create_artifact(task_id="task_1", session_id="s1", raw_content="task 1 正文")
+    orphan = store.create_artifact(task_id="missing_task", session_id="s2", raw_content="orphan 正文")
+
+    orphans = store.list_orphan_artifacts(existing_task_ids={"task_1"})
+
+    assert [a.artifact_id for a in orphans] == [orphan.artifact_id]
+    assert store.get_artifact(active.artifact_id) == active
+    assert store.get_artifact(orphan.artifact_id) == orphan
