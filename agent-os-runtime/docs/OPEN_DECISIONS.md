@@ -377,7 +377,7 @@
 | # | Battle | Status | 核心交付 | 依赖前置 |
 | --- | --- | --- | --- | --- |
 | 1 | **`/task resume` v0** | done @ 2026-04-30 (commit `c53ad7f`) | resume 命令、final_state 实时合成（`CompactSummary` + uncompacted tail + `current_deliverable` + `pinned_refs`）、tail history 纯文本投影；`voice_pack` 为 None 时跳过该 inline 段并 trace 标 `voice_pack_skipped=true`；按 B5.c 单命令自动判断 connect/fork（默认阈值 30 分钟距上次活动 / 80% token 占用，保留 `--force-fork` / `--force-connect` flag override） | Stage 3 `CompactSummary` v1 |
-| 2 | **`/task branch` v0** | done-local @ 2026-04-30 (pytest + ruff passed, commit pending) | branch 命令、**扩展现有 `sessions` 表 +2 列**（`parent_session_id TEXT NULL` + `branch_role TEXT NULL` 取值 `main` / `branch` / NULL=root）；`task_id` / `last_active_at` / `is_main` 均复用现有字段不新增（详见 F2）；main 与 branch session `CompactSummary` 互不污染 | Battle 1 |
+| 2 | **`/task branch` v0** | done @ 2026-04-30 (commit `6c2b94c`) | branch 命令、**扩展现有 `sessions` 表 +2 列**（`parent_session_id TEXT NULL` + `branch_role TEXT NULL` 取值 `main` / `branch` / NULL=root）；`task_id` / `last_active_at` / `is_main` 均复用现有字段不新增（详见 F2）；main 与 branch session `CompactSummary` 互不污染 | Battle 1 |
 | 3 | **Artifact CoW v0** | todo | `originating_session_id` 在 `ArtifactStore` 启用、CoW 触发规则（同 session 原地 update vs 跨 branch 强制复制）、原子事务边界（与 [ARCHITECTURE.md](ARCHITECTURE.md) §1.3 一致） | Battle 2 |
 | 4 | **Resume Trace + `/context` 集成** | todo | resume 装配 trace 字段、`/context` JSON 显示 `resume_diagnostics`（含 connect/fork 决策路径、`deliverable_inline_level` 命中档位、`voice_pack_skipped` 标志）、降级链 `full → digest+tail_n` 命中观测 | Battle 1 |
 | 5 | **Golden Case GC-Resume 收口** | todo | [GC_SPEC.md](GC_SPEC.md) 追加 GC-Resume Stage4 字段级断言；2-3 个真实 baseline trace（隔天 resume 命中 L0 / 分支对照 / 短 session 提前 resume 走祖先链 + connect 路径） | Battle 1-4 |

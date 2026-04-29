@@ -8,7 +8,7 @@
 
 ### Stage 4
 
-- **Battle 2：`/task branch` v0**（2026-04-30，done-local）
+- **Battle 2：`/task branch` v0**（2026-04-30，commit `6c2b94c`）
   - `sessions` 表扩展 `parent_session_id` / `branch_role`，旧库自动迁移；`task_id` 继续复用 `active_task_id`，主线判断继续由 `tasks.current_main_session_id` 反查。
   - 新增 CTE `branch_task` 平铺入口与 `task branch` CLI；分支 session 通过 source session final_state 实时合成首轮 prompt，不复制 compact summary，也不改当前主线 session。
   - resume fork 新主线时写入 `branch_role=main` 与 `parent_session_id`，分支 session 写入 `branch_role=branch`，main/branch 的 CompactSummary 按 `(session_id, task_id)` 独立演化。
