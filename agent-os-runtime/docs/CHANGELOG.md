@@ -8,7 +8,7 @@
 
 ### Stage 5
 
-- **Battle 5：GC9 字段级断言 + baseline trace**（2026-04-30，done-local）
+- **Battle 5：GC9 字段级断言 + baseline trace**（2026-04-30，commit `3f1bb66`）
   - [GC_SPEC.md](GC_SPEC.md) 新增 Stage 5 GC-SR Framework 的 GC9，覆盖 mock skill fragment 合成、ER spin up、缺 fragment fallback 与跨 skill artifact ref 共享。
   - Baseline Trace 追加 Trace 6-8：SR fragment 合成 + fake ER、缺 fragment fallback `/context` 可见性、MockSkillA → MockSkillB 跨 task artifact ref 共享。
   - 将 Battle 4 mock e2e 测试命名并强化为 GC9 Trace 6 / Trace 8 代码锚点；`context_diagnostics` fallback 测试对齐 Trace 7。
