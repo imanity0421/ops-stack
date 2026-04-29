@@ -3,6 +3,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from pydantic import BaseModel
+
+from agent_os.agent.compact import CompactSummaryService, SkillSchemaProvider
 from agent_os.agent.task_memory import (
     TaskMemoryStore,
     TaskSummary,
@@ -213,6 +216,62 @@ def test_task_summary_service_rolls_up_messages(tmp_path: Path, monkeypatch) -> 
     loaded = store.get_summary(session_id="s1", task_id=task.task_id)
     assert loaded is not None
     assert loaded.covered_message_end_id == summary.covered_message_end_id
+
+
+def test_compact_summary_service_persists_structured_summary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = TaskMemoryStore(tmp_path / "task.db")
+    task = store.get_or_create_active_task(
+        session_id="s1",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        seed_message="帮我写春季宣发方案",
+    )
+    store.append_message(
+        session_id="s1",
+        task_id=task.task_id,
+        role="user",
+        content="必须突出新品上市，不要使用夸张承诺。",
+    )
+    store.append_message(
+        session_id="s1",
+        task_id=task.task_id,
+        role="assistant",
+        content="已完成第一版方案结构。",
+    )
+
+    record = CompactSummaryService(store).compact(
+        session_id="s1",
+        task_id=task.task_id,
+        current_artifact_refs=["artifact_1"],
+        pinned_refs=["asset_1"],
+    )
+
+    assert record is not None
+    assert record.summary.schema_version == "v1"
+    assert record.summary.core.current_artifact_refs == ["artifact_1"]
+    assert record.summary.core.pinned_refs == ["asset_1"]
+    assert record.summary.core.goal
+    assert record.summary.core.last_user_instruction.startswith("必须突出新品上市")
+    loaded = store.get_compact_summary(session_id="s1", task_id=task.task_id)
+    assert loaded is not None
+    assert loaded.summary_version == 1
+    assert loaded.summary.core.current_artifact_refs == ["artifact_1"]
+
+
+def test_skill_schema_provider_protocol_shape() -> None:
+    class SkillState(BaseModel):
+        field: str = ""
+
+    class Provider:
+        def get_compact_schema_fragment(self) -> type[BaseModel]:
+            return SkillState
+
+    provider: SkillSchemaProvider = Provider()
+    assert provider.get_compact_schema_fragment() is SkillState
 
 
 def test_task_memory_bad_invoked_skills_json_falls_back(tmp_path: Path) -> None:

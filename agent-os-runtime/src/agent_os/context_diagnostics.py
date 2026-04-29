@@ -19,6 +19,7 @@ _MAX_TOTAL_RE = re.compile(r"(?:^|,)max_total=(?P<value>\d+)")
 _PRIMARY_CONTEXT_BLOCKS = (
     "runtime_context",
     "external_recall",
+    "compact_summary",
     "working_memory",
     "artifact_refs",
     "recent_history",
@@ -109,6 +110,26 @@ class ArtifactDiagnostics:
 
 
 @dataclass(frozen=True)
+class CompactDiagnostics:
+    rehydrated: bool
+    summary_version: int | None
+    schema_version: str | None
+    covered_message_count: int
+    compact_suggested: bool = False
+    suggestion_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rehydrated": self.rehydrated,
+            "summary_version": self.summary_version,
+            "schema_version": self.schema_version,
+            "covered_message_count": self.covered_message_count,
+            "compact_suggested": self.compact_suggested,
+            "suggestion_reason": self.suggestion_reason,
+        }
+
+
+@dataclass(frozen=True)
 class ContextDiagnostics:
     total_chars: int
     injected_chars: int
@@ -117,6 +138,7 @@ class ContextDiagnostics:
     budget_status: str
     budget_guard: ContextBudgetGuard
     artifact_diagnostics: ArtifactDiagnostics
+    compact_diagnostics: CompactDiagnostics
     blocks: list[ContextBlockDiagnostic] = field(default_factory=list)
     signals: list[ContextBlockDiagnostic] = field(default_factory=list)
 
@@ -129,6 +151,7 @@ class ContextDiagnostics:
             "budget_status": self.budget_status,
             "budget_guard": self.budget_guard.to_dict(),
             "artifact_diagnostics": self.artifact_diagnostics.to_dict(),
+            "compact_diagnostics": self.compact_diagnostics.to_dict(),
             "blocks": [b.to_dict() for b in self.blocks],
             "signals": [b.to_dict() for b in self.signals],
         }
@@ -197,6 +220,41 @@ def _build_artifact_diagnostics(
         tool_result_artifactized_count=tool_artifactized,
         source_artifactized_count=source_artifactized,
         current_user_source_artifactized=current_source_artifactized,
+    )
+
+
+def _parse_note_text(note: str, key: str) -> str | None:
+    match = re.search(rf"(?:^|,){re.escape(key)}=(?P<value>[^,]+)", note or "")
+    if not match:
+        return None
+    return match.group("value").strip() or None
+
+
+def _build_compact_diagnostics(
+    trace_blocks: list[ContextTraceBlock],
+    *,
+    budget_status: str,
+) -> CompactDiagnostics:
+    suggested = budget_status in ("warning", "danger", "over_budget")
+    reason = f"budget_status={budget_status}" if suggested else ""
+    for block in trace_blocks:
+        if block.name != "compact_summary":
+            continue
+        return CompactDiagnostics(
+            rehydrated=block.injected and "rehydrated=true" in (block.note or ""),
+            summary_version=_parse_note_int(block.note, "summary_version") or None,
+            schema_version=_parse_note_text(block.note, "schema_version"),
+            covered_message_count=_parse_note_int(block.note, "covered_messages"),
+            compact_suggested=suggested,
+            suggestion_reason=reason,
+        )
+    return CompactDiagnostics(
+        rehydrated=False,
+        summary_version=None,
+        schema_version=None,
+        covered_message_count=0,
+        compact_suggested=suggested,
+        suggestion_reason=reason,
     )
 
 
@@ -338,6 +396,10 @@ def build_context_diagnostics(bundle: ContextBundle) -> ContextDiagnostics:
         trace_blocks=bundle.trace.blocks,
         total_chars=total_chars,
     )
+    compact_diagnostics = _build_compact_diagnostics(
+        bundle.trace.blocks,
+        budget_status=budget_guard.status,
+    )
     return ContextDiagnostics(
         total_chars=total_chars,
         injected_chars=injected_chars,
@@ -346,6 +408,7 @@ def build_context_diagnostics(bundle: ContextBundle) -> ContextDiagnostics:
         budget_status=budget_guard.status,
         budget_guard=budget_guard,
         artifact_diagnostics=artifact_diagnostics,
+        compact_diagnostics=compact_diagnostics,
         blocks=blocks,
         signals=signals,
     )
@@ -388,6 +451,20 @@ def format_context_diagnostics_markdown(diag: ContextDiagnostics) -> str:
             f"- source_artifactized_count: {artifact.source_artifactized_count}",
             "- current_user_source_artifactized: "
             f"{str(artifact.current_user_source_artifactized).lower()}",
+        ]
+    )
+    compact = diag.compact_diagnostics
+    lines.extend(
+        [
+            "",
+            "### Compact Diagnostics",
+            "",
+            f"- rehydrated: {str(compact.rehydrated).lower()}",
+            f"- summary_version: {compact.summary_version if compact.summary_version is not None else 'none'}",
+            f"- schema_version: {compact.schema_version or 'none'}",
+            f"- covered_message_count: {compact.covered_message_count}",
+            f"- compact_suggested: {str(compact.compact_suggested).lower()}",
+            f"- suggestion_reason: {compact.suggestion_reason or 'none'}",
         ]
     )
     if diag.signals:

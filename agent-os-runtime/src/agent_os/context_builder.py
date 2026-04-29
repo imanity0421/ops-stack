@@ -13,6 +13,7 @@ from agent_os.agent.task_memory import (
     build_task_index_instruction,
     build_task_summary_instruction,
 )
+from agent_os.agent.compact import CompactSummaryRecord, build_compact_summary_instruction
 from agent_os.memory.ordered_context import (
     AssetStorePort,
     DomainKnowledgePort,
@@ -38,6 +39,7 @@ _CONTEXT_BOUNDARY_TAGS = (
     "context_management_v2",
     "runtime_context",
     "working_memory",
+    "compact_summary",
     "artifact_refs",
     "artifact",
     "external_recall",
@@ -950,6 +952,7 @@ class ContextBuilder:
         session_messages: Sequence[Any] = (),
         retrieved_context: str | None = None,
         current_task_summary: TaskSummary | None = None,
+        current_compact_summary: CompactSummaryRecord | None = None,
         session_task_index: list[TaskSegment] | None = None,
         artifact_refs: Sequence[object] = (),
         history_max_messages_override: int | None = None,
@@ -1029,6 +1032,36 @@ class ContextBuilder:
                     bool(retrieval_has_evidence),
                     source="context_builder",
                     note=auto_retrieve_reason,
+                )
+            )
+
+        compact_summary = build_compact_summary_instruction(current_compact_summary)
+        if compact_summary:
+            compact, budget_note = _apply_char_budget(
+                compact_summary, self._budget.working_memory_max_chars
+            )
+            blocks.append(("compact_summary", compact))
+            note_parts = [
+                f"summary_version={current_compact_summary.summary_version}",
+                f"schema_version={current_compact_summary.schema_version}",
+                f"covered_messages={current_compact_summary.covered_message_count}",
+                "rehydrated=true",
+            ]
+            if budget_note:
+                note_parts.append(budget_note)
+            trace_blocks.append(
+                ContextTraceBlock(
+                    "compact_summary",
+                    len(compact),
+                    True,
+                    source="compact_store",
+                    note=",".join(note_parts),
+                )
+            )
+        else:
+            trace_blocks.append(
+                ContextTraceBlock(
+                    "compact_summary", 0, False, source="compact_store", note="empty"
                 )
             )
 

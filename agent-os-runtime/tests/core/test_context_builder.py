@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_os.agent.compact import CompactSummary, CompactSummaryCore, CompactSummaryRecord
 from agent_os.agent.task_memory import TaskSegment, TaskSummary
 from agent_os.context_builder import (
     ArtifactContextRef,
@@ -337,6 +338,48 @@ def test_context_diagnostics_counts_pending_artifact_refs() -> None:
     assert diagnostics["artifact_ref_count"] == 1
     assert diagnostics["pending_digest_count"] == 1
     assert diagnostics["artifact_percent_of_prompt"] > 0
+
+
+def test_context_builder_rehydrates_compact_summary() -> None:
+    builder = ContextBuilder(
+        timezone_name="Asia/Shanghai",
+        history_max_messages=0,
+        include_runtime_context=False,
+        enable_token_estimate=False,
+    )
+    record = CompactSummaryRecord(
+        session_id="s1",
+        task_id="task_1",
+        summary_version=2,
+        summary=CompactSummary(
+            core=CompactSummaryCore(
+                current_artifact_refs=["artifact_1"],
+                goal="完成春季宣发方案",
+                constraints=["不要夸张承诺"],
+                progress=["已完成方案结构"],
+                pending=["补充渠道节奏"],
+                last_user_instruction="继续优化渠道节奏",
+            )
+        ),
+        covered_message_count=8,
+        updated_at="2026-04-29T00:00:00+00:00",
+    )
+
+    bundle = builder.build_turn_message(
+        "继续",
+        entrypoint="cli",
+        client_id="c1",
+        user_id=None,
+        skill_id="default_agent",
+        current_compact_summary=record,
+    )
+    diagnostics = build_context_diagnostics(bundle).to_dict()
+
+    assert "<compact_summary" in bundle.message
+    assert "完成春季宣发方案" in bundle.message
+    assert diagnostics["compact_diagnostics"]["rehydrated"] is True
+    assert diagnostics["compact_diagnostics"]["summary_version"] == 2
+    assert diagnostics["compact_diagnostics"]["covered_message_count"] == 8
 
 
 def test_attention_anchor_squeezes_long_current_request_but_keeps_final_message() -> None:

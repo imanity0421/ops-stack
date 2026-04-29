@@ -547,6 +547,74 @@ def test_cli_context_outputs_artifact_diagnostics_json_and_markdown(tmp_path: Pa
     assert "artifact_ref_count: 1" in out
 
 
+def test_cli_compact_run_show_and_context_rehydration(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    task_db = tmp_path / "task.db"
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(task_db))
+    store = TaskMemoryStore(task_db)
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.append_message(
+        session_id="s1",
+        task_id=task.task_id,
+        role="user",
+        content="必须突出新品上市，不要夸张承诺。",
+    )
+    store.append_message(
+        session_id="s1",
+        task_id=task.task_id,
+        role="assistant",
+        content="已完成方案结构。",
+    )
+
+    assert (
+        cli.main(
+            [
+                "compact",
+                "run",
+                "--session-id",
+                "s1",
+                "--task-id",
+                task.task_id,
+                "--artifact-ref",
+                "artifact_1",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    record = payload["compact_summary"]
+    assert record["summary"]["schema_version"] == "v1"
+    assert record["summary"]["core"]["current_artifact_refs"] == ["artifact_1"]
+
+    assert cli.main(["compact", "show", "--session-id", "s1", "--task-id", task.task_id, "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["compact_summary"]["summary_version"] == 1
+
+    compact_json = tmp_path / "compact.json"
+    compact_json.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    assert (
+        cli.main(
+            [
+                "context",
+                "--message",
+                "继续优化",
+                "--compact-summary-json",
+                str(compact_json),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    diagnostics = json.loads(capsys.readouterr().out)
+    assert diagnostics["compact_diagnostics"]["rehydrated"] is True
+    assert diagnostics["compact_diagnostics"]["schema_version"] == "v1"
+
+
 def test_cli_graphiti_dry_run_rejects_non_list_episodes(tmp_path: Path) -> None:
     p = tmp_path / "episodes.json"
     p.write_text(json.dumps({"episodes": None}), encoding="utf-8")

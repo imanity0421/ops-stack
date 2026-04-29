@@ -7,6 +7,11 @@ import os
 import sys
 from pathlib import Path
 
+from agent_os.agent.compact import (
+    CompactSummaryRecord,
+    CompactSummaryService,
+    compact_summary_from_json,
+)
 from agent_os.agent.factory import get_agent, new_session_id
 from agent_os.agent.task_memory import TaskMemoryStore, TaskSummaryService
 from agent_os.config import Settings
@@ -453,6 +458,67 @@ def _blob_main(argv: list[str]) -> int:
     return 0
 
 
+def _compact_record_dict(record: object) -> dict[str, object]:
+    return record.to_dict()  # type: ignore[no-any-return,attr-defined]
+
+
+def _compact_main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="agent-os-runtime compact",
+        description="Stage 3 CompactSummary：手动生成与查看结构化 compact 摘要。",
+    )
+    sub = p.add_subparsers(dest="action", required=True)
+
+    p_run = sub.add_parser("run", help="对指定 session/task 执行手动 compact")
+    p_run.add_argument("--session-id", required=True)
+    p_run.add_argument("--task-id", required=True)
+    p_run.add_argument("--artifact-ref", action="append", default=[])
+    p_run.add_argument("--pinned-ref", action="append", default=[])
+    p_run.add_argument("--json", action="store_true")
+
+    p_show = sub.add_parser("show", help="查看最近 CompactSummary")
+    p_show.add_argument("--session-id", required=True)
+    p_show.add_argument("--task-id", required=True)
+    p_show.add_argument("--json", action="store_true")
+
+    args = p.parse_args(argv)
+    settings = Settings.from_env()
+    if not settings.compact_enabled:
+        print(json.dumps({"status": "error", "reason": "compact_disabled"}, ensure_ascii=False))
+        return 1
+    store = TaskMemoryStore(settings.task_memory_sqlite_path)
+
+    if args.action == "run":
+        record = CompactSummaryService(store, model=settings.compact_model).compact(
+            session_id=args.session_id,
+            task_id=args.task_id,
+            current_artifact_refs=list(args.artifact_ref or []),
+            pinned_refs=list(args.pinned_ref or []),
+        )
+        if record is None:
+            print(json.dumps({"status": "error", "reason": "no_messages"}, ensure_ascii=False))
+            return 1
+        payload = {"status": "ok", "compact_summary": _compact_record_dict(record)}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(f"compact summary v{record.summary_version} for task {record.task_id}")
+            print(record.summary.model_dump_json(indent=2))
+        return 0
+
+    record = store.get_compact_summary(session_id=args.session_id, task_id=args.task_id)
+    if record is None:
+        print(json.dumps({"status": "error", "reason": "compact_summary_not_found"}, ensure_ascii=False))
+        return 1
+    payload = {"status": "ok", "compact_summary": _compact_record_dict(record)}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(f"compact summary v{record.summary_version} for task {record.task_id}")
+        print(record.summary.model_dump_json(indent=2))
+    return 0
+
+
 def _hindsight_index_main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="agent-os-runtime hindsight-index",
@@ -663,6 +729,40 @@ def _load_diagnostic_artifact_refs(path: Path | None) -> list[ArtifactContextRef
     return refs
 
 
+def _load_diagnostic_compact_summary(path: Path | None) -> CompactSummaryRecord | None:
+    if path is None:
+        return None
+    try:
+        raw_text = path.read_text(encoding="utf-8-sig")
+        raw = json.loads(raw_text)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"无法读取 compact summary JSON: {exc}") from exc
+    if isinstance(raw, dict) and isinstance(raw.get("summary"), dict):
+        summary = compact_summary_from_json(json.dumps(raw["summary"], ensure_ascii=False))
+        return CompactSummaryRecord(
+            session_id=str(raw.get("session_id") or "diagnostic_session"),
+            task_id=str(raw.get("task_id") or "diagnostic_task"),
+            summary_version=int(raw.get("summary_version") or 1),
+            summary=summary,
+            covered_message_start_id=raw.get("covered_message_start_id"),
+            covered_message_end_id=raw.get("covered_message_end_id"),
+            covered_message_count=int(raw.get("covered_message_count") or 0),
+            updated_at=str(raw.get("updated_at") or ""),
+            compact_model=str(raw.get("compact_model") or "diagnostic"),
+            compact_policy_version=str(raw.get("compact_policy_version") or "compact_summary_v1"),
+            status=str(raw.get("status") or "active"),
+        )
+    return CompactSummaryRecord(
+        session_id="diagnostic_session",
+        task_id="diagnostic_task",
+        summary_version=1,
+        summary=compact_summary_from_json(raw_text),
+        covered_message_count=0,
+        updated_at="",
+        compact_model="diagnostic",
+    )
+
+
 def _context_diagnose_main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="agent-os-runtime context-diagnose",
@@ -680,6 +780,7 @@ def _context_diagnose_main(argv: list[str]) -> int:
     )
     p.add_argument("--history-json", type=Path, default=None, help="可选历史消息 JSON 数组")
     p.add_argument("--artifact-refs-json", type=Path, default=None, help="可选 artifact refs JSON 数组")
+    p.add_argument("--compact-summary-json", type=Path, default=None, help="可选 CompactSummary JSON")
     p.add_argument("--retrieved-context-file", type=Path, default=None, help="可选外部召回文本")
     p.add_argument("--json", action="store_true", help="输出 JSON 而不是 Markdown")
     p.add_argument(
@@ -707,6 +808,7 @@ def _context_diagnose_main(argv: list[str]) -> int:
     try:
         session_messages = _load_diagnostic_history(args.history_json)
         artifact_refs = _load_diagnostic_artifact_refs(args.artifact_refs_json)
+        compact_summary = _load_diagnostic_compact_summary(args.compact_summary_json)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -724,6 +826,7 @@ def _context_diagnose_main(argv: list[str]) -> int:
         user_id=args.user_id,
         skill_id=effective_skill_id,
         session_messages=session_messages,
+        current_compact_summary=compact_summary,
         artifact_refs=artifact_refs,
         retrieved_context=retrieved_context,
     )
@@ -833,14 +936,18 @@ def _chat_main(argv: list[str]) -> int:
 
     def _task_context():
         current_summary = None
+        compact_summary = None
         task_index = None
         if task_store is not None and active_task_id is not None:
             current_summary = task_store.get_summary(session_id=session_id, task_id=active_task_id)
+            compact_summary = task_store.get_compact_summary(
+                session_id=session_id, task_id=active_task_id
+            )
             task_index = task_store.task_index(session_id=session_id)
-        return current_summary, task_index
+        return current_summary, compact_summary, task_index
 
     def _build_agent_for_turn():
-        current_summary, task_index = _task_context()
+        current_summary, _compact_summary, task_index = _task_context()
         return get_agent(
             ctrl,
             client_id=args.client_id,
@@ -909,7 +1016,7 @@ def _chat_main(argv: list[str]) -> int:
             agent = _build_agent_for_turn()
         run_message = line
         if context_builder is not None:
-            current_summary, task_index = _task_context()
+            current_summary, compact_summary, task_index = _task_context()
             retrieved_context = None
             retrieve_mode = (
                 effective_manifest.auto_retrieve_mode
@@ -957,6 +1064,7 @@ def _chat_main(argv: list[str]) -> int:
                 session_messages=_session_messages_for_context(hist_cap),
                 retrieved_context=retrieved_context,
                 current_task_summary=current_summary,
+                current_compact_summary=compact_summary,
                 session_task_index=task_index,
                 history_max_messages_override=hist_cap,
                 auto_retrieve_reason=(
@@ -1024,6 +1132,8 @@ def main(argv: list[str] | None = None) -> int:
         return _artifact_main(argv[1:])
     if argv and argv[0] == "blob":
         return _blob_main(argv[1:])
+    if argv and argv[0] == "compact":
+        return _compact_main(argv[1:])
     if argv and argv[0] == "hindsight-index":
         return _hindsight_index_main(argv[1:])
     if argv and argv[0] == "mcp-probe-server":

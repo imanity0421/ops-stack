@@ -232,6 +232,22 @@ class TaskMemoryStore:
                   status TEXT NOT NULL,
                   PRIMARY KEY(session_id, task_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS compact_summaries (
+                  session_id TEXT NOT NULL,
+                  task_id TEXT NOT NULL,
+                  summary_version INTEGER NOT NULL,
+                  summary_json TEXT NOT NULL,
+                  schema_version TEXT NOT NULL,
+                  covered_message_start_id TEXT,
+                  covered_message_end_id TEXT,
+                  covered_message_count INTEGER NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  compact_model TEXT NOT NULL,
+                  compact_policy_version TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  PRIMARY KEY(session_id, task_id)
+                );
                 """
             )
 
@@ -465,6 +481,68 @@ class TaskMemoryStore:
             updated_at=str(row["updated_at"]),
             summary_model=str(row["summary_model"]),
             summary_policy_version=str(row["summary_policy_version"]),
+            status=row["status"],
+        )
+
+    def upsert_compact_summary(self, record: object) -> None:
+        summary_json = record.summary.model_dump_json()  # type: ignore[attr-defined]
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO compact_summaries
+                  (session_id, task_id, summary_version, summary_json, schema_version,
+                   covered_message_start_id, covered_message_end_id, covered_message_count,
+                   updated_at, compact_model, compact_policy_version, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id, task_id) DO UPDATE SET
+                  summary_version = excluded.summary_version,
+                  summary_json = excluded.summary_json,
+                  schema_version = excluded.schema_version,
+                  covered_message_start_id = excluded.covered_message_start_id,
+                  covered_message_end_id = excluded.covered_message_end_id,
+                  covered_message_count = excluded.covered_message_count,
+                  updated_at = excluded.updated_at,
+                  compact_model = excluded.compact_model,
+                  compact_policy_version = excluded.compact_policy_version,
+                  status = excluded.status
+                """,
+                (
+                    record.session_id,  # type: ignore[attr-defined]
+                    record.task_id,  # type: ignore[attr-defined]
+                    record.summary_version,  # type: ignore[attr-defined]
+                    summary_json,
+                    record.schema_version,  # type: ignore[attr-defined]
+                    record.covered_message_start_id,  # type: ignore[attr-defined]
+                    record.covered_message_end_id,  # type: ignore[attr-defined]
+                    record.covered_message_count,  # type: ignore[attr-defined]
+                    record.updated_at,  # type: ignore[attr-defined]
+                    record.compact_model,  # type: ignore[attr-defined]
+                    record.compact_policy_version,  # type: ignore[attr-defined]
+                    record.status,  # type: ignore[attr-defined]
+                ),
+            )
+
+    def get_compact_summary(self, *, session_id: str, task_id: str) -> object | None:
+        from agent_os.agent.compact import CompactSummary, CompactSummaryRecord
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM compact_summaries WHERE session_id = ? AND task_id = ?",
+                (session_id, task_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return CompactSummaryRecord(
+            session_id=str(row["session_id"]),
+            task_id=str(row["task_id"]),
+            summary_version=int(row["summary_version"]),
+            summary=CompactSummary.model_validate_json(str(row["summary_json"])),
+            covered_message_start_id=row["covered_message_start_id"],
+            covered_message_end_id=row["covered_message_end_id"],
+            covered_message_count=int(row["covered_message_count"]),
+            updated_at=str(row["updated_at"]),
+            compact_model=str(row["compact_model"]),
+            compact_policy_version=str(row["compact_policy_version"]),
             status=row["status"],
         )
 

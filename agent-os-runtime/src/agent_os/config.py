@@ -199,6 +199,12 @@ class Settings:
     task_summary_every_n_messages: int = 6
     #: Task summary 生成模型；为空时沿用 AGENT_OS_MODEL，缺 key 时使用确定性 fallback
     task_summary_model: str | None = None
+    #: Stage 3 CompactSummary 手动 compact 开关
+    compact_enabled: bool = True
+    #: Stage 3 自动 compact 默认关闭；当前仅作为 /context suggestion signal
+    auto_compact_enabled: bool = False
+    #: CompactSummary 生成模型；为空时沿用 AGENT_OS_MODEL，缺 key 时使用确定性 fallback
+    compact_model: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -374,6 +380,11 @@ class Settings:
                 "AGENT_OS_TASK_SUMMARY_EVERY_N_MESSAGES", 6, min_value=1
             ),
             task_summary_model=(os.getenv("AGENT_OS_TASK_SUMMARY_MODEL") or "").strip() or None,
+            compact_enabled=os.getenv("AGENT_OS_COMPACT_ENABLED", "1").lower()
+            not in ("0", "false", "no"),
+            auto_compact_enabled=os.getenv("AGENT_OS_AUTO_COMPACT_ENABLED", "0").lower()
+            in ("1", "true", "yes"),
+            compact_model=(os.getenv("AGENT_OS_COMPACT_MODEL") or "").strip() or None,
         )
 
 
