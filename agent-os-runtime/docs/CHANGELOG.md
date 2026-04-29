@@ -8,7 +8,7 @@
 
 ### Stage 4
 
-- **Battle 3：Artifact CoW v0**（2026-04-30，done-local）
+- **Battle 3：Artifact CoW v0**（2026-04-30，commit `fc1d240`）
   - `ArtifactStore` 启用 `originating_session_id` 并自动迁移旧库；新 artifact 默认以创建 session 作为 origin。
   - 新增 `update_artifact_content` 写入口：origin session 内原地更新并重置 digest，跨 session 修改时强制复制为新 artifact，保留旧版本给原分支引用。
   - CoW 时可在同一 SQLite 事务内更新当前 session 的 `CompactSummary.core.current_artifact_refs`，并返回 `cow_from` / `compact_refs_updated` 诊断；`artifact update` CLI 暴露该路径。
