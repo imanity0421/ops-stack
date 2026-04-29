@@ -8,7 +8,7 @@
 
 ### Stage 4
 
-- **Battle 1：`/task resume` v0**（2026-04-30，done-local）
+- **Battle 1：`/task resume` v0**（2026-04-30，commit `c53ad7f`）
   - 新增 CTE `resume_task` 平铺入口，实时合成 resume final_state（CompactSummary + uncompacted tail + artifact refs / pinned refs）并生成纯文本 resume prompt。
   - `task resume` CLI 支持 B5.c connect/fork 自动判断与 `--force-fork` / `--force-connect` override；fork 时更新 `tasks.current_main_session_id`，connect 时复用当前 session。
   - `voice_pack=None` 时跳过 inline 段并在 prompt/diagnostics 保留 `voice_pack_skipped` 语义；Stage 4 只消费 `pinned_refs`，不实现 pin/unpin。
