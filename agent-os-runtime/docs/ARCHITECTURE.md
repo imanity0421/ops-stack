@@ -608,7 +608,7 @@ flowchart LR
 - **Stage 1（已完成）**：Turn Loop 稳定，不爆上下文。
 - **Stage 2**：长内容 artifact 化 + 生命周期闭环（archive / clean / 孤儿盘点，永不 TTL）+ Task 实体落地（task_table 5 字段，task ⊃ session 1:N）。Battle 拆分（6 battle 顺序、branch/CoW 推到 Stage 4 等执行细节）见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) D。
 - **Stage 3**：长会话可 compact 并以 `CompactSummary` schema 恢复目标，Task Loop 核心闭环成立。
-- **Stage 4**：用户离开后 `/task resume` 两轮内复现工作面，Task Loop 成为跨会话稳定容器；Golden Case 同步收口为贯穿基线。
+- **Stage 4**：用户离开后 `/task resume` 两轮内复现工作面，Task Loop 成为跨会话稳定容器；Golden Case 同步收口为贯穿基线。Battle 拆分（5 battle 顺序、Stage 4 启动前已敲定的 A4-ii / A5 / B5.c / H5 / S3 决策摘要、暂缓项）见 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) F。
 - **Stage 5**：skill 是业务配方（含 voice pack 手挂层）而非 prompt，Skill Loop 站在 Task Loop 之上。盲测可辨识品牌。
 - **Stage 6**：Memory candidate + Voice Runtime（在 Pack 之上叠加自动学习层），全部需用户确认。
 - **Stage 7+**：自动化与扩展（SubAgent ContextSandbox / Auto Compact 升级 / Hook 系统化 / Resume 时点回滚），按真实痛点决定，不预设顺序。
@@ -694,3 +694,4 @@ Claude Code 是 LLM-native coding harness，agent-os 是 Agno-based business age
 - **2026-04-29（同日，Phase 5 收尾）**：第 0 节哲学锚点编号由 0.5 改为 **0.4**（与 0.1–0.3 连续编号）；§5.2 首段补足**5 条 vs INDEX §1.2 八条**之关系说明；[CLAUDE_CODE_REFERENCE_INDEX.md](CLAUDE_CODE_REFERENCE_INDEX.md) 反模式条目一处指向更新为「第 0.4 节哲学锚点」。**主干 0 修订**——属编号与跳转澄清，不涉及 4 视图 / 不变量 / 借鉴机制条目本身。
 - **2026-04-29（同日，Phase 6 GPT 收口审核）**：4 项一致性修复——① §367 `/task branch` 起点措辞由"拷贝 source session summary"改为"§1.4 实时合成方案初始化首轮 prompt，不持久化 seed 副本"，与 §330 实时合成口径统一（修订上轮二阶副作用收敛漏改的尾巴）；② [OPEN_DECISIONS.md](OPEN_DECISIONS.md) B3 "强烈推荐永远不做" 改为 "**默认不做（推到 Stage 7+），除非硬证据再开**"，与 ARCH §3.6 / §582 措辞强度对齐；③ 修订记录里"C 取消" 改名为 "**Phase 1 C 步取消**"，明文区分本次升格计划子项 vs OPEN_DECISIONS C 类（"已暂时回答但保留挑刺空间"）；④ §6 末段加 1 段"实现级口径"明文条款——机制级契约的字段名 / 接口签名 / 阈值参数通过 OPEN_DECISIONS A 类闭环微调，不走架构修订门槛。**主干 0 修订**——纯口径统一与表达精度修订；4 视图 / 不变量 / 工程规则结论 / stage 路线 / 反模式抗体清单 0 改动。
 - **2026-04-29（同日，Phase 7 收口：Stage 2/3 实测回填）**：Stage 2/3 已实测落地后做最小回填——§1.3 增补 Stage 2 v0 `ArtifactStore` schema 的实现注记（未预留 `subkind` 等业务 lifecycle 字段，Stage 5 迁移引入）；§1.4 明文 task_table 5 字段边界与“不加 tag / parent_task_id / due_date / participants”的判定；§3.2 把 `SkillSchemaProvider` 契约签名从“伪代码示意 + A7 引用”升级为 Stage 3 已落地签名，并声明 single-skill-active 边界；§3.5 将字段级断言口径出口从 OPEN_DECISIONS A1 改为 [GC_SPEC.md](GC_SPEC.md)；§3.6 追加“participants 永远不做”。同时把“当前节奏”更新为 Stage 4 代码 PR。**主干 0 修订**——仅实测落地事实回填与过期引用修正，不改变 4 视图 / 不变量 / stage 承诺 / 反模式结论。
+- **2026-04-29（同日，Phase 8 收口同步：Stage 4 启动前 OPEN_DECISIONS F 章节落地）**：Stage 4 启动前的 5 battle 排序、A4-ii / A5 / B5.c / H5 / S3 决策摘要、暂缓项已固化在 [OPEN_DECISIONS.md](OPEN_DECISIONS.md) F；本文 §4 Stage 4 一句话承诺末尾追加 F 引用（与 §609 Stage 2 末尾 D 引用同构，属视图缺失补足型自完备性补丁）。**主干 0 修订**——4 视图 / 不变量 / stage 承诺正文 / 反模式结论 0 改动；A4-ii Phase 8 落地修正版（扩展现有 `sessions` 表 +2 列、`task_id` / `last_active_at` / `is_main` 复用现有字段不新增）兑现 §1.4 task_table 5 字段不变承诺。

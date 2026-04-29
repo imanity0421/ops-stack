@@ -51,6 +51,8 @@
 
 **Battle 6 路径决策（2026-04-29）**：Battle 6 选择最小路径，只统计已进入 prompt / trace 的 artifact ref 与 artifactized signal，不主动查 ArtifactStore、不实现跨 task artifact 召回、不决策跨 task 权重公式。A3 的召回权重 / flag / 风险提示文本仍留到 Stage 4 resume 与真实 cross-task case 后回答。
 
+**Stage 4 启动前确认（2026-04-29，Phase 8）**：A3 仍按 Battle 6 路径决策延续——Stage 4 五个 battle 不实现跨 task artifact 召回、不引入权重公式 / `--include-other-tasks` flag / 跨 task 风险提示文本。Stage 4 resume 装配仅消费当前 task 及祖先链 artifact；跨 task 召回推到 Stage 5 真实 business_writing 出现 cross-task case 后回答（与 F4 暂缓项一致）。
+
 ### A4：task_table 是否真的够 5 字段
 
 **已知**：[ARCHITECTURE.md](ARCHITECTURE.md) 1.4 已定 5 字段（task_id / name / status / created_at / current_main_session_id）。
@@ -63,6 +65,21 @@
 **回答方式**：Stage 2 PR 实现 task entity v0 后跑 1-2 周真实任务，看哪些字段是"必须的"哪些是"加上更舒服但其实可以查 session 表得到"。
 
 **当前推荐**：5 字段先发；扩展字段进 [ARCHITECTURE.md](ARCHITECTURE.md) 1.4 时回填。`parent_task_id` 与 task 树相关，归 B4 决策。
+
+**Stage 4 启动前确认（2026-04-29，Phase 8 落地修正版）**：
+
+经实测核查 [task_memory.py:138-146 / 425](../src/agent_os/agent/task_memory.py)，`sessions` 表已存在并已维护 `session_id` / `task_id`-equivalent (`active_task_id`) / `last_active_at`-equivalent (`updated_at`) 等字段。Stage 4 branch 派生字段落地路径：
+
+- **`tasks` 表保持 5 字段不变**（兑现 [ARCHITECTURE.md](ARCHITECTURE.md) §1.4 与 D2 承诺：branch / CoW 不污染 task entity v0 5 字段）。
+- **扩展现有 `sessions` 表 +2 列**：仅新增 `parent_session_id TEXT NULL` + `branch_role TEXT NULL`（取值 `main` / `branch` / NULL=root）。
+- **复用映射不新增**：
+  - `task_id` ← 复用现有 `active_task_id`（已是 task 归属字段）。
+  - `last_active_at` ← 复用现有 `updated_at`（已由 [task_memory.py:425](../src/agent_os/agent/task_memory.py) `UPDATE sessions SET updated_at = ?, active_task_id = ? WHERE session_id = ?` 主动维护）。
+  - `is_main` ← 反查 `tasks.current_main_session_id == sessions.session_id`（语义单源，避免 main 切换时双写漂移）。
+- **拒绝路径**：不新建 `task_sessions` 投影表（A4-i 已被实测推翻：会引入 `sessions` ↔ `task_sessions` 双表一致性维护负担，且 `active_task_id` 已实现等价语义）。
+- **拒绝字段**：不新增 `task_id` / `last_active_at` / `is_main` 三列（与已有字段语义重复，违反 §3.6 反模式 "字段重复"）。
+
+理由：扩展现有表 +2 列是改动最小、复用最充分、单源最强的路径——B5.c connect/fork 阈值判断（`updated_at` 距今 < 30 分钟 + token 占用）、Battle 2 branch tree 遍历（`parent_session_id` 反向链）、Battle 3 CoW 触发（`originating_session_id` vs `current session_id` 对比）所需字段全部齐备。
 
 ### A5：CTE 内 task 级编排函数 / 类边界
 
@@ -77,6 +94,16 @@
 **回答方式**：Stage 4 写 `/task resume` 时落地——这是第一个真实跨 4 模块编排的命令。Stage 5 写 `/skill compose context_pack` 时再验证 SR 级编排是否结构同构。
 
 **当前推荐**：先按命令拆平铺函数（避免过早抽象 Orchestrator 类）；模块间走对外 API 不直接 import 子函数；ER 包一个 `start_resumed_session(prompt, session_meta)` 高层入口供 CTE 调。
+
+**Stage 4 启动前路径决策（2026-04-29，Phase 8）**：采纳 "当前推荐"。Stage 4 Battle 1-2 落地路径：
+
+- 在 `agent_os/cte/` 下新增 `resume_task.py` / `branch_task.py` 两个平铺模块（**不**抽象 `TaskOrchestrator` 类）。
+- CTE → MA / SR / ER 均走对外 API：
+  - `MA.fetch_task_final_state(task_id) -> TaskFinalState`（实时合成 `CompactSummary` + uncompacted tail + `current_deliverable` + `pinned_refs`）。
+  - `SR.get_voice_pack(task_id) -> VoicePack | None`（None fallback 见 S3 / F2）。
+  - `ER.start_resumed_session(prompt, session_meta) -> SessionId`（接 agno；不在 CTE 直接 import agno）。
+- compact 协调仍归 ER 自身（Stage 3 已落地）；CTE 不接管。
+- Stage 5 引入 `/skill compose context_pack` 时再验证 SR 级编排是否结构同构；不预先抽象 `SkillOrchestrator`。
 
 ### A6：超长 deliverable 的章节切分策略
 
@@ -97,6 +124,8 @@
 - 当 `current_deliverable` 超 1 万字时建议用户 `/deliverable split` 显式切章节；不做自动切（避免边界判错引发用户困惑）。
 - `digest_only` 兜底必含 H2 标题列表 + 已出现专有名词集合（300 字内）。
 - 这些行为属于 SR.business_writing 的 deliverable lifecycle 装配，不污染 CTE 通用降级机制。
+
+**Stage 4 启动前确认（2026-04-29，Phase 8）**：A6 章节切分策略 Stage 4 不做。Stage 4 resume 装配仅复用 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 现有降级链 `full → digest+tail_3 → digest+tail_2 → digest+tail_1 → digest_only`，不引入 `/deliverable split` 命令、不引入章节级 `tail_n` 切分粒度、不引入 H2 标题列表 + 已出现专有名词集合的 `digest_only` 兜底字段。完整 A6 实现推到 Stage 5 真实 1.5 万字以上 business_writing 任务（与 F4 暂缓项一致）。
 
 ### A7：compact schema fragment 契约（签名已定，参数级残留待回答）
 
@@ -225,6 +254,17 @@
 
 **反向选项**：若 B5.c 实测出现"系统判错率 > 10%"或用户明确表达"我想要更显式的控制"，回退到 B5.a 双命令。
 
+**Stage 4 启动前确认（2026-04-29，Phase 8）**：采纳 B5.c 单命令路径。Stage 4 Battle 1 落地：
+
+- 仅一个命令 `/task resume <task_id>`（不引入 `/task connect`）。
+- CTE 内部按以下规则自动判断 connect 还是 fork：
+  - **倾向 connect**：当前 main session 距 `updated_at` < 30 分钟 **且** token 占用 < 80% **且** session 未 archive。
+  - **倾向 fork**：上述任一条件不满足。
+- 保留 `--force-fork` / `--force-connect` flag 用于 override（Battle 1 必须实现）。
+- trace 必须显式记录决策路径（`resume_diagnostics.connect_or_fork = "connect" | "fork"` + `decision_reason: list[str]` + `forced_by_flag: bool`），见 Battle 4 `/context` 集成。
+
+回退条件复用上方"反向选项"——Battle 1 落地后若实测系统判错率 > 10%，再回退到 B5.a 双命令；这一兜底不影响 Battle 1 当前实施。
+
 ---
 
 ## C. 已暂时回答但保留挑刺空间
@@ -320,6 +360,57 @@
 
 ---
 
+## F. Stage 4 Battle 排序（结论已定，待执行）
+
+> **本章性质**：[ARCHITECTURE.md](ARCHITECTURE.md) 第 4 节给出了 Stage 4 一句话承诺（"用户离开后 `/task resume` 两轮内复现工作面，Task Loop 成为跨会话稳定容器；Golden Case 同步收口为贯穿基线"），但单一承诺背后是 5 个独立可发布的 battle。本章固化 battle 顺序与依赖、Stage 4 启动前已敲定决策摘要、暂缓项；不再因进度变化回填 [ARCHITECTURE.md](ARCHITECTURE.md)。
+>
+> **与 D / E 章节同构**：D（Stage 2 Battle 排序）/ E（Stage 3 执行状态）已建立 "结论已定的执行细节归 OPEN_DECISIONS、不污染 ARCH 稳定层" 的惯例，本章延续。
+
+### F1：5 个 Battle 顺序
+
+| # | Battle | Status | 核心交付 | 依赖前置 |
+| --- | --- | --- | --- | --- |
+| 1 | **`/task resume` v0** | todo | resume 命令、final_state 实时合成（`CompactSummary` + uncompacted tail + `current_deliverable` + `pinned_refs`）、tail history 纯文本投影；`voice_pack` 为 None 时跳过该 inline 段并 trace 标 `voice_pack_skipped=true`；按 B5.c 单命令自动判断 connect/fork（默认阈值 30 分钟距上次活动 / 80% token 占用，保留 `--force-fork` / `--force-connect` flag override） | Stage 3 `CompactSummary` v1 |
+| 2 | **`/task branch` v0** | todo | branch 命令、**扩展现有 `sessions` 表 +2 列**（`parent_session_id TEXT NULL` + `branch_role TEXT NULL` 取值 `main` / `branch` / NULL=root）；`task_id` / `last_active_at` / `is_main` 均复用现有字段不新增（详见 F2）；main 与 branch session `CompactSummary` 互不污染 | Battle 1 |
+| 3 | **Artifact CoW v0** | todo | `originating_session_id` 在 `ArtifactStore` 启用、CoW 触发规则（同 session 原地 update vs 跨 branch 强制复制）、原子事务边界（与 [ARCHITECTURE.md](ARCHITECTURE.md) §1.3 一致） | Battle 2 |
+| 4 | **Resume Trace + `/context` 集成** | todo | resume 装配 trace 字段、`/context` JSON 显示 `resume_diagnostics`（含 connect/fork 决策路径、`deliverable_inline_level` 命中档位、`voice_pack_skipped` 标志）、降级链 `full → digest+tail_n` 命中观测 | Battle 1 |
+| 5 | **Golden Case GC-Resume 收口** | todo | [GC_SPEC.md](GC_SPEC.md) 追加 GC-Resume Stage4 字段级断言；2-3 个真实 baseline trace（隔天 resume 命中 L0 / 分支对照 / 短 session 提前 resume 走祖先链 + connect 路径） | Battle 1-4 |
+
+**F1 Status 维护规则**（与 D1 第 277-281 行规则同构）：
+
+- F1 是 Stage 4 当前研发进度的唯一一跳入口；串行 agent 开工前必须先读本表。
+- 每个 battle 完成时只更新对应行 `Status`，并在 [CHANGELOG.md](CHANGELOG.md) 记录已完成交付；不要把子任务流水账写进本表。
+- `Status` 建议值：`todo` / `in-progress` / `done-local @ YYYY-MM-DD (tests passed, commit pending)` / `done @ YYYY-MM-DD (commit <sha> / PR #N)` / `blocked: <一句话原因>`。`done-local` 不具备跨机器 handoff 效力；可接续状态至少需要 commit，最好已 push。
+- 若 `done` 后发现需要回滚，将对应 battle `Status` 回退到 `todo` 或 `in-progress` 并写明原因，同时在 [CHANGELOG.md](CHANGELOG.md) 增加修复条目引用 revert commit / PR。
+- battle 边界、顺序或依赖变化时，才修改 F2 / F3 或回到 A / B / C 记录依据；不要为进度更新修改 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+### F2：Stage 4 启动前已敲定决策摘要
+
+> 本节是 H1-H5 + S3 的固化结论一跳入口；详细辩论历史仍在 A3 / A4 / A5 / A6 / B5 各自原段落。
+
+- **A4-ii（task_table 边界）**：**扩展现有 `sessions` 表**承载 branch 派生字段——只增 2 列 `parent_session_id TEXT NULL` + `branch_role TEXT NULL`（取值 `main` / `branch` / NULL=root）；`task_id` 复用现有 `active_task_id`、`last_active_at` 复用现有 `updated_at`（[task_memory.py:425](../src/agent_os/agent/task_memory.py) 已维护）、`is_main` 反查 `tasks.current_main_session_id`，均不新增字段。`tasks` 表保持 5 字段不变（兑现 [ARCHITECTURE.md](ARCHITECTURE.md) §1.4 与 D2 承诺）。详见 A4 段实测落地理由。
+- **A5（CTE 内 task 级编排函数边界）**：按命令拆平铺函数（`agent_os/cte/resume_task.py` / `branch_task.py`），不建 `TaskOrchestrator` 类；模块间走对外 API（`MA.fetch_task_final_state` / `SR.get_voice_pack` / `ER.start_resumed_session`）；ER 包 `start_resumed_session(prompt, session_meta)` 高层入口供 CTE 调。
+- **B5.c（resume 命令分离）**：单命令 `/task resume` 自动判断 connect/fork（默认阈值 30 分钟距上次活动 / 80% token 占用），保留 `--force-fork` / `--force-connect` flag override；trace 显式记录决策路径与触发规则。
+- **task_history 实现路径（H5）**：复用 `CompactSummary` v1 schema 不动（不引入 v2），`task_history` 走独立 SQLite 表（`task_id` / `session_id` / `compact_summary_id` / `is_main` / `created_at`），与 [ARCHITECTURE.md](ARCHITECTURE.md) §1.4 第 377 行 "task 只持引用列表" 对齐。Stage 4 仅在 schema 层预留扩展位，不主动构建快照序列（具体见 F4）。
+- **voice_pack=None fallback（S3）**：resume 装配时若 `voice_pack` 为 None 则跳过该 inline 段，trace 标 `voice_pack_skipped=true`；与 [ARCHITECTURE.md](ARCHITECTURE.md) §3.5 stage 时空悖论原则一致（"还没做 voice pack 就要求测 voice"——Stage 4 装配同样不强制存在）。
+
+### F3：执行节奏建议
+
+- **Battle 1 是核心**：Battle 2 / 3 / 4 都直接或间接依赖 Battle 1 的 final_state 实时合成与 resume 主路径。
+- **Battle 2 + 3 紧邻 PR**：CoW 强依赖 branch 字段位（`originating_session_id` / `parent_session_id`）启用；分两 PR 会出现 "字段在但无消费者" 的空窗。
+- **Battle 4 可与 Battle 2 / 3 并行**：trace 集成只 hook resume 入口，不阻塞 branch 实现；可由不同人并行实现。
+- **Battle 5 是 GC 收口**：必须在 Battle 1-4 全部 done 后跑 baseline，否则 trace 字段不全。
+
+### F4：暂缓但不可遗忘的研发管理项
+
+- **`task_history` 雏形**：Stage 4 不做（推到 Stage 6 与 `cross_run_lessons` 一起），Stage 4 task summary 仅 schema 层预留扩展位；实施时按 F2 H5 路径走（独立 SQLite 表，不动 `CompactSummary` schema_version）。
+- **A3 cross-task artifact 召回**：Stage 4 不做，推到 Stage 5 真实 business_writing 时回答（与 A3 当前推荐一致）；权重公式 / `--include-other-tasks` flag / 风险提示文本均不在 Stage 4 范围。
+- **A6 章节切分策略**：Stage 4 不做，推到 Stage 5 真实 1.5 万字 business_writing 时回答（与 A6 当前推荐一致）；Stage 4 仅复用 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 现有降级链 `full → digest+tail_n`。
+- **PR template**：暂缓创建（参考 D4 第 302 行规则）；若 Stage 4 5 battle 中出现 ≥ 1 次 Reference Check / F1 Status / CHANGELOG 漏填再触发。
+- **Stage 4 baseline trace 用例**：Battle 5 启动前最终敲定（草案：隔天 resume 命中 L0 / 分支对照 / 短 session 提前 resume 走祖先链 + connect 路径），不在 Stage 4 启动前预先固化。
+
+---
+
 **修订记录**：
 
 - 2026-04-28：初版。从 7 轮 GPT 挑刺中提炼出 4 + 4 + 4 项开放问题；A 类等代码、B 类等用户、C 类等硬证据。
@@ -341,3 +432,8 @@
   - **A7 收敛**：schema fragment 契约签名已在 Stage 3 落地并沉淀回 [ARCHITECTURE.md](ARCHITECTURE.md) §3.2；本节仅保留参数级残留（多 skill 合成 / 缓存 / size 阈值策略随 PR/GC trace 微调）。
   - **B3 移除**：Multi-Skill / Router 已完全归 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6（默认不做，Stage 7+ 硬证据再开），OPEN_DECISIONS 不再作为待决策项承载。
   - **B4 关闭**：task 字段集边界已确认并沉淀到 [ARCHITECTURE.md](ARCHITECTURE.md) §1.4（不加 tag / parent_task_id / due_date）与 §3.6（participants 永远不做）；本条保留历史备查，不再作为待决策项反复讨论。
+- 2026-04-29（同日，Phase 8 Stage 4 启动前决策收口）：
+  - **F 章节新增**：固化 Stage 4 5 个 battle 顺序（`/task resume` v0 / `/task branch` v0 / Artifact CoW v0 / Resume Trace + `/context` 集成 / GC-Resume 收口）+ Status 维护规则（与 D1 同构）+ Stage 4 启动前已敲定决策摘要（A4-ii / A5 / B5.c / H5 task_history 路径 / S3 voice_pack=None fallback）+ 执行节奏建议 + F4 暂缓项（task_history 推 Stage 6、A3 / A6 推 Stage 5、PR template 暂缓、Battle 5 baseline trace 推 Battle 5 启动前）。
+  - **A3 / A4 / A5 / A6 / B5 五条均追加 Stage 4 启动前确认 / 路径决策段**：固化 Stage 4 5 battle 实施时的方向，避免开工后再开放讨论。其中 **A4 直接采用 Phase 8 落地修正版**——经实测核查 [task_memory.py:138-146 / 425](../src/agent_os/agent/task_memory.py)，`sessions` 表已存在并已维护 `active_task_id` / `updated_at`，因此 Stage 4 仅扩展现有 `sessions` 表 +2 列（`parent_session_id` + `branch_role`），跳过中间 6 字段方案；`task_id` / `last_active_at` / `is_main` 全部复用现有字段不新增。
+  - **[ARCHITECTURE.md](ARCHITECTURE.md) §4 Stage 4 一句话承诺末尾追加 F 引用**（与 §609 Stage 2 末尾 D 引用同构，属视图缺失补足型自完备性补丁）；ARCH 主干 0 修订。
+  - **本次 Phase 8 不开始任何 Stage 4 代码实现**，只锁定文档层决策；Stage 4 Battle 1 由其他 coding agent 接手时按 F1 / F2 路径执行。

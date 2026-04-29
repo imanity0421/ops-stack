@@ -49,6 +49,7 @@
 - **文档权威层级整理**：明确 [ARCHITECTURE.md](ARCHITECTURE.md) 为唯一架构权威，[OPEN_DECISIONS.md](OPEN_DECISIONS.md) 承载开放决策与 Stage 2 battle 顺序，[CLAUDE_CODE_REFERENCE_INDEX.md](CLAUDE_CODE_REFERENCE_INDEX.md) 承载 Claude Code 借鉴依据 / 差距矩阵 / 源码导航；旧 roadmap / sprint / stage 过程文档归档至 [archive/](archive/)。
 - **文档入口合并**：原 `docs/README.md` 已撤并至仓库 [README.md](../README.md) §**文档与阅读顺序**（避免根目录与 `docs/` 双 README）；[AGENTS.md](../AGENTS.md) 与相关交叉链接已更新。
 - 统一 **Hindsight `supersedes_event_id`** 表述：**append-only 存储，召回层降权**（与 `HindsightRetrievalPolicy` 一致），修正 [ENGINEERING.md](ENGINEERING.md)、[OPERATIONS.md](OPERATIONS.md)、[MEMORY_SYSTEM_V2.md](MEMORY_SYSTEM_V2.md)、[examples/ingest_post_samples.md](examples/ingest_post_samples.md) 中旧版「从召回剔除/隐藏」等措辞。
+- **Phase 8 Stage 4 启动前决策收口**（2026-04-29）：[OPEN_DECISIONS.md](OPEN_DECISIONS.md) 新增 F 章节，固化 Stage 4 5 个 battle 顺序（`/task resume` v0 / `/task branch` v0 / Artifact CoW v0 / Resume Trace + `/context` 集成 / GC-Resume 收口）+ Status 维护规则（与 D1 同构）+ Stage 4 启动前已敲定决策摘要（A4-ii / A5 / B5.c / H5 task_history 路径 / S3 voice_pack=None fallback）+ 执行节奏 + F4 暂缓项；A3 / A4 / A5 / A6 / B5 五条均追加 Stage 4 启动前确认 / 路径决策段，其中 A4 直接采用 **Phase 8 落地修正版**——经实测核查 [task_memory.py:138-146 / 425](../src/agent_os/agent/task_memory.py)，仅扩展现有 `sessions` 表 +2 列（`parent_session_id` + `branch_role`），`task_id` / `last_active_at` / `is_main` 全部复用现有字段不新增。[ARCHITECTURE.md](ARCHITECTURE.md) §4 Stage 4 一句话承诺末尾追加 F 引用（与 §609 Stage 2 末尾 D 引用同构，属视图缺失补足型自完备性补丁）；ARCH **主干 0 修订**。本次 Phase 8 不开始任何 Stage 4 代码实现，只锁定文档层决策。
 
 ### 改进
 
