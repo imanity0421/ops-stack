@@ -105,6 +105,8 @@
 - compact 协调仍归 ER 自身（Stage 3 已落地）；CTE 不接管。
 - Stage 5 引入 `/skill compose context_pack` 时再验证 SR 级编排是否结构同构；不预先抽象 `SkillOrchestrator`。
 
+**Stage 4 v0 落地备注（2026-04-30，Stage 4 收口）**：经 Battle 1-5 实测，平铺函数 (`resume_task` / `branch_task`) 与 `MA.fetch_task_final_state` 等价语义已通过 `TaskMemoryStore` 直接消费落地（`store.get_task_entity` / `task_messages` / `get_compact_summary` / `task_messages_after`），不专门抽象 MA 包装类。**ER `start_resumed_session` 入口 Stage 4 v0 不实现**——`resume_task` 只产出 `ResumeFinalState.prompt` + 写 `sessions` 元数据（`upsert_session(parent_session_id, branch_role)` / `set_current_main_session`），prompt 由表现层（CLI / Web）注入到下次 agno 启动；与 GC6/7/8 / Trace 3-5 的"prompt 与 trace 字段断言"范围一致。完整 ER spin up（agno 真实新会话注入 + voice_pack 字段消费）推到 Stage 5 真实 `business_writing` skill 落地时一起做（与 S3 / F4 voice pack 推迟节奏一致）。Stage 5 启动前再回到本段路径决策做最终签名校准。
+
 ### A6：超长 deliverable 的章节切分策略
 
 **已知**：[ARCHITECTURE.md](ARCHITECTURE.md) 3.3 已定 resume 装配降级链 `full → digest+tail_3 → digest+tail_2 → digest+tail_1 → digest_only`，digest 始终保留作全局梗概锚点；§1.3 已定 artifact 写时必生成 digest。
@@ -444,3 +446,15 @@
   - **[ARCHITECTURE.md](ARCHITECTURE.md) §4 Stage 4 一句话承诺末尾追加 F 引用**（与 §609 Stage 2 末尾 D 引用同构，属视图缺失补足型自完备性补丁）；ARCH 主干 0 修订。
   - **本次 Phase 8 不开始任何 Stage 4 代码实现**，只锁定文档层决策；Stage 4 Battle 1 由其他 coding agent 接手时按 F1 / F2 路径执行。
 - 2026-04-29（同日，Phase 8 同日补丁：A8 Stage 4 边界明文）：A8 段追加 "Stage 4 启动前确认" 段，明文 "只消费不填充" 边界——Stage 4 Battle 1 `/task resume` v0 final_state 实时合成（F1 表）虽然显式引用 `pinned_refs`，但仅消费已存在字段（默认空列表→跳过 inline；非空→按 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 强制 inline），不实现 `/memory pin` / `/asset pin` / `/memory unpin` 命令；填充策略仍归 Stage 6（与 A8 当前 "回答方式" 一致）。与 S3 voice_pack=None fallback 同构，避免 coding agent 误判 Stage 4 需要先做 pin 命令链路。配套修改：[ARCHITECTURE.md](ARCHITECTURE.md) line 5 / line 7 元数据自完备性补足（加 Stage 4 (F) 引用 + GC_SPEC 已建当前时措辞）。**所有补丁主干 0 修订**——属视图缺失补足 + 读者跳转链路修正，A1-A8 / B1-B5 / C1-C4 / D / E / F 章节正文规则 0 改动。
+- 2026-04-30（Stage 4 全 battle 收口）：F1 5/5 全部 `done @ 2026-04-30` 并已 push（commits `c53ad7f` / `6c2b94c` / `fc1d240` / `a98424d` / `4a0cf90`），CHANGELOG `### Stage 4` 段同步落地。F2 决策实测落地度核查：
+  - **A4-ii**：`sessions` 表 +2 列 + ALTER 迁移 + `task_id` / `last_active_at` / `is_main` 复用现有字段不新增，与 Phase 8 落地修正版完全一致 ✅。
+  - **A5（部分）**：CTE 平铺函数 `resume_task.py` (462 行) + `branch_task.py` (107 行) 落地，无 `TaskOrchestrator` 类；`branch_task` 通过 `resume_task(force_mode="connect")` 复用 final-state 合成；MA 等价语义通过 `TaskMemoryStore` 直接消费 ✅。
+  - **A5（ER 入口）**：`ER.start_resumed_session` v0 不实现（详见 A5 段 "Stage 4 v0 落地备注"）；prompt 由表现层注入 agno；推到 Stage 5 真实 `business_writing` 时一起落 ⏸️。
+  - **B5.c**：单命令 `/task resume` + 30min/80% 阈值 + `--force-fork` / `--force-connect` flag override + 互斥校验 + `decision_reason` 多原因可叠加 ✅。
+  - **A8 only-consume**：`pinned_refs` 仅从 `compact_summary.summary.core.pinned_refs` 读取，非空才 inline；CLI 全无 pin/unpin 命令 ✅。
+  - **S3 voice_pack=None fallback**：`voice_pack_skipped=True` Stage 4 硬编码占位（Stage 5 接 voice pack 字段判断时切换）；`<voice_pack skipped="true" reason="voice_pack_none" />` ✅。
+  - **CoW**：`originating_session_id` 启用 + ALTER 迁移 + 历史回填；同 origin 原地 update / 跨 origin 强制 CoW；ATTACH 跨 SQLite 库的 BEGIN IMMEDIATE 事务原子性同步更新 `CompactSummary.core.current_artifact_refs` ✅。
+  - **GC**：[GC_SPEC.md](GC_SPEC.md) 新增 GC6 / GC7 / GC8 + Trace 3-5 baseline，覆盖 stale fork / branch isolation / short connect + `/context` 集成。
+  - **暂缓项**：F4 `task_history` / A3 cross-task 召回 / A6 章节切分 / PR template 全部不在 Stage 4 范围实现（与 F4 决策一致）。
+  - **ARCH 主干 0 修订**：Stage 4 实测落地与 ARCH §1.3 / §1.4 / §3.2 / §3.3 / §3.5 字段名 + 机制描述完全一致，无需回填（详见 [ARCHITECTURE.md](ARCHITECTURE.md) 修订记录同日条目）。
+  - **A4 / A5 / A8 / B5 出口规则评估**：实测落地与 F2 摘要一致，下一阶段（Stage 5 启动前 Phase）可考虑按"决策出口规则"将这些条目从 OPEN_DECISIONS A / B 类正式收口移除，仅保留 F2 摘要 + 修订记录引用作历史备查；当前 Stage 4 收口阶段不立即移除，避免与 Stage 5 启动前 Phase 的回看路径冲突。
