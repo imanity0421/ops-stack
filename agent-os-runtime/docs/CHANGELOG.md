@@ -13,7 +13,7 @@
   - Artifact Registry v0：新增 SQLite 原文层，支持 artifact 与 task / session 绑定、digest fallback、软归档。
   - ContextBuilder 支持 `<artifact ref>` prompt 装配，模型只看到 ref / digest，不回灌 artifact 全文。
   - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_context_builder.py tests/core/test_cli.py tests/core/test_artifact_store.py`；`python -m ruff check src tests`。
-- **Battle 3：Tool Result Artifactization**（2026-04-29，done-local）
+- **Battle 3：Tool Result Artifactization**（2026-04-29，commit `e5000cd`）
   - 新增 `ToolResultArtifactizer`，长 tool result 写入 `ArtifactStore`，history 中仅保留稳定 `<artifact ref>` + digest。
   - `ArtifactStore` 支持 `stable_key` 去重查询，重复清洗同一 tool result 时复用同一 artifact。
   - `ContextBuilder.clean_history_messages_with_report()` 支持显式注入 artifactizer，默认不改变运行时行为；trace 增加 `tool_artifactized` 计数。
