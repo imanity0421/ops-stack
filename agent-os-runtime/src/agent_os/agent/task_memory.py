@@ -62,6 +62,17 @@ class TaskEntity:
 
 
 @dataclass(frozen=True)
+class TaskSession:
+    session_id: str
+    client_id: str
+    user_id: str | None
+    active_task_id: str | None
+    created_at: str
+    updated_at: str
+    status: TaskStatus
+
+
+@dataclass(frozen=True)
 class TaskSegment:
     task_id: str
     session_id: str
@@ -112,6 +123,20 @@ def _task_entity_from_row(row: sqlite3.Row | None) -> TaskEntity | None:
         status=row["status"],
         created_at=str(row["created_at"]),
         current_main_session_id=str(row["current_main_session_id"]),
+    )
+
+
+def _task_session_from_row(row: sqlite3.Row | None) -> TaskSession | None:
+    if row is None:
+        return None
+    return TaskSession(
+        session_id=str(row["session_id"]),
+        client_id=str(row["client_id"]),
+        user_id=row["user_id"],
+        active_task_id=row["active_task_id"],
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        status=row["status"],
     )
 
 
@@ -313,6 +338,51 @@ class TaskMemoryStore:
 
     def unarchive_task_entity(self, task_id: str) -> TaskEntity | None:
         return self.set_task_entity_status(task_id, "active")
+
+    def get_session(self, session_id: str) -> TaskSession | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+        return _task_session_from_row(row)
+
+    def upsert_session(
+        self,
+        *,
+        session_id: str,
+        client_id: str,
+        user_id: str | None = None,
+        active_task_id: str | None = None,
+        status: TaskStatus = "active",
+    ) -> TaskSession:
+        now = _iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sessions
+                  (session_id, client_id, user_id, active_task_id, created_at, updated_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  client_id = excluded.client_id,
+                  user_id = excluded.user_id,
+                  active_task_id = excluded.active_task_id,
+                  updated_at = excluded.updated_at,
+                  status = excluded.status
+                """,
+                (session_id, client_id, user_id, active_task_id, now, now, status),
+            )
+            row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+        session = _task_session_from_row(row)
+        if session is None:
+            raise RuntimeError("failed to upsert session")
+        return session
+
+    def set_current_main_session(self, *, task_id: str, session_id: str) -> TaskEntity | None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE tasks SET current_main_session_id = ? WHERE task_id = ?",
+                (session_id, task_id),
+            )
+            row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        return _task_entity_from_row(row)
 
     def get_or_create_active_task(
         self,
@@ -568,6 +638,21 @@ class TaskMemoryStore:
             )
             for row in rows
         ]
+
+    def task_messages_after(
+        self,
+        *,
+        session_id: str,
+        task_id: str,
+        after_message_id: str | None = None,
+    ) -> list[TaskMessage]:
+        messages = self.task_messages(session_id=session_id, task_id=task_id)
+        if not after_message_id:
+            return messages
+        for idx, message in enumerate(messages):
+            if message.message_id == after_message_id:
+                return messages[idx + 1 :]
+        return messages
 
     def task_index(self, *, session_id: str, limit: int = 5) -> list[TaskSegment]:
         with self._connect() as conn:

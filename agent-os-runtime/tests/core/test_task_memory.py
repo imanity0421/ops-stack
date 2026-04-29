@@ -14,6 +14,7 @@ from agent_os.agent.task_memory import (
     build_task_summary_instruction,
     new_task_id,
 )
+from agent_os.cte.resume_task import resume_task
 
 
 def test_new_task_id_is_human_sortable() -> None:
@@ -63,6 +64,24 @@ def test_task_entity_crud_uses_five_field_schema(tmp_path: Path) -> None:
     restored = store.unarchive_task_entity(task.task_id)
     assert restored is not None
     assert restored.status == "active"
+
+
+def test_task_session_api_and_current_main_session_update(tmp_path: Path) -> None:
+    store = TaskMemoryStore(tmp_path / "task.db")
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+
+    session = store.upsert_session(
+        session_id="s1",
+        client_id="c1",
+        user_id="u1",
+        active_task_id=task.task_id,
+    )
+    updated = store.set_current_main_session(task_id=task.task_id, session_id="s2")
+
+    assert session.active_task_id == task.task_id
+    assert session.status == "active"
+    assert updated is not None
+    assert updated.current_main_session_id == "s2"
 
 
 def test_get_or_create_active_task_backfills_task_entity(tmp_path: Path) -> None:
@@ -260,6 +279,59 @@ def test_compact_summary_service_persists_structured_summary(
     assert loaded is not None
     assert loaded.summary_version == 1
     assert loaded.summary.core.current_artifact_refs == ["artifact_1"]
+
+
+def test_resume_task_connects_recent_session_under_budget(tmp_path: Path) -> None:
+    store = TaskMemoryStore(tmp_path / "task.db")
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="继续这个方案")
+
+    result = resume_task(store=store, task_id=task.task_id, session_id_factory=lambda: "s2")
+
+    assert result.status == "ok"
+    assert result.decision is not None
+    assert result.decision.connect_or_fork == "connect"
+    assert result.decision.target_session_id == "s1"
+    assert result.final_state is not None
+    assert "voice_pack skipped=\"true\"" in result.final_state.prompt
+    assert store.get_task_entity(task.task_id).current_main_session_id == "s1"
+
+
+def test_resume_task_force_fork_updates_current_main_session_and_projects_tail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    store = TaskMemoryStore(tmp_path / "task.db")
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="必须突出新品")
+    store.append_message(session_id="s1", task_id=task.task_id, role="assistant", content="已完成第一版")
+    record = CompactSummaryService(store).compact(
+        session_id="s1",
+        task_id=task.task_id,
+        current_artifact_refs=["artifact_1"],
+    )
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="继续优化标题")
+
+    result = resume_task(
+        store=store,
+        task_id=task.task_id,
+        force_mode="fork",
+        session_id_factory=lambda: "s2",
+    )
+
+    assert record is not None
+    assert result.status == "ok"
+    assert result.decision is not None
+    assert result.decision.connect_or_fork == "fork"
+    assert result.decision.forced_by_flag is True
+    assert result.final_state is not None
+    assert result.final_state.compact_summary is not None
+    assert result.final_state.current_artifact_refs == ["artifact_1"]
+    assert "[Previous turn" in result.final_state.prompt
+    assert "继续优化标题" in result.final_state.prompt
+    assert store.get_task_entity(task.task_id).current_main_session_id == "s2"
 
 
 def test_skill_schema_provider_protocol_shape() -> None:

@@ -27,6 +27,7 @@ from agent_os.context_diagnostics import (
     build_context_diagnostics,
     format_context_diagnostics_markdown,
 )
+from agent_os.cte.resume_task import resume_task
 from agent_os.observability import log_context_management_trace
 from agent_os.knowledge.graphiti_entitlements import (
     EntitlementsRevisionConflictError,
@@ -281,9 +282,43 @@ def _task_main(argv: list[str]) -> int:
     p_unarchive = sub.add_parser("unarchive", help="恢复 archived task")
     p_unarchive.add_argument("task_id")
 
+    p_resume = sub.add_parser("resume", help="Stage 4：恢复 task 工作面")
+    p_resume.add_argument("task_id")
+    p_resume.add_argument("--from-session-id", default=None)
+    p_resume.add_argument("--force-fork", action="store_true")
+    p_resume.add_argument("--force-connect", action="store_true")
+    p_resume.add_argument("--json", action="store_true")
+
     args = p.parse_args(argv)
     settings = Settings.from_env()
     store = TaskMemoryStore(settings.task_memory_sqlite_path)
+
+    if args.action == "resume":
+        if args.force_fork and args.force_connect:
+            print(json.dumps({"status": "error", "reason": "conflicting_force_flags"}, ensure_ascii=False))
+            return 1
+        force_mode = "fork" if args.force_fork else "connect" if args.force_connect else None
+        result = resume_task(
+            store=store,
+            task_id=args.task_id,
+            from_session_id=args.from_session_id,
+            force_mode=force_mode,
+            session_id_factory=new_session_id,
+            artifact_store=ArtifactStore(settings.artifact_store_path),
+            context_char_budget=settings.context_max_chars,
+        )
+        payload = result.to_dict()
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif result.status == "ok" and result.decision is not None and result.final_state is not None:
+            print(
+                f"resume {result.decision.connect_or_fork} "
+                f"{result.decision.source_session_id} -> {result.decision.target_session_id}"
+            )
+            print(result.final_state.prompt)
+        else:
+            print(json.dumps(payload, ensure_ascii=False))
+        return 0 if result.status == "ok" else 1
 
     if args.action == "new":
         session_id = args.session_id or new_session_id()

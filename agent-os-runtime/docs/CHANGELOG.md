@@ -6,6 +6,14 @@
 
 本节按 `### Stage X` / `### 文档` / `### 改进` / `### 新增` / `### 修复` / `### 破坏性变更` 分组；Stage 2 起用 `### Stage 2` 记录 battle 完成项。
 
+### Stage 4
+
+- **Battle 1：`/task resume` v0**（2026-04-30，done-local）
+  - 新增 CTE `resume_task` 平铺入口，实时合成 resume final_state（CompactSummary + uncompacted tail + artifact refs / pinned refs）并生成纯文本 resume prompt。
+  - `task resume` CLI 支持 B5.c connect/fork 自动判断与 `--force-fork` / `--force-connect` override；fork 时更新 `tasks.current_main_session_id`，connect 时复用当前 session。
+  - `voice_pack=None` 时跳过 inline 段并在 prompt/diagnostics 保留 `voice_pack_skipped` 语义；Stage 4 只消费 `pinned_refs`，不实现 pin/unpin。
+  - 验证：`python -m pytest tests/core/test_task_memory.py tests/core/test_cli.py tests/core/test_context_builder.py`；`python -m ruff check src tests`。
+
 ### Stage 3
 
 - **CompactSummary v1 + Manual Compact**（2026-04-29，commit `98f7953`）

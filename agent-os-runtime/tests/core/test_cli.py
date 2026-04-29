@@ -439,6 +439,36 @@ def test_cli_task_commands_create_list_archive_unarchive(
     assert restored["task"]["status"] == "active"
 
 
+def test_cli_task_resume_force_fork_outputs_resume_diagnostics(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    task_db = tmp_path / "task.db"
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(task_db))
+    store = TaskMemoryStore(task_db)
+    task = store.create_task(name="春季宣发方案", current_main_session_id="s1")
+    store.upsert_session(session_id="s1", client_id="c1", active_task_id=task.task_id)
+    store.append_message(session_id="s1", task_id=task.task_id, role="user", content="继续推进方案")
+
+    assert cli.main(["task", "resume", task.task_id, "--force-fork", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["status"] == "ok"
+    assert payload["resume_diagnostics"]["connect_or_fork"] == "fork"
+    assert payload["resume_diagnostics"]["forced_by_flag"] is True
+    assert payload["task"]["current_main_session_id"] != "s1"
+    assert "<task_resume" in payload["final_state"]["prompt"]
+
+
+def test_cli_task_resume_rejects_conflicting_force_flags(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("AGENT_OS_TASK_MEMORY_DB_PATH", str(tmp_path / "task.db"))
+
+    assert cli.main(["task", "resume", "task_missing", "--force-fork", "--force-connect"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["reason"] == "conflicting_force_flags"
+
+
 def test_cli_artifact_commands_list_show_archive_and_orphan_gc(
     tmp_path: Path,
     monkeypatch,
