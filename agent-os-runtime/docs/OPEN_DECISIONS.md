@@ -532,7 +532,7 @@
   - 把 Stage 4 的 deferred ER 入口（A5 备注）实现为 `start_resumed_session(prompt, session_meta) -> SessionId`，签名见 [ARCHITECTURE.md](ARCHITECTURE.md) §1.1（Phase 9 Step 2.5 已加）。
   - resume_task / branch_task 内 CTE→ER 调用路径切换为真实 ER 入口；不再通过 `RuntimeServices.run_task_with_prompt` 兜底。
 
-- **Battle 3：CTE 装配缺失 fragment 的 fallback 行为（D5 决策落地）**（done-local @ 2026-04-30，commit 待回填）
+- **Battle 3：CTE 装配缺失 fragment 的 fallback 行为（D5 决策落地）**（done @ 2026-04-30，commit `7132f3f`）
   - 当 active skill 未实现 `SkillSchemaProvider` 或返回 None 时，CTE 装配走 fallback：仅装配 core schema + 在 trace 中记 `skill_fragment_skipped: true` + decision_reason；不报错、不强制 skill 必须有 fragment。
   - 与 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 既有降级链同构。
 
