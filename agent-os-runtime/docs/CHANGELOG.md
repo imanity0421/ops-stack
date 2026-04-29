@@ -8,7 +8,7 @@
 
 ### Stage 5
 
-- **Battle 1：SR 框架 schema fragment 真实合成**（2026-04-30，done-local）
+- **Battle 1：SR 框架 schema fragment 真实合成**（2026-04-30，commit `d196fdc`）
   - `CompactSummary` v2 增加 `compose_compact_summary_schema()` 动态合成路径，固定 CTE-owned `core`，并按 active skill 注入 SR-owned `skill_state` fragment。
   - 新增轻量 `SkillSchemaProviderRegistry`，支持 `skill_id -> SkillSchemaProvider` 注册与 fragment 查询；`CompactSummaryService` 可通过 provider 或 registry + active skill id 获取 fragment。
   - 用 `MockSkillA` / `MockSkillB` 异类字段集验证 SR 平等注册与合成；fallback compact 仍保持 `skill_state=None`，不引入真实业务字段或 voice 字段。

@@ -523,7 +523,7 @@
 
 ### G1：5 battle 草案
 
-- **Battle 1：SR 框架 v0**（done-local @ 2026-04-30，commit 待回填）
+- **Battle 1：SR 框架 v0**（done @ 2026-04-30，commit `d196fdc`）
   - schema fragment 注册接口的真实合成（`SkillSchemaProvider` Protocol 接两层：`core_schema` + `skill_state_schema`，Phase 9 Step 3 已完成两层 schema 收敛与 `business_writing_pack` 迁移；本 Battle 在此基础上落 SR 框架真实 fragment 注册路径）。
   - 不接真实 skill；用 mock skill（如 `MockSkillA` / `MockSkillB` 字段集结构不同）验证注册接口对异类 skill 平等。
   - **前置已就位**：[compact.py](../src/agent_os/agent/compact.py) `SkillSchemaProvider` Protocol 已存在 + `CompactSummary` v2 两层 schema + `compose(core_schema, skill_state_schema)` 合成路径已在 §3.2 文档明文。
