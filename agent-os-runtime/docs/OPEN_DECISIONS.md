@@ -179,6 +179,40 @@
 - 不引入填充入口：Stage 4 不实现 pin / unpin 命令，不实现 agent 自动建议 pin 逻辑；Stage 6 真实 memory candidate 流稳定后再实现完整生命周期。
 - 与 S3 voice_pack=None fallback 同构：都是"Stage 4 装配只消费上游已存在字段，不强制非空、不实现填充"原则。
 
+### A9：SR 字段集"最小必要"判别准则框架
+
+**已知**：Phase 9 删除 [ARCHITECTURE.md](ARCHITECTURE.md) §3.2 Layer 2 `business_writing_pack` 后，所有 skill family 平等通过 Layer 3 `skill_state` 承载自有 schema（详见 G2 / [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 "SR 框架对所有 skill family 平等承载"）。但 skill 维护者面对 schema 设计时，**没有明文准则**判断"哪些字段值得进 schema、哪些应该走 task constraints / artifact / 临时配置"。
+
+**Phase 9 沉淀（准则框架，具体应用搁置）**：
+
+任何 skill 在设计 `skill_state` schema 字段时，必须满足以下 **4 项判别准则**：
+
+- **必要性**：不写它，compact / resume 时 LLM 会幻觉关键内容（反例：`deadline` 不属此层——任务管理归 task entity）。
+- **可观测性**：能用 GC 字段级断言验证（[GC_SPEC.md](GC_SPEC.md) 字段口径），不是"读起来对"（反例：`expressiveness` 这种主观维度不应进 schema）。
+- **可复用性**：跨 task 都用得上（不是单 task 临时配置）（反例：`word_limit` 属临时配置，归 task constraints）。
+- **不冗余性**：不能从其他字段（包括 core / artifact ref / task entity）推导出来（反例：`tone_constraints` 可能从 `brand_voice` 推导）。
+
+**当前推荐 / 边界**：
+
+- 准则框架本身在 Phase 9 沉淀作 Stage 7 反向建模时的指南；**Phase 9 / Stage 5 / Stage 6 不应用这 4 项准则做任何具体字段决策**。
+- 第一次真实接入 skill（Stage 7）时，由真实 case 反向回答"这个 skill 应该有哪些字段"，应用本准则；4 项准则是必要不充分条件——通过 4 项后字段是否最终入 schema 仍由 skill 维护者结合 SOTA 实践拍板。
+- 准则迭代：Stage 7+ 实测后若发现遗漏（如 "可访问性" / "可序列化" 等），通过本条 OPEN_DECISIONS 修订追加，不触发 ARCH 主干修订。
+
+### A10：brand_voice / audience 等具体字段的建模派系选择
+
+**已知**：第一次真实接入 skill 时，必须选择 brand_voice / audience 等业务字段的建模派系——这是产品决策，不是工程决策；不同派系产出的 schema 字段集差异巨大。
+
+**待回答（推到 Stage 7 反向建模时）**：
+
+- **brand_voice 维度**候选：行业咨询派（Ogilvy 4-piece / Cone & Belding）/ 学术派（Aaker brand personality 5 dimensions：Sincerity / Excitement / Competence / Sophistication / Ruggedness）/ NLP 实操派（tone(formal/casual) + register + modality）。
+- **audience 维度**候选：人口学（年龄 / 收入 / 地域）/ 心理画像（VALS / RDS）/ Jobs-to-be-Done + 触点漏斗位置。
+- 是否综合多派系（一个 skill 可同时使用 Aaker 5 dimensions + JTBD audience，融合派）。
+- 派系选定后是否在 SR 内部预留迁移路径（Stage 7 选 Aaker，Stage 8 改 Ogilvy 时是否需 schema_version migration）。
+
+**回答方式**：Stage 7 第一次真实接入 skill 时，由真实 case（如 1-2 篇白皮书 / 长篇市场分析 / 海报文案）盲测对比不同派系产出的 SOTA 度，反向选择最合适的派系。
+
+**Phase 9 边界（与 A9 同源）**：本条只录"建模派系选择是 Stage 7 待答问题"，**不预先固化任何派系倾向**。Phase 9 / Stage 5 / Stage 6 不得讨论"哪个派系更好"——这违反 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 "未做先猜业务字段" 反模式。
+
 ---
 
 ## B. 总设计师决策待回答（用户决策）
@@ -201,6 +235,14 @@
 - B1.b：Stage 5 提前到 Stage 4 之后立刻做（合并 Stage 4 和 Stage 5 中间过渡期）。
 
 **决策门槛**：除非用户明确要求，否则保持当前选择。
+
+**Phase 9 重打开备注（2026-04-30）**：B1 因 Phase 9 ARCH §4 Stage 路线重拆 + §3.2 Layer 2 删除而**重打开**——Voice Pack 的归属与字段集从 Stage 5 推到 Stage 7（"First Skill SOTA + Voice Pack + 反向建模"）。新承诺：
+
+- Voice Pack 推到 Stage 7 与第一次真实 skill 接入一起落地；
+- Stage 5（SR Framework v0）/ Stage 6（Memory Candidate Stream）的 SR 框架**不得预设任何 voice 字段**（违反 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 "未做先猜业务字段" 反模式抗体）；
+- voice 字段集本身由 A10 派系选择决定，不在 Phase 9 范围。
+
+原 B1.a / B1.b 反向选项已失效（Stage 路线重拆后场景已变）。
 
 ### B2：是否做 SubAgent ContextSandbox
 
@@ -272,6 +314,54 @@
 - trace 必须显式记录决策路径（`resume_diagnostics.connect_or_fork = "connect" | "fork"` + `decision_reason: list[str]` + `forced_by_flag: bool`），见 Battle 4 `/context` 集成。
 
 回退条件复用上方"反向选项"——Battle 1 落地后若实测系统判错率 > 10%，再回退到 B5.a 双命令；这一兜底不影响 Battle 1 当前实施。
+
+### B6：SR 切分规则（一个 skill 该多大、何时拆分）
+
+**背景**：Phase 9 讨论中用户提出经典悖论——
+
+- 写商业策划 vs 写商业文案：从交付物语义看应是**两个独立 SR**（商业策划交付物 = 策划案 / 标签维度 = 战略 stage / KPI；商业文案交付物 = 文案 / 标签维度 = brand_voice / audience）。
+- 但实际生产中"策划完接着出文案"是常见工作流，从工作流连续性看似乎应**合并成 SR.Business Strategy & Content**。
+- 进一步推演：那"市场分析 → 商业策划 → 文案 → 海报视觉简报"是不是要合并成 SR.Marketing Full Stack？这条路径会无限合并下去，最终膨胀为"SR.Everything"。
+
+**当前选择（Phase 9 决议）**：**按交付物语义切分，工作流连续性靠 Task Loop 顺序激活解决；商业策划 vs 商业文案 = 2 个独立 SR**。
+
+**理由**：
+
+- **schema 平等性必须落到具体边界上**：[ARCHITECTURE.md](ARCHITECTURE.md) §3.6 "SR 框架对所有 skill family 平等承载"在抽象层是宣言，在 SR 切分层是约束——若 SR.Business Strategy & Content 这种合并 SR 被允许，则它会在 schema 层同时拥有 strategy 字段（KPI / stage）+ content 字段（brand_voice / audience），**字段集越宽 → 单 SR 越偏向单业务领域 → 平等性越被瓦解**。
+- **跨 SR 工作流走 artifact ref 路径**：商业策划 SR 完成后 finalize artifact `strategy_brief.md`，商业文案 SR 在新 task 启动时通过 `artifact ref` 读取 `strategy_brief.md` 作为输入约束（详见 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 "跨 skill schema 字段共享" 反模式抗体）。Task Loop 的"顺序激活 + 同 thread 内多 task"机制已经为这种串联场景兜底。
+- **明文拒绝合并 SR.Business Strategy & Content**：合并方案违反"按交付物语义切"原则、引发 schema 字段污染、违反 SR 平等性、与 Task Loop 顺序激活机制重复。
+
+**判别准则**（决策门槛）：新 SR 候选时按以下顺序判定切 vs 合：
+
+1. **交付物语义是否同一**（同 = 候选合，异 = 必切）。
+2. **schema 字段集 ≤ 6 个 / 不强迫加领域字段**（满足 = 候选合，不满足 = 必切）。
+3. **是否能被现有 SR 通过 task constraints 覆盖**（能 = 不新增 SR，不能 = 切独立 SR）。
+
+3 条全过 = 合并；任一条不过 = 切独立 SR。
+
+**反向选项（如果 Stage 7+ 实测判别准则失灵）**：B6.a 引入"SR 组合（Composition）"机制（多个 SR 共享同一 task，schema fragment 自动 merge），需 ARCH 主干修订，Phase 9 不预设。
+
+### B7：第一个真实接入的 skill 选择
+
+**背景**：Stage 7（"First Skill SOTA + Voice Pack + 反向建模"）必须选择**唯一一个**真实 skill 作为接入靶子——选择决定了 A10 派系选择路径、Voice Pack 字段集、GC 升级标准。
+
+**当前选择（Phase 9 决议）**：**不预先选定**，Stage 7 启动前 Phase 时再决定；**Stage 5（SR Framework v0）/ Stage 6（Memory Candidate Stream）完全不绑定具体 skill**。
+
+**理由**：
+
+- Phase 9 ARCH §3.6 已明文将"未做先猜业务字段"列为反模式抗体——Stage 5 / 6 启动前预先选 skill = 必然带入业务倾向（如选商业文案 → 必然用 brand_voice / audience 作 ER 测试样本 → 实际暗中固化派系）。
+- Stage 5 / 6 的工程交付物（schema fragment 注册接口 / ER spin up / Memory candidate 流）必须用 **mock skill** 验证 SR 平等性（详见 G1 Battle 4），不能用真实 skill。
+
+**候选 skill 清单（Stage 7 启动前 Phase 决议时选 1）**：
+
+- 候选 1：商业文案（brand_voice / audience 派系选 → A10 触发）
+- 候选 2：商业策划（KPI / stage / market_segment / 战略框架派系选）
+- 候选 3：数据分析（dataset_schema / metric_definitions / analysis_intent 派系选）
+- 候选 4：编程辅助（codebase_layout / language_stack / test_framework 派系选）
+
+**回答方式（Stage 7 启动前）**：用户根据自身真实业务密度（哪个 skill 自己用得最多 / 最容易凑齐 1-2 个真实 case）+ A10 派系候选成熟度（哪个领域学术 / 行业框架最完备）综合选 1。
+
+**决策门槛**：Phase 9 不接受任何"先选 skill 1 / 2 / 3 / 4 占位、Stage 7 再换" 提议——占位 ≈ 暗中固化（违反 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 抗体）。
 
 ---
 
@@ -419,6 +509,72 @@
 
 ---
 
+## G. Stage 5 Battle 排序（结论已定，待执行）
+
+### G0：本章性质
+
+**Stage 5 启动前决策一跳入口**——本章固化以下三件事，coding agent 启动 Stage 5 时只读本章 + A9 / B6 + [ARCHITECTURE.md](ARCHITECTURE.md) §3.2 / §3.6 即可入场：
+
+1. Stage 5 的 5 battle 排序与边界（G1）
+2. Stage 5 启动前已敲定的工程决策摘要（G2）
+3. Stage 5 暂缓项（G4，明文标"必须不做、违反即返工"）
+
+本章节遵循 D / E / F 章节模式：**不再因进度变化回填 ARCH 主干**；Stage 5 进度信号通过 [CHANGELOG.md](../CHANGELOG.md) `### Stage 5` 区与 [GC_SPEC.md](GC_SPEC.md) `## Stage 5 GC9` 区呈现。
+
+### G1：5 battle 草案
+
+- **Battle 1：SR 框架 v0 + Layer 2 删除迁移落地**
+  - schema fragment 注册接口的真实合成（`SkillSchemaProvider` Protocol 接两层：`core_schema` + `skill_state_schema`）。
+  - compact.py / task_memory.py 的 `business_writing_pack` 引用全量删除 + 迁移脚本可执行（详见 Phase 9 Step 3）。
+  - 不接真实 skill；用 mock skill（如 `MockSkillA` / `MockSkillB` 字段集结构不同）验证注册接口对异类 skill 平等。
+
+- **Battle 2：ER `start_resumed_session` 真实 agno spin up**
+  - 把 Stage 4 的 deferred ER 入口（A5 备注）实现为 `start_resumed_session(prompt, session_meta) -> SessionId`，签名见 [ARCHITECTURE.md](ARCHITECTURE.md) §1.1（Phase 9 Step 2.5 已加）。
+  - resume_task / branch_task 内 CTE→ER 调用路径切换为真实 ER 入口；不再通过 `RuntimeServices.run_task_with_prompt` 兜底。
+
+- **Battle 3：CTE 装配缺失 fragment 的 fallback 行为（D5 决策落地）**
+  - 当 active skill 未实现 `SkillSchemaProvider` 或返回 None 时，CTE 装配走 fallback：仅装配 core schema + 在 trace 中记 `skill_fragment_skipped: true` + decision_reason；不报错、不强制 skill 必须有 fragment。
+  - 与 [ARCHITECTURE.md](ARCHITECTURE.md) §3.3 既有降级链同构。
+
+- **Battle 4：SR 平等性 + 跨 skill artifact 共享 invariant 工程验证**
+  - 用 2 个 mock skill（`MockSkillA` 字段集 = `{a1, a2, a3}`、`MockSkillB` 字段集 = `{b1, b2}`）跑端到端：注册 → CTE 装配 → ER spin up → resume 装配。
+  - 跨 skill artifact 共享走 path：MockSkillA 完成后 finalize artifact `out_a.md`、新 task 启动 MockSkillB 通过 `artifact ref` 读 `out_a.md`——验证 [ARCHITECTURE.md](ARCHITECTURE.md) §3.6 "跨 skill schema 字段共享" 反模式抗体的实际可行性。
+
+- **Battle 5：Stage 5 GC9 字段级断言 + baseline trace**
+  - 新增 GC9：SR fragment 真实合成、ER spin up trace、跨 skill artifact 共享路径 trace；字段级断言（mock skill schema 中各字段 inline 出现）。
+  - baseline trace 用例草案（Battle 5 启动前最终敲定）：MockSkillA → MockSkillB 跨 task artifact 共享 + 缺 fragment fallback + ER spin up 三场景。
+
+### G2：启动前已敲定决策摘要
+
+| 决策 | 已敲定结论 | 来源 |
+|-----|----------|------|
+| D1（Stage 路线方案）| **方案 B**：5/6/7/8+ 重拆，Stage 5 = SR Framework / Stage 6 = Memory Candidate / Stage 7 = First Skill SOTA | Phase 9 §4 |
+| D2（Layer 2 处理）| **方案 Y**：删 Layer 2，统一走 Layer 3 `skill_state` | Phase 9 §3.2 |
+| D3（ER 入口签名）| `start_resumed_session(prompt, session_meta) -> SessionId` | Phase 9 §1.1 / A5 |
+| D4（跨 skill 字段共享）| 走 artifact ref + Task Loop 顺序激活；不在 schema 层共享 | Phase 9 §3.6 抗体 |
+| D5（fragment 缺失 fallback）| CTE 装配跳 skill fragment + trace 记 skipped；不报错 | Battle 3 落地 |
+
+> 注：D1-D5 仅作 Phase 9 内部追溯锚点，不进入 D / E 章节列表。
+
+### G3：执行节奏
+
+- **Battle 1 是核心**：SR 框架抽象 v0 决定后续所有 Battle 的接入接口。
+- **Battle 2 紧邻**：ER spin up 是 Battle 3-5 的运行时基础。
+- **Battle 3-5 顺序串行**：Battle 4 的 SR 平等性验证依赖 Battle 1-3 完成；Battle 5 GC 必须在 4 之后。
+- **不并行**：Stage 5 只有 1 个 coding agent 串行做 5 battle；不开"Battle 1 + 2 并行" 模式。
+
+### G4：暂缓项（Stage 5 明文必须不做）
+
+- **A9 具体应用**：Stage 5 不应用 4 项判别准则做任何真实 skill 字段决策（mock skill 字段集结构 ≠ 真实 skill 字段语义）。
+- **A10 派系选择**：Stage 5 不做 brand_voice / audience 任何派系倾向讨论。
+- **B7 第一个 skill 选择**：Stage 5 不预先选定真实 skill；mock skill 字段集纯为验证平等性用，不允许"看起来像 business_writing"。
+- **Voice Pack 字段集**：Stage 5 SR 框架不预设任何 voice 字段（B1 重打开备注约束）。
+- **Memory candidate 流的 voice 字段集成**：推到 Stage 6 / 7（Stage 6 仅落业务无关 candidate 流，voice 字段集成在 Stage 7 与真实 skill 一起做）。
+
+任何 Stage 5 PR 触碰上述暂缓项，必须先回 Phase X 启动 Level 2 修订（[ARCHITECTURE.md](ARCHITECTURE.md) §6 升级后的 3 级门槛）。
+
+---
+
 **修订记录**：
 
 - 2026-04-28：初版。从 7 轮 GPT 挑刺中提炼出 4 + 4 + 4 项开放问题；A 类等代码、B 类等用户、C 类等硬证据。
@@ -458,3 +614,34 @@
   - **暂缓项**：F4 `task_history` / A3 cross-task 召回 / A6 章节切分 / PR template 全部不在 Stage 4 范围实现（与 F4 决策一致）。
   - **ARCH 主干 0 修订**：Stage 4 实测落地与 ARCH §1.3 / §1.4 / §3.2 / §3.3 / §3.5 字段名 + 机制描述完全一致，无需回填（详见 [ARCHITECTURE.md](ARCHITECTURE.md) 修订记录同日条目）。
   - **A4 / A5 / A8 / B5 出口规则评估**：实测落地与 F2 摘要一致，下一阶段（Stage 5 启动前 Phase）可考虑按"决策出口规则"将这些条目从 OPEN_DECISIONS A / B 类正式收口移除，仅保留 F2 摘要 + 修订记录引用作历史备查；当前 Stage 4 收口阶段不立即移除，避免与 Stage 5 启动前 Phase 的回看路径冲突。
+- 2026-04-30（Phase 9 — Stage 5 启动前 SR 抽象重构 / **Level 2 架构演进修订**，Step 1：OPEN_DECISIONS 决策收口）：
+
+  本条按 [ARCHITECTURE.md](ARCHITECTURE.md) §6 升级后的 Level 2 架构演进修订**强制 4 字段**格式记录（Phase 9 是该机制的引入者也是首个执行案例）。
+
+  - **触发证据**：用户在 Stage 4 收口后启动 Stage 5 启动前 Phase 时提出 4 项深度架构疑虑——
+    1. Stage 5 重点 `SR.business_writing` 是否会将 agent-os 固化成"专门兼容写文案 skill 的 OS"，未来扩展数据分析 / 商业策划 / 编程辅助等异类 skill 时被卡死？
+    2. 即使 `SR.business_writing` 是示例，placeholder 实现也会损害 SOTA 度。
+    3. SR 字段制定缺失明文规则：brand_voice / audience 标签分类是否合理；商业策划 vs 商业文案是否同一 SR；SR 字段越多越好还是越少越好。
+    4. 当前 Stage 方案合理性受质疑——业务字段固化与基础设施抽象耦合过深。
+
+     上述 4 项推翻 [ARCHITECTURE.md](ARCHITECTURE.md) §688（原 Phase 7）拒绝 `shared_skill_context` 改名时的论据"污染场景不存在"——污染场景已实际出现（异类 skill 候选清单 = 商业文案 / 商业策划 / 数据分析 / 编程辅助）。
+
+  - **拒绝清单**（明文记录候选方案及拒绝理由，避免 Stage 7+ 重复讨论）：
+    - **方案 A（5a / 5b 拆分）**：保持 Stage 5 编号、内部拆 5a 基建 + 5b 业务——拒绝。理由：5a / 5b 命名混淆（与 D5 / D6 类似的"分阶段子号"已被 Stage 路线清晰化原则禁止）；进度状态难追踪。
+    - **方案 C（Stage 5 / 6 合并为单一 stage）**：把 SR 框架 + Memory candidate 揉进同一 stage——拒绝。理由：范围拥堵（5 battle ≠ 10 battle）；Memory candidate 需独立 GC 升级路径，不应耦合 SR 框架 GC。
+    - **方案 Z（保留 `business_writing_pack` 命名 + 加明文边界注释）**：拒绝。理由：命名偏向是结构性问题，注释无法消除——schema 字段名本身即是 invariant 一部分（GC 字段级断言会引用字段名）；Stage 7 接入数据分析 skill 时该字段名仍会渗入 trace。
+    - **方案 X（保留 Layer 2 + 通用化重命名为 `shared_skill_context` / `cross_skill_pack`）**：拒绝。理由：跨 skill 共享在 schema 层做会污染 core 通用层（违反 [ARCHITECTURE.md](ARCHITECTURE.md) §0.4 第二条 "core 层不承载业务字段"硬约束）；artifact ref + Task Loop 顺序激活路径已存在且更优。
+    - **路径 2（共享字段升 core）**：把 audience / deliverable_kind 等共享字段升到 core 层——拒绝。理由：违反 core 通用层硬约束；core 层任何业务字段加入即破坏 SR 平等性（任何"共享"= 暗中固化某 skill family 的字段集为通用）。
+
+  - **影响域评估**：
+    - **[ARCHITECTURE.md](ARCHITECTURE.md) 主干修订 9 处**：§6 升 3 级门槛（Level 0 / 1 / 2 + Level 2 强制 4 字段格式）/ §3.2 删 Layer 2 + 改两层 schema / §3.6 加 2 条新反模式抗体（"未做先猜业务字段" + "跨 skill schema 字段共享"）/ §4 stage 路线重拆（5/6/7/8+ 重编号 + mermaid 重绘）/ §1.1 ER 模块加 `start_resumed_session` 入口签名 / §397 invariant 拆分（Memory candidate 与 Voice Runtime 解耦）/ §0.4 哲学锚点新增 SOTA 条款 / 全文 stage 编号 +1 批量替换 / §3.5 GC 累积强化表 "Stage 5 验证时" → "Stage 7 验证时"。
+    - **本文档新增 5 条决策**：A9（SR 字段判别准则框架）/ A10（建模派系选择推到 Stage 7）/ B6（SR 切分规则）/ B7（第一个 skill 选择推到 Stage 7）/ B1 重打开备注（Voice Pack 推到 Stage 7）+ G 章节（Stage 5 5 battle 排序 + 启动前已敲定决策摘要 + 暂缓项明文）。
+    - **代码 + 测试同步迁移**：[compact.py](../src/agent_os/agent/compact.py) Schema v1 → v2（删 `business_writing_pack` + bump version + prompt 同步）+ 一次性数据迁移脚本 `scripts/migrate_compact_v1_to_v2.py` + 测试更新（去 5-10 处 `business_writing_pack` 引用）+ [GC_SPEC.md](GC_SPEC.md) GC4 / GC5 措辞更新。
+    - **CHANGELOG**：新增 `### 文档` Phase 9 bullet（覆盖 4 字段摘要）。
+
+  - **不可回溯性声明**：
+    - 本修订所引入的"SR 框架对所有 skill family 平等承载"（§0.4 / §3.2 / §3.6）在 Stage 7 第一次真实 skill 接入并验证后，**不允许通过 Level 1 自完备性补丁回退**——若必须修订，需重新启动 Level 2 Phase 并提交新一轮触发证据 + 拒绝清单 + 影响域评估 + 不可回溯性声明 4 字段。
+    - 本修订所引入的 Stage 路线 5/6/7/8+ 编号在 Stage 5 启动后**不允许再次重编号**（保留编号视图稳定性）；如 Stage 5 内部需调整 battle 顺序，走 G 章节追加修订记录而非主干修订。
+    - 本修订所引入的"未做先猜业务字段"反模式抗体（§3.6）即 Stage 5 / 6 不得预先固化任何具体业务字段——Stage 5 PR 触碰即返工，无回退路径。
+
+  - **Phase 9 不在范围**（明文记录避免越界）：不开始 Stage 5 任何 battle 代码；不固化任何具体业务字段；不固化任何真实 skill 命名；不修订 ARCH §1.3 / §1.4 / §3.3 / §3.4（Stage 4 实测无问题不触碰）；不修订 OPEN_DECISIONS A1-A8 / B1-B5（B1 仅追加重打开备注，正文规则不动） / C / D / E / F 现有正文规则。
