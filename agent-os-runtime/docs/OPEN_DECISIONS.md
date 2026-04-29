@@ -274,7 +274,7 @@
 | 2 | **Artifact Registry v0** | done @ 2026-04-29 (commit `cca7273`) | 池 2 字段扩展（`kind=artifact` 区分 + `task_id` 外键）、artifact 显式产出与引用、`<artifact ref>` prompt 装配 | Battle 1 |
 | 3 | **Tool Result Artifactization** | done @ 2026-04-29 (commit `e5000cd`) | 长 tool result 自动外置为 artifact、`<artifact ref>` 替代原文进 history、prompt budget 内只保留摘要 + ref | Battle 2 |
 | 4 | **Long Source Artifactization** | done @ 2026-04-29 (commit `2e24307`) | 用户上传长文档 / agent 产出长文本自动 artifact 化、原文层 SQLite 写入 + 异步 digest 生成 | Battle 2 |
-| 5 | **Artifact Lifecycle Commands** | done-local @ 2026-04-29 (pytest + ruff passed, commit pending) | `/artifact list` / `/artifact show` / `/artifact archive` / `/blob gc --orphan` 只列不删、archive 软删除 | Battle 2-4 |
+| 5 | **Artifact Lifecycle Commands** | done @ 2026-04-29 (commit `3241da8`) | `/artifact list` / `/artifact show` / `/artifact archive` / `/blob gc --orphan` 只列不删、archive 软删除 | Battle 2-4 |
 | 6 | **Trace + `/artifact` + `/context` Integration** | todo | trace 字段持续记录 artifact 引用、`/context` 显示 artifact 占比、artifact 召回作 trace 归因 | Battle 5 |
 
 **D1 Status 维护规则**：

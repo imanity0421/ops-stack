@@ -23,7 +23,7 @@
   - `ContextBuilder.clean_history_messages_with_report()` 支持显式注入 source artifactizer，默认不改变 CLI/Web 主运行时行为；trace 增加 `source_artifactized` 计数。
   - 当前用户长 source 可在显式注入时 artifact 化为 `<artifact ref>`，避免大段 source 直接进入 prompt。
   - 验证：`python -m pytest tests/core/test_source_artifactization.py tests/core/test_context_builder.py tests/core/test_artifact_store.py`；`python -m ruff check src tests`。
-- **Battle 5：Artifact Lifecycle Commands**（2026-04-29，done-local）
+- **Battle 5：Artifact Lifecycle Commands**（2026-04-29，commit `3241da8`）
   - 新增 `artifact list/show/archive` CLI，支持 artifact 原文层精确查看、JSON 输出、raw 输出与软归档。
   - 新增 `blob gc --orphan` dry-run 命令，只列出无有效 task 的 orphan artifact，不做删除或 TTL 清理。
   - `Settings` 增加 `AGENT_OS_ARTIFACT_STORE_PATH`，ArtifactStore 增加 all/orphan 列表能力。
